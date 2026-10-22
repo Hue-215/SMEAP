@@ -37,7 +37,7 @@ button {
   cursor: pointer;
 }
 
-button:disabled {
+button:is(:disabled, [aria-disabled='true']) {
   cursor: default;
   opacity: 0.4;
 }
@@ -79,7 +79,7 @@ button:disabled {
   flex-direction: column;
 }
 
-/* 編集欄の入るスクロール領域と、中身を中央へ寄せる列。中身は別の作業で入れる。 */
+/* 編集欄の入るスクロール領域と、中身を中央へ寄せる列。 */
 .editor-scroll {
   flex: 1;
   overflow-y: auto;
@@ -90,7 +90,8 @@ button:disabled {
   margin: 0 auto;
 }
 
-/* アイコン1つだけを置くボタンの箱。当たり判定の箱とアイコンの大きさは別の軸(tokens.css)。 */
+/* アイコン1つだけを置くボタンの箱。箱の大きさ(--control-size-md)とアイコンの大きさ
+   (--icon-size-md)は別に決める。 */
 .icon-button {
   flex-shrink: 0;
   width: var(--control-size-md);
@@ -130,7 +131,6 @@ button:disabled {
   position: relative;
 }
 
-/* ボタンの下に、右端を揃えて開く。 */
 .menu-list {
   position: absolute;
   top: calc(100% + var(--space-1));
@@ -162,7 +162,6 @@ button:disabled {
   height: 1.25rem;
 }
 
-/* 記事一覧のサイドバー(Sidebar.tsx)。広い窓では並びの中に、狭い窓では.drawerの中に入る。 */
 .sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
@@ -203,14 +202,13 @@ button:disabled {
   padding-block: 0.75rem;
 }
 
-.sidebar-error {
+.sidebar-message {
   padding: 0.5rem 1.25rem;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 
-/* 左の3pxの線が選択中の印。塗りは使わない。slugのような区切りの無い英数字でも一覧の幅を
-   押し広げずに折り返す。 */
+/* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。 */
 .article-row {
   display: block;
   width: 100%;
@@ -332,7 +330,6 @@ button:disabled {
   opacity: var(--drawer-progress);
 }
 
-/* 動きを減らす設定では、滑らせずに切り替える。 */
 @media (prefers-reduced-motion: reduce) {
   .drawer,
   .narrow .drawer,

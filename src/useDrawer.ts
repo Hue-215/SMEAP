@@ -3,7 +3,7 @@ import { FOCUSABLE_SELECTOR } from './keyboard'
 import { useCloseOnBack } from './useCloseOnBack'
 
 // 左のカラム(記事一覧のサイドバー)を畳む窓の幅。値はtokens.css末尾の「窓の幅に関わる値の
-// 導出式」で求めたもの(メディアクエリの条件にはvar()を書けないため、求めた値をここに持つ)。
+// 導出式」で求めたもの。
 const NARROW_QUERY = '(width < 39rem)'
 
 const narrowMedia = window.matchMedia(NARROW_QUERY)
@@ -20,17 +20,17 @@ export interface DrawerState {
   shown: boolean
   open: () => void
   // カラムの中で行き先を選んだときに閉じる。行き先の画面に移るので、フォーカスは開くボタンへ
-  // 戻さない(ヘッダーごと作り直されることもある)。閉じていれば何もしない。
+  // 戻さない(ヘッダーごと作り直されることもある)。
   close: () => void
   // 選ばずに閉じる(Esc・暗幕)。開くボタンへフォーカスを戻す。
   cancel: () => void
-  // カラムの入れ物と開くボタンのid(Drawer.tsx)。
+  // カラムの入れ物と開くボタンのid(Drawer.tsx・TopBar.tsx)。
   id: string
   toggleId: string
 }
 
 // 狭い窓で畳む左のカラムの開け閉め。引き出している間、呼び出し側はカラムの隣の内容を
-// `inert`にして操作できなくする。開いたらカラムの先頭へフォーカスを移す。
+// `inert`にして操作できなくする。
 export function useDrawer(): DrawerState {
   const narrow = useSyncExternalStore(subscribeNarrow, () => narrowMedia.matches)
   const [opened, setOpened] = useState(false)

@@ -14,14 +14,15 @@ export function useSwipeToClose(drawer: DrawerState) {
 
 // 指を離したときに、開け閉めを確定する横の移動の量(px)。足りなければ元の位置へ戻す。
 const SWIPE_DISTANCE = 48
-// 指の動きを横へのスワイプか縦のスクロールかに分けるまでの遊び(px)。横の移動が縦の2倍より大きく
-// なったらスワイプとして指に付いて動かし始め、先に縦へこれだけ動いたらスクロールとして諦める。
+// 指の動きを横へのスワイプか縦のスクロールかに分けるまでの遊び(px)。横にこれだけ動き、かつ
+// 縦の2倍を超えたらスワイプとして指に付いて動かし始め、先に縦へこれだけ動いたらスクロールと
+// して諦める。
 const SLOP = 10
 
 interface Gesture {
   x: number
   y: number
-  // 指に付いて動かしている間の、開く向きへの横の移動の量。
+  // 指に付いて動かしている間の、開け閉めする向き(toward)への横の移動の量。
   moved: number
   dragging: boolean
   // カラムの幅と、カラム・暗幕を包む入れ物(.layout)。
@@ -32,8 +33,8 @@ interface Gesture {
 // 指が横に動く間、カラムを指に付いて動かし、暗幕を引き出した割合で濃くする。動かしている間は
 // 入れ物に`.drawer-dragging`を付け、引き出した割合(0〜1)を`--drawer-progress`で渡す(index.css)。
 // 描き直しを経ずに指に追従させるため、Reactの状態ではなく要素へ直に書く。指を離したら、
-// 開く向きへ`SWIPE_DISTANCE`以上動いていれば開け閉めを確定し、どちらでも元の書き込みを外して
-// CSSの移り変わりに任せる。`enabled`が偽の間は受け手を返さない。
+// 開け閉めする向きへ`SWIPE_DISTANCE`以上動いていれば開け閉めを確定し、どちらでも元の書き込みを
+// 外してCSSの移り変わりに任せる。`enabled`が偽の間は受け手を返さない。
 function useDrawerDrag(drawer: DrawerState, toward: 'open' | 'close', enabled: boolean) {
   const gesture = useRef<Gesture | null>(null)
   const sign = toward === 'open' ? 1 : -1

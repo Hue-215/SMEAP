@@ -1,17 +1,18 @@
 import Icon from './Icon'
 import type { ArticleSummary } from './api'
 
+export type ArticlesState =
+  | { status: 'loading' }
+  | { status: 'failed' }
+  | { status: 'loaded'; articles: ArticleSummary[] }
+
 interface SidebarProps {
-  // 記事の一覧。読み込み中はnull。
-  articles: ArticleSummary[] | null
-  loadFailed: boolean
+  articles: ArticlesState
   selectedSlug: string | null
   onSelect: (slug: string) => void
 }
 
-// 記事一覧のサイドバー。広い窓では並びの中に、狭い窓では.drawerの中に入る。上に新しい記事の
-// ボタン、下に設定への入口を置く。選択中の記事は、左の線(アクセント色)で示す。
-export default function Sidebar({ articles, loadFailed, selectedSlug, onSelect }: SidebarProps) {
+export default function Sidebar({ articles, selectedSlug, onSelect }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -27,10 +28,12 @@ export default function Sidebar({ articles, loadFailed, selectedSlug, onSelect }
         </button>
       </div>
       <nav aria-label="記事一覧" className="sidebar-nav">
-        {loadFailed ? (
-          <p className="sidebar-error">記事一覧を読めませんでした</p>
+        {articles.status === 'loading' ? null : articles.status === 'failed' ? (
+          <p className="sidebar-message">記事一覧を読めませんでした</p>
+        ) : articles.articles.length === 0 ? (
+          <p className="sidebar-message">記事がありません</p>
         ) : (
-          articles?.map((article) => (
+          articles.articles.map((article) => (
             <button
               key={article.slug}
               type="button"

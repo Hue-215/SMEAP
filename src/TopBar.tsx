@@ -25,12 +25,10 @@ const menuItems: MenuItem[] = isAndroid ? [exportZipItem, settingsItem] : [setti
 
 interface TopBarProps {
   drawer: DrawerState
-  // 広い窓のサイドバーが開いているか。
   sidebarOpen: boolean
   onToggleSidebar: () => void
 }
 
-// 左端は、広い窓ではサイドバーの開閉、狭い窓では引き出しを開くボタン。狭い窓では右端にその他のメニューを足す。
 export default function TopBar({ drawer, sidebarOpen, onToggleSidebar }: TopBarProps) {
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
   return (

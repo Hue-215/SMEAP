@@ -11,8 +11,7 @@ export interface MenuItem {
   onSelect: () => void
 }
 
-// 押すと操作の一覧を開くボタン(︙)。一覧はボタンの下に、右端を揃えて開く(index.css)。項目を
-// 選ぶと閉じてから操作を呼ぶ。
+// 押すと操作の一覧を開くボタン(︙)。
 export default function MenuButton({
   label,
   items,
@@ -60,8 +59,9 @@ function MenuList({ items, onClose }: { items: MenuItem[]; onClose: () => void }
             type="button"
             role="menuitem"
             className="menu-item"
-            disabled={item.disabled}
+            aria-disabled={item.disabled ? true : undefined}
             onClick={() => {
+              if (item.disabled) return
               onClose()
               item.onSelect()
             }}

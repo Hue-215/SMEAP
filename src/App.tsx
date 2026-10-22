@@ -1,25 +1,29 @@
 import { useEffect, useState } from 'react'
 import { listArticles } from './api'
-import type { ArticleSummary } from './api'
 import { Drawer } from './Drawer'
 import Sidebar from './Sidebar'
+import type { ArticlesState } from './Sidebar'
 import TopBar from './TopBar'
 import { useSwipeToOpen } from './useDrawerSwipe'
 import { useDrawer } from './useDrawer'
 
 export default function App() {
   const drawer = useDrawer()
-  // 広い窓のサイドバーの開け閉め。既定は開く。狭い窓では引き出し(drawer)が開け閉めを担う。
+  // 広い窓のサイドバーの開け閉め。狭い窓では引き出し(drawer)が開け閉めを担う。
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
-  // 記事の一覧。読み込み中はnull。
-  const [articles, setArticles] = useState<ArticleSummary[] | null>(null)
-  const [loadFailed, setLoadFailed] = useState(false)
+  const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
 
   useEffect(() => {
     listArticles()
-      .then((list) => setArticles(list.articles))
-      .catch(() => setLoadFailed(true))
+      .then((list) => {
+        if (list.broken.length > 0) console.warn('読めない記事があります', list.broken)
+        setArticles({ status: 'loaded', articles: list.articles })
+      })
+      .catch((e) => {
+        console.error('記事一覧を読めませんでした', e)
+        setArticles({ status: 'failed' })
+      })
   }, [])
 
   const selectArticle = (slug: string) => {
@@ -30,7 +34,6 @@ export default function App() {
   const sidebar = (
     <Sidebar
       articles={articles}
-      loadFailed={loadFailed}
       selectedSlug={selectedSlug}
       onSelect={selectArticle}
     />

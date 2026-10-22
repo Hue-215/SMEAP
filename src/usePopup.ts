@@ -21,7 +21,7 @@ export interface Popup {
   onBlur: (e: FocusEvent<HTMLDivElement>) => void
 }
 
-// ボタンの上下に開く一覧(選択一覧・メニュー)の開け閉め。開いている一覧は、外を押すか、
+// ボタンの上下に開く一覧(メニュー)の開け閉め。開いている一覧は、外を押すか、
 // フォーカスが外へ移るか、Androidの「戻る」で閉じる。隣り合う一覧のうち1つだけが開いている
 // 状態はこれで保つ。
 export function usePopup(): Popup {
@@ -59,9 +59,7 @@ export function usePopup(): Popup {
   }
 }
 
-/**
- * 開いた一覧の中のキー操作。Escで閉じ、上下の矢印で`role`の行の間をフォーカスが移る。
- */
+// 開いた一覧の中のキー操作。Escで閉じ、上下の矢印で`role`の行の間をフォーカスが移る。
 export function onPopupListKeyDown(
   e: KeyboardEvent,
   list: HTMLElement | null,

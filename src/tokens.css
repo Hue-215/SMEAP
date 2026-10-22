@@ -1,5 +1,6 @@
 /*
  * デザイントークン。SCITL(frontend/src/tokens.css)から、このアプリで使うものを写した。
+ * 値を変えたものもある。
  */
 
 /* ウェイトを足し引きしたら、下の--font-weight-*とdocs/spec.md「見た目」の書体の表も直す。 */
@@ -92,6 +93,7 @@
  * 境目の値はuseDrawer.tsのNARROW_QUERYに持つ。pxは16px/rem換算。
  *
  * サイドバーを畳む境目(サイドバーを出したままで内容領域が最小幅を保てる幅):
- *   --sidebar-width(16.5rem) + 内容領域の最小幅(22.5rem) = 39rem = 624px
+ *   --sidebar-width(16.5rem) + 内容領域の最小幅(22.5rem。窓の最小幅360px。tauri.conf.jsonの
+ *   minWidth) = 39rem = 624px
  * サイドバーや内容領域の幅を変えたときは、NARROW_QUERYを見直すこと。
  */
