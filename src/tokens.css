@@ -1,6 +1,5 @@
 /*
  * デザイントークン。SCITL(frontend/src/tokens.css)から、このアプリで使うものを写した。
- * 色はまだ置いていない(#3)。
  */
 
 /* ウェイトを足し引きしたら、下の--font-weight-*とdocs/spec.md「見た目」の書体の表も直す。 */
@@ -43,7 +42,7 @@
   --line-height-tight: 1.25;
   --line-height-normal: 1.5;
 
-  /* md=アイコンだけのボタン */
+  /* アイコンだけのボタンの、アイコンとボタンの大きさ */
   --icon-size-md: 1.5rem;
   --control-size-md: 2.25rem;
 

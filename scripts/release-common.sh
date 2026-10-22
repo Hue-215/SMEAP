@@ -3,7 +3,7 @@
 # 焼き込まれるパス(依存クレートのパニックの位置等)から外す指定と、外れたことの検査を持つ。
 
 if [[ -n "${RUSTFLAGS:-}" || -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
-  echo "RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS を外してから実行してください(置き換えの指定を上書きしないため)" >&2
+  echo "RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS を外してから実行してください(指定がこのスクリプトの置き換えの指定で黙って捨てられるため)" >&2
   exit 1
 fi
 
@@ -36,7 +36,7 @@ export_remap_flags() {
   export CARGO_ENCODED_RUSTFLAGS
 }
 
-# 渡されたフォルダのすべてのファイルに、置き換えたはずのパスとホームの親が残っていないかを確かめる。
+# 渡されたファイル(フォルダなら中のすべてのファイル)に、置き換えたはずのパスとホームの親が残っていないかを確かめる。
 # 残っていれば、その場所を書いて1を返す。
 check_no_absolute_paths() {
   local dir="$1" found=0 found_list path status file

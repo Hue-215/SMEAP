@@ -16,11 +16,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 
-[features]
-# このフィーチャの有無が、Tauriが`devUrl`(Viteの開発サーバー)と埋め込み済みの画面のどちらを
-# 読むかを決める。tauri-cliは本番ビルドのときにこれを有効にする
-custom-protocol = ["tauri/custom-protocol"]
-
 [profile.dev]
 debug = "line-tables-only"
 

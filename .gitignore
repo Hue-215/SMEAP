@@ -5,7 +5,7 @@ dist/
 # Tauriがビルドのたびに作る権限のスキーマ
 /src-tauri/gen/schemas/
 
-# Androidの署名の鍵(リポジトリの外に置く決まり。誤って置いたときの保険)
+# Androidの署名の鍵。リポジトリの外に置くが、誤って置いたときのため
 *.p12
 *.jks
 *.keystore

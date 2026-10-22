@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-// devUrl(http://localhost:1420)はsrc-tauri/tauri.conf.jsonと合わせる。
+// ポート(1420)は、src-tauri/tauri.conf.jsonのdevUrlとdevCspに合わせる。
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
   plugins: [react()],

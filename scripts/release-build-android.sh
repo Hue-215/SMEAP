@@ -50,6 +50,10 @@ fi
 source "$(dirname "$0")/release-common.sh"
 
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/src-tauri/Cargo.toml" | head -1)"
+if [[ -z "$version" ]]; then
+  echo "src-tauri/Cargo.toml から版を読めません" >&2
+  exit 1
+fi
 dist="$root/dist-release/astro-notepad-$version-android-$cpu.apk"
 built="$root/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 # 前の配布物と前のビルドのAPKを、今回のものと取り違えないよう先に消す。
@@ -66,7 +70,7 @@ if [[ ! -f "$built" ]]; then
   exit 1
 fi
 
-# APKはzipで、中のファイルは圧縮されているので、展開してから中身を確かめる。
+# APKの中には圧縮されたファイルもあるので、展開してから中身を確かめる。
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 unzip -q "$built" -d "$work/unpacked"
