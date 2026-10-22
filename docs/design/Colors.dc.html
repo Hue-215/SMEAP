@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>アクセント色の見本</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;family=Noto+Serif+JP:wght@400&amp;family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,300..400,0,0&amp;display=swap">
+<style>
+body{margin:0}
+.ms{font-family:'Material Symbols Outlined';font-weight:300;font-style:normal;font-size:20px;line-height:1;display:inline-block;font-feature-settings:'liga'}
+</style>
+</helmet>
+<div style="width: 760px; height: 560px; box-sizing: border-box; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); font-family: 'Noto Sans JP', sans-serif">
+<sc-for list="{{modes}}" as="m" hint-placeholder-count="2">
+<div style="background: {{m.bg}}; color: {{m.fg}}; padding: 32px; display: flex; flex-direction: column; gap: 20px">
+<h2 style="margin: 0; font-size: 16px; font-weight: 500">{{m.name}}</h2>
+<sc-for list="{{m.rows}}" as="r" hint-placeholder-count="3">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 12px; color: {{m.gray}}">{{r.label}}</div>
+<div style="display: flex; align-items: center; gap: 16px">
+<div style="width: 40px; height: 40px; background: {{r.c}}; border: 1px solid {{m.line}}"></div>
+<div style="display: flex; align-items: center; gap: 12px; font-family: 'Noto Serif JP', serif; font-size: 16px">
+<span>本文<span style="display: inline-block; width: 2px; height: 1.2em; vertical-align: text-bottom; background: {{r.c}}"></span></span>
+<span style="width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; outline: 2px solid {{r.c}}; outline-offset: -2px; font-family: 'Noto Sans JP', sans-serif"><span class="ms" aria-hidden="true">format_bold</span></span>
+</div>
+<div style="font-size: 12px; color: {{m.gray}}; margin-left: auto">{{r.c}} · {{r.ratio}}</div>
+</div>
+</div>
+</sc-for>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="font-size: 12px; color: {{m.gray}}">選択中の記事(左の印)</div>
+<div style="border-left: 3px solid {{m.acc}}; padding: 10px 16px 10px 13px">
+<div style="font-size: 14px">はじめての記事</div>
+<div style="font-size: 12px; color: {{m.gray}}">first-post · 2026-10-22</div>
+</div>
+<div style="font-size: 12px; color: {{m.gray}}">選択範囲</div>
+<div style="font-family: 'Noto Serif JP', serif; font-size: 16px">記号は消さずに残し、<span style="background: {{m.soft}}">見出しや太字にだけ</span>スタイルを付けます</div>
+<div style="font-size: 12px; color: {{m.gray}}; text-align: right">{{m.soft}} · {{m.softRatio}}</div>
+</div>
+</div>
+</sc-for>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":760,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      modes: [
+        { name: 'ライト', bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', soft: '#F0DFC8', softRatio: '背景と1.25:1', acc: '#D57C00',
+          rows: [{ label: '印(記事・カーソル・フォーカス)', c: '#D57C00', ratio: '背景と3.0:1' }] },
+        { name: 'ダーク', bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', soft: '#3E2D16', softRatio: '背景と1.6:1', acc: '#F99D1D',
+          rows: [{ label: '印(記事・カーソル・フォーカス)', c: '#F99D1D', ratio: '背景と9.9:1' }] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
