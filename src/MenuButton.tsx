@@ -16,12 +16,10 @@ export interface MenuItem {
 export default function MenuButton({
   label,
   items,
-  disabled,
 }: {
   // ボタンの名前(読み上げ・ツールチップ)。
   label: string
   items: MenuItem[]
-  disabled?: boolean
 }) {
   const { open, toggle, close, rootRef, toggleRef, onBlur } = usePopup()
   return (
@@ -30,7 +28,6 @@ export default function MenuButton({
         type="button"
         ref={toggleRef}
         className="icon-button"
-        disabled={disabled}
         aria-label={label}
         title={label}
         aria-haspopup="menu"

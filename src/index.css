@@ -66,6 +66,12 @@ button:disabled {
   position: relative;
 }
 
+/* 狭い窓では指で押せる大きさにする。 */
+.layout.narrow {
+  --control-size-md: 3rem;
+  --topbar-height: 3.5rem;
+}
+
 .layout main {
   flex: 1;
   min-width: 0;
@@ -92,18 +98,11 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
 }
 
 .icon-button .icon {
   width: var(--icon-size-md);
   height: var(--icon-size-md);
-}
-
-/* 狭い窓では指で押せる分の大きさにする。 */
-.narrow .icon-button {
-  width: var(--control-size-touch);
-  height: var(--control-size-touch);
 }
 
 /* 画面(編集欄)の上のバー(TopBar.tsx)。 */
@@ -124,28 +123,6 @@ button:disabled {
 
 .topbar-spacer {
   flex: 1;
-}
-
-.topbar-separator {
-  flex-shrink: 0;
-  width: 1px;
-  height: 1.25rem;
-  background: var(--color-border);
-  margin-inline: 0.375rem;
-}
-
-/* 保存の状態。広い窓では右端に、狭い窓では左端のボタンの隣に置き、後ろのボタンを右端へ
-   押しやる。 */
-.save-status {
-  flex-shrink: 0;
-  padding-inline: 0.5rem;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.narrow .save-status {
-  flex: 1;
-  padding-inline: 0.25rem 0;
 }
 
 /* メニュー(MenuButton.tsx)。 */

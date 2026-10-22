@@ -40,11 +40,7 @@ export default function App() {
 
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
-      {drawer.narrow ? (
-        <Drawer drawer={drawer}>{sidebar}</Drawer>
-      ) : (
-        sidebarOpen && sidebar
-      )}
+      {(drawer.narrow || sidebarOpen) && <Drawer drawer={drawer}>{sidebar}</Drawer>}
       <main inert={drawer.shown} {...swipeToOpen}>
         <TopBar
           drawer={drawer}
