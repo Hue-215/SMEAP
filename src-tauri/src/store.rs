@@ -29,6 +29,8 @@ pub enum StoreError {
     InvalidDate { date: String },
     #[error("heroImageが不正です: {name}")]
     InvalidHeroImage { name: String },
+    #[error("画像のファイル名が不正です: {name}")]
+    InvalidImageName { name: String },
     #[error("記事の形式が違います: {slug}: {reason}")]
     Malformed { slug: String, reason: String },
     #[error("ファイルの操作に失敗しました: {path}: {reason}")]
@@ -271,6 +273,25 @@ impl Store {
             }
         })?;
         parse_md(slug, &content)
+    }
+
+    pub fn read_image(&self, slug: &str, name: &str) -> Result<Vec<u8>, StoreError> {
+        validate_slug(slug)?;
+        if !is_filename(name) {
+            return Err(StoreError::InvalidImageName {
+                name: name.to_string(),
+            });
+        }
+        let path = self.assets_dir(slug).join(name);
+        fs::read(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                StoreError::NotFound {
+                    slug: slug.to_string(),
+                }
+            } else {
+                StoreError::io(&path, error)
+            }
+        })
     }
 
     pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
@@ -614,6 +635,34 @@ mod tests {
         assert!(matches!(
             store.create_article("dup"),
             Err(StoreError::AlreadyExists { .. })
+        ));
+    }
+
+    #[test]
+    fn 画像を読む() {
+        let (_tmp, store) = setup();
+        store.create_article("image").unwrap();
+        fs::write(store.assets_dir("image").join("01.png"), [1u8, 2, 3]).unwrap();
+        assert_eq!(store.read_image("image", "01.png").unwrap(), vec![1, 2, 3]);
+
+        for bad in ["", "../up.png", "a/b.png", "a\\b.png", "a..b.png"] {
+            assert!(
+                matches!(
+                    store.read_image("image", bad),
+                    Err(StoreError::InvalidImageName { name }) if name == bad
+                ),
+                "{bad} は不正な画像名のはず"
+            );
+        }
+        for bad_slug in ["../x", "A", "a_b", "a/b"] {
+            assert!(matches!(
+                store.read_image(bad_slug, "01.png"),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+        }
+        assert!(matches!(
+            store.read_image("image", "02.png"),
+            Err(StoreError::NotFound { .. })
         ));
     }
 

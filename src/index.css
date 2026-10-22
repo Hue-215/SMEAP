@@ -88,6 +88,16 @@ button:is(:disabled, [aria-disabled='true']) {
 .editor-column {
   max-width: var(--content-max-width);
   margin: 0 auto;
+  padding: 3rem 2rem 6rem;
+}
+
+.narrow .editor-column {
+  padding: 2rem 1rem 4rem;
+}
+
+.editor-message {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
 }
 
 /* アイコン1つだけを置くボタンの箱。箱の大きさ(--control-size-md)とアイコンの大きさ
