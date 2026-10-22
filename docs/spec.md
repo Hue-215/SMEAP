@@ -57,6 +57,8 @@ Astro製ブログ向けのシンプルなエディタ。MITライセンスで公
 
 - title: 左上のH1。書き換えるとそのまま反映する
 - description: タイトルの下に置く
+- 任意の項目は、MVPではheroImageだけ入れる。項目は[astro-blog-frontmatter.md](astro-blog-frontmatter.md)を参照
+- MVPの後で、残りの任意の項目(updatedDate)を入れる。そのとき、heroImageも含めて任意の項目ごとに設定画面で有効・無効を切り替えられるようにする
 
 ### 画面
 
@@ -100,7 +102,6 @@ Astro製ブログ向けのシンプルなエディタ。MITライセンスで公
 ### フロントマター
 
 - pubDateとheroImageの出し方(UIを詰めるときに検討)
-- updatedDateを使うか。Astro公式のblogテンプレートの項目は[astro-blog-frontmatter.md](astro-blog-frontmatter.md)にまとめた
 
 ### 画面
 
