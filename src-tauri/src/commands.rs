@@ -2,7 +2,7 @@
 
 use tauri::State;
 
-use crate::store::{self, Article, ArticleFields, ArticleSummary, Store, StoreError};
+use crate::store::{self, Article, ArticleFields, ArticleList, Store, StoreError};
 
 #[tauri::command]
 pub fn validate_slug(slug: String) -> Result<(), StoreError> {
@@ -10,8 +10,8 @@ pub fn validate_slug(slug: String) -> Result<(), StoreError> {
 }
 
 #[tauri::command(async)]
-pub fn list_articles(store: State<'_, Store>) -> Result<Vec<ArticleSummary>, StoreError> {
-    Ok(store.list_articles())
+pub fn list_articles(store: State<'_, Store>) -> Result<ArticleList, StoreError> {
+    store.list_articles()
 }
 
 #[tauri::command(async)]
