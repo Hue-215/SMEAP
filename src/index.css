@@ -10,10 +10,13 @@
   /* 同梱していないウェイトを太字として合成させない(字形が崩れる) */
   font-synthesis: style;
   -webkit-tap-highlight-color: transparent;
+  caret-color: var(--color-accent);
 }
 
 body {
   margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
   font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
 }
@@ -25,10 +28,328 @@ body {
     env(safe-area-inset-left);
 }
 
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:is(:disabled, [aria-disabled='true']) {
+  cursor: default;
+  opacity: 0.4;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+::selection {
+  background: var(--color-selection);
+}
+
 .icon {
   flex-shrink: 0;
   width: 1em;
   height: 1em;
   fill: currentColor;
   vertical-align: -0.125em;
+}
+
+/* 画面の骨組み(App.tsx)。 */
+.layout {
+  display: flex;
+  height: 100%;
+  position: relative;
+}
+
+/* 狭い窓では指で押せる大きさにする。 */
+.layout.narrow {
+  --control-size-md: 3rem;
+  --topbar-height: 3.5rem;
+}
+
+.layout main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 編集欄の入るスクロール領域と、中身を中央へ寄せる列。 */
+.editor-scroll {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.editor-column {
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+}
+
+/* アイコン1つだけを置くボタンの箱。箱の大きさ(--control-size-md)とアイコンの大きさ
+   (--icon-size-md)は別に決める。 */
+.icon-button {
+  flex-shrink: 0;
+  width: var(--control-size-md);
+  height: var(--control-size-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-button .icon {
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
+}
+
+/* 画面(編集欄)の上のバー(TopBar.tsx)。 */
+.topbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--topbar-height);
+  padding-inline: 0.75rem;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.narrow .topbar {
+  gap: 0;
+  padding-inline: 0.25rem;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+/* メニュー(MenuButton.tsx)。 */
+.menu {
+  position: relative;
+}
+
+.menu-list {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  z-index: 1;
+  width: 12.5rem;
+  margin: 0;
+  padding: var(--space-1) 0;
+  list-style: none;
+  border: var(--border-width) solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.menu-item {
+  width: 100%;
+  height: 3rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-inline: 1rem;
+  font-size: var(--font-size-sm);
+  text-align: left;
+}
+
+/* 文字と並べるアイコン(メニューの項目・サイドバー下の設定)。 */
+.menu-item .icon,
+.sidebar-settings .icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: var(--border-width) solid var(--color-border);
+}
+
+/* 狭い窓では.drawerの幅に合わせる。仕切り線は.drawerが持つ。 */
+.narrow .sidebar {
+  width: 100%;
+  border-right: 0;
+}
+
+.sidebar-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--topbar-height);
+  padding-inline: 1.25rem 0.5rem;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.sidebar-title {
+  font-weight: var(--font-weight-strong);
+  font-size: var(--font-size-sm);
+}
+
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding-block: 0.5rem;
+}
+
+.narrow .sidebar-nav {
+  padding-block: 0.75rem;
+}
+
+.sidebar-message {
+  padding: 0.5rem 1.25rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。 */
+.article-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.625rem 1.25rem 0.625rem 1.0625rem;
+  border-left: 3px solid transparent;
+  overflow-wrap: anywhere;
+}
+
+.narrow .article-row {
+  padding-block: 0.75rem;
+}
+
+.article-row[aria-current='true'] {
+  border-left-color: var(--color-accent);
+}
+
+.article-row-title {
+  display: block;
+  font-size: var(--font-size-sm);
+}
+
+.article-row-detail {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.sidebar-footer {
+  flex-shrink: 0;
+  border-top: var(--border-width) solid var(--color-border);
+  padding: 0.25rem 0.5rem;
+}
+
+.sidebar-settings {
+  width: 100%;
+  height: 2.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding-inline: 0.75rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+.narrow .sidebar-settings {
+  height: 3rem;
+}
+
+/* 背後の画面を覆う暗幕(引き出したカラムの後ろ)。明暗のテーマによらず同じ色にする。 */
+.scrim {
+  background: rgb(0 0 0 / 0.5);
+}
+
+/* 狭い窓で畳む左のカラム(記事一覧)の入れ物(Drawer.tsx)。広い窓ではカラムを並びの中に
+   そのまま出す。窓を広げたときは、畳んだ位置(.narrow .drawer)から滑って戻し、狭めて畳むとき
+   (左の外へ滑る)と出入りの動きを揃える。起動時は前の位置が無いので動かない。 */
+.drawer {
+  display: flex;
+  flex-shrink: 0;
+  transition: transform var(--motion-duration) ease-out;
+}
+
+/* 狭い窓では内容の上に重ね、左の外から滑らせて出し入れする。閉じたら、滑り終えてから
+   visibilityで隠す(隠れている間にTabで中へ入れないようにするため)。 */
+.narrow .drawer {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: min(var(--drawer-width), calc(100% - 3.5rem));
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform var(--motion-duration) ease-out,
+    visibility 0s linear var(--motion-duration);
+  /* 重ねると下の内容が透けるので、ここだけは背景色で塗る。 */
+  background: var(--color-bg);
+  border-right: var(--border-width) solid var(--color-border);
+}
+
+.narrow .drawer.open {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--motion-duration) ease-out;
+}
+
+/* 暗幕の濃さは.scrimの色のまま、不透明度で引き出した割合に合わせる。 */
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--motion-duration) ease-out,
+    visibility 0s linear var(--motion-duration);
+}
+
+.drawer-backdrop.open {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--motion-duration) ease-out;
+}
+
+/* 指に付いて動かしている間(useDrawerSwipe.ts)。引き出した割合(--drawer-progress、0〜1)の位置と
+   濃さにし、移り変わりを止めて指に遅れないようにする。指を離すと外れ、そこから開いた・閉じた
+   位置へ滑る。開いたカラムの指定(.narrow .drawer.open)より後に、同じ詳細度で書く。 */
+.narrow.drawer-dragging > .drawer,
+.drawer-dragging > .drawer-backdrop {
+  visibility: visible;
+  transition: none;
+}
+
+.narrow.drawer-dragging > .drawer {
+  transform: translateX(calc((var(--drawer-progress) - 1) * 100%));
+}
+
+.drawer-dragging > .drawer-backdrop {
+  opacity: var(--drawer-progress);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .narrow .drawer,
+  .narrow .drawer.open,
+  .drawer-backdrop,
+  .drawer-backdrop.open {
+    transition: none;
+  }
+}
+
+/* 引き出したカラムと暗幕の上では、ブラウザに縦のスクロールだけを任せ、横の指の動きは閉じる
+   スワイプ(useDrawerSwipe.ts)に使う。内容側には付けない(横にスクロールする中身が動かなくなる)。 */
+.narrow .drawer,
+.drawer-backdrop {
+  touch-action: pan-y;
+}
+
+/* 引き出したカラムと暗幕は、重ねる部品より手前に出す。同じ順位にしておき、DOMで暗幕の後に
+   置いたカラムが暗幕より手前になる。 */
+.narrow .drawer,
+.drawer-backdrop {
+  z-index: 2;
 }

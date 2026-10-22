@@ -1,0 +1,7 @@
+{
+  "identifier": "android-back-button",
+  "description": "Androidの「戻る」を画面で受けて、開いた記事一覧やメニューを閉じる(src/useCloseOnBack.ts)。受け手の登録と解除だけを与え、core:app:default等のまとめた権限は使わない。",
+  "windows": ["main"],
+  "platforms": ["android"],
+  "permissions": ["core:app:allow-register-listener", "core:app:allow-remove-listener"]
+}
