@@ -1,17 +1,14 @@
 # 並行する2つのPRがそれぞれでは整合していても、合わせるとコンパイルできないことがある。
-# 人の目では見つけにくいので、機械で毎回コンパイルする。
 name: CI
 
 on:
   pull_request:
   # PRのチェックはその時点のベースとの合流結果を見るので、ベースが後から進んで壊れた分は、
-  # 合流を受けるブランチ(Git Flowで他から取り込む4種)で回して拾う。
+  # ほかのブランチを取り込む先で回して拾う
   push:
     branches:
       - develop
       - main
-      - 'release/**'
-      - 'hotfix/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -21,9 +18,11 @@ permissions:
   contents: read
 
 env:
+  # CIではデバッグ情報を使わない。キャッシュする`target`の大半を占める
   CARGO_PROFILE_DEV_DEBUG: 0
 
 jobs:
+  # `custom-protocol`のフィーチャを付けないビルドはdevUrlを読むので、画面のビルド成果物(dist/)は要らない
   rust:
     # webkit2gtkのパッケージ名はUbuntuの版で変わったことがあるので、版を固定する
     runs-on: ubuntu-24.04
@@ -32,9 +31,8 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # デバッグビルドはdevUrlを読むので、画面のビルド成果物(dist/)は要らない
       - name: システム依存を入れる(Tauri)
         run: |
           sudo apt-get update
@@ -60,8 +58,8 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
-  # Android向けにだけ外れるcfgは、ほかのジョブではコンパイルされない。APKは作らず(Gradleと署名の
-  # 用意が要る)、コンパイルが通ることだけを確かめる
+  # Android向けにだけ有効になるcfgは、ほかのジョブではコンパイルされない。APKは作らず(JDK・
+  # Android SDK・NDKの用意が要る)、コンパイルが通ることだけを確かめる
   rust-android:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -69,7 +67,7 @@ jobs:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Rustのターゲットを入れる
         run: rustup target add aarch64-linux-android
@@ -89,16 +87,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
