@@ -73,7 +73,7 @@ Astro製ブログ向けのシンプルなエディタ。MITライセンスで公
 
 ### 画面
 
-大まかな見た目は、Artifactsの試作(https://claude.ai/artifact/8bn9qixundRorooQHvkTdF)で固めた。
+大まかな見た目は、Artifactsの試作(https://claude.ai/artifact/8bn9qixundRorooQHvkTdF)で固めた。試作のソースは[design/](design/)に置いてある。
 
 - 画面とダイアログは次のとおり
   - 編集画面(デスクトップ・Android)

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>保存の確認</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+button{font:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width: 520px; height: 260px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: {{t.scrim}}; font-family: 'Noto Sans JP', sans-serif">
+<div role="alertdialog" aria-labelledby="sc-title" aria-describedby="sc-body" style="width: 440px; box-sizing: border-box; padding: 24px; background: {{t.bg}}; color: {{t.fg}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+<h2 id="sc-title" style="margin: 0; font-size: 16px; font-weight: 500">保存していない変更があります</h2>
+<p id="sc-body" style="margin: 0; font-size: 13px; line-height: 1.7; color: {{t.gray}}">「はじめての記事」の、14:32の自動保存より後の変更です。保存しない場合、この分の変更は消えます。</p>
+<div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px">
+<button style="height: 40px; padding: 0 16px; border: 0; background: none; color: {{t.fg}}; font-size: 14px; margin-right: auto">キャンセル</button>
+<button style="height: 40px; padding: 0 16px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px">保存しない</button>
+<button style="height: 40px; padding: 0 16px; border: 0; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">保存する</button>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":520,"height":260}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', scrim: '#1A1A1A' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', scrim: '#D9D9D9' };
+    return { t };
+  }
+}
+</script>
+</body>
+</html>
