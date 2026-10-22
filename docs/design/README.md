@@ -3,7 +3,7 @@
 仕様を決めるときに使った画面試作(claude.aiのArtifact、Design形式)のソース。2026-10-22時点の版を写したもの。
 
 - 試作: https://claude.ai/artifact/8bn9qixundRorooQHvkTdF (持ち主だけが開ける)
-- 決まった内容は[spec.md](../spec.md)が正。試作と食い違うときはspec.mdに従う
+- 決まった内容は[spec.md](../spec.md)にある。試作と食い違うときはspec.mdに従う
 
 ## ファイル
 

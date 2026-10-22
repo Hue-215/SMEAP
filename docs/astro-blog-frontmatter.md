@@ -14,8 +14,6 @@ Astroそのものはフロントマターの項目を決めていない。項目
 | updatedDate | 任意 | `z.coerce.date().optional()` | 記事ページで、あるときだけ日付の下に「Last updated on {日付}」を出す |
 | heroImage | 任意 | `z.optional(image())` | 記事ページの上部(1020×510)、記事一覧のサムネイル(720×360) |
 
-任意の項目はupdatedDateとheroImageの2つだけ。
-
 ## 補足
 
 - pubDate・updatedDateは`z.coerce.date()`なので、`'Jul 08 2022'`のような書き方も`2022-07-08`も通る。サンプル記事は前者
