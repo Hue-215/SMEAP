@@ -1,0 +1,19 @@
+node_modules/
+dist/
+/dist-release/
+/src-tauri/target/
+# Tauriがビルドのたびに作る権限のスキーマ
+/src-tauri/gen/schemas/
+
+# Androidの署名の鍵(リポジトリの外に置く決まり。誤って置いたときの保険)
+*.p12
+*.jks
+*.keystore
+
+.vscode/
+.idea/
+.DS_Store
+
+.claude/*
+!.claude/skills/
+!.claude/settings.json
