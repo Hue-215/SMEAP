@@ -15,18 +15,13 @@
 #   ASTRO_NOTEPAD_ANDROID_KEY_ALIAS          鍵の別名
 set -euo pipefail
 
-target=aarch64
 case "$#:${1:-}:${2:-}" in
-  0::) ;;
-  2:--target:aarch64 | 2:--target:x86_64) target="$2" ;;
+  0:: | 2:--target:aarch64) target=aarch64 cpu=arm64 abi=arm64-v8a ;;
+  2:--target:x86_64) target=x86_64 cpu=x86_64 abi=x86_64 ;;
   *)
     echo "usage: scripts/release-build-android.sh [--target aarch64|x86_64]" >&2
     exit 2
     ;;
-esac
-case "$target" in
-  aarch64) cpu=arm64 abi=arm64-v8a ;;
-  x86_64) cpu=x86_64 abi=x86_64 ;;
 esac
 
 for name in ASTRO_NOTEPAD_ANDROID_KEYSTORE ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD ASTRO_NOTEPAD_ANDROID_KEY_ALIAS ANDROID_HOME NDK_HOME; do
@@ -65,7 +60,6 @@ cd "$root"
 npm ci
 # 置き換えの指定は、tauri-cli → Gradle → tauri-cli → cargoと、環境変数のまま届く。
 npx tauri android build --apk --target "$target"
-unset CARGO_ENCODED_RUSTFLAGS
 
 if [[ ! -f "$built" ]]; then
   echo "ビルドしたAPKがありません: $built" >&2
@@ -73,29 +67,27 @@ if [[ ! -f "$built" ]]; then
 fi
 
 # APKはzipで、中のファイルは圧縮されているので、展開してから中身を確かめる。
-# 署名まで終えずに抜けたら、検査していない・署名の無いものが配布物の置き場所に残らないようにする。
-unpacked="$(mktemp -d)"
-completed=""
-trap 'rm -rf "$unpacked"; [[ -n "$completed" ]] || rm -f "$dist"' EXIT
-unzip -q "$built" -d "$unpacked"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+unzip -q "$built" -d "$work/unpacked"
 
-abis="$(find "$unpacked/lib" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
+abis="$(find "$work/unpacked/lib" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
 if [[ "$abis" != "$abi " ]]; then
   echo "APKに入っているABIが想定と違います: $abis(想定: $abi)" >&2
   exit 1
 fi
-check_no_absolute_paths "$unpacked"
+check_no_absolute_paths "$work/unpacked"
 echo "絶対パスは残っていません"
 
 # 署名はAPKの中のファイルを変えないので、上の検査は署名したものにも当てはまる。
 # 署名の前に、中のファイルの位置が揃っていること(署名の後には直せない)を確かめる。
+# 検査していない・署名の無いものが配布物の置き場所に残らないよう、署名と確認を終えてから移す。
 "$zipalign" -c 4 "$built"
-mkdir -p "$(dirname "$dist")"
 ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD="$keystore_password" "$apksigner" sign \
   --ks "$ASTRO_NOTEPAD_ANDROID_KEYSTORE" --ks-type PKCS12 --ks-key-alias "$ASTRO_NOTEPAD_ANDROID_KEY_ALIAS" \
   --ks-pass env:ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD --key-pass env:ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD \
-  --out "$dist" "$built"
-rm -f "$dist.idsig"
-"$apksigner" verify "$dist"
-completed=1
+  --v4-signing-enabled false --out "$work/signed.apk" "$built"
+"$apksigner" verify "$work/signed.apk"
+mkdir -p "$(dirname "$dist")"
+mv "$work/signed.apk" "$dist"
 echo "配布物: $dist"

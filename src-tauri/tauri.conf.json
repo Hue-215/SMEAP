@@ -10,10 +10,8 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "withGlobalTauri": false,
     "windows": [
       {
-        "label": "main",
         "title": "Astro-Notepad",
         "width": 1000,
         "height": 720,
@@ -27,8 +25,7 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": "all",
+    "active": false,
     "publisher": "Niigo",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
     "android": {
