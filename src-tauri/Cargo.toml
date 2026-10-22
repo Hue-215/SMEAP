@@ -1,0 +1,30 @@
+[package]
+name = "astro-notepad"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# 本体はライブラリに置き、デスクトップの実行ファイル(`main.rs`)とAndroidのActivityの両方から
+# 呼ぶ(`lib.rs`の`run`)。Androidは`cdylib`を読み込む。iOSは対象にしないので`staticlib`は足さない
+[lib]
+name = "astro_notepad_lib"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# 配布物の大きさを優先する。`panic = "abort"`は入れない(コマンド内のpanicでアプリ全体が落ちるため)
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"

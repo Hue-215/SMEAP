@@ -1,0 +1,34 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: light dark;
+  font-family: var(--font-family);
+  /* 同梱していないウェイトを太字として合成させない(字形が崩れる) */
+  font-synthesis: style;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+}
+
+/* 端末の画面端の安全領域(ステータスバー・ジェスチャーナビゲーションの帯)は、ここの余白で避ける */
+#root {
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.icon {
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+  vertical-align: -0.125em;
+}
