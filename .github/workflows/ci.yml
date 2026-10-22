@@ -20,13 +20,14 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CARGO_PROFILE_DEV_DEBUG: 0
+
 jobs:
   rust:
     # webkit2gtkのパッケージ名はUbuntuの版で変わったことがあるので、版を固定する
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      CARGO_PROFILE_DEV_DEBUG: 0
     defaults:
       run:
         working-directory: src-tauri
@@ -49,6 +50,8 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
+          # PRで保存したキャッシュはほかのPRから使えず、容量の上限を埋めて合流先のキャッシュを追い出す
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: 書式
         run: cargo fmt --check
@@ -58,23 +61,15 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
 
   # Android向けにだけ外れるcfgは、ほかのジョブではコンパイルされない。APKは作らず(Gradleと署名の
-  # 用意が要る)、コンパイルが通ることだけを確かめる。NDKはランナーの画像に入っているものを使う
+  # 用意が要る)、コンパイルが通ることだけを確かめる
   rust-android:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      CARGO_PROFILE_DEV_DEBUG: 0
+    defaults:
+      run:
+        working-directory: src-tauri
     steps:
       - uses: actions/checkout@v4
-
-      # Gradleのwrapperは、Androidのビルドで実行されるバイナリ。差し替えられていないかを、
-      # Gradleが版ごとに公開するチェックサムと照合する
-      - name: Gradleのwrapperの照合
-        working-directory: src-tauri/gen/android/gradle/wrapper
-        run: |
-          version=$(sed -n 's|^distributionUrl=.*/gradle-\(.*\)-bin\.zip$|\1|p' gradle-wrapper.properties)
-          expected=$(curl -fsSL "https://services.gradle.org/distributions/gradle-$version-wrapper.jar.sha256")
-          echo "$expected  gradle-wrapper.jar" | sha256sum -c -
 
       - name: Rustのターゲットを入れる
         run: rustup target add aarch64-linux-android
@@ -83,10 +78,19 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
+          save-if: ${{ github.event_name == 'push' }}
 
       - name: clippy(aarch64-linux-android)
-        working-directory: src-tauri
         run: cargo clippy --target aarch64-linux-android --locked -- -D warnings
+
+  # Gradleのwrapper(gradle-wrapper.jar)は、Androidのビルドで実行されるバイナリ。差し替えられて
+  # いないかを、Gradleが公開するチェックサムと照合する
+  gradle-wrapper:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
   frontend:
     runs-on: ubuntu-24.04
@@ -102,12 +106,9 @@ jobs:
       - name: 依存を入れる
         run: npm ci
 
-      - name: 型検査
-        run: npm run typecheck
-
       - name: lint
         run: npm run lint
 
-      # 型検査ではバンドルのときの失敗(importの解決・Viteの設定)を拾えない
+      # 型検査(tsc -b)も含む
       - name: ビルド
         run: npm run build
