@@ -25,6 +25,15 @@
 }
 
 :root {
+  /* 色。ライトの値。ダークの値は下のprefers-color-schemeで替える。アクセント色は線と印に
+     だけ使い、文字の色にはしない(docs/spec.md「見た目」)。 */
+  --color-bg: #FAFAFA;
+  --color-text: #000000;
+  --color-text-secondary: #707070;
+  --color-border: #E0E0E0;
+  --color-accent: #D57C00;
+  --color-selection: #F0DFC8;
+
   /* 画面の文字。本文は--font-family-prose */
   --font-family: 'Noto Sans JP', sans-serif;
   --font-family-prose: 'Noto Serif JP', serif;
@@ -34,6 +43,7 @@
   --font-weight-normal: 400;
   --font-weight-strong: 500;
 
+  --font-size-xs: 0.75rem;
   --font-size-sm: 0.85rem;
   --font-size-md: 1rem;
   --font-size-lg: 1.25rem;
@@ -44,7 +54,12 @@
 
   /* アイコンだけのボタンの、アイコンとボタンの大きさ */
   --icon-size-md: 1.5rem;
-  --control-size-md: 2.25rem;
+  --control-size-md: 2.5rem;
+  /* 狭い窓でのアイコンボタンの当たり判定 */
+  --control-size-touch: 3rem;
+
+  /* 上のバーとサイドバーの上の行の高さ。狭い窓では下のメディアクエリで替える */
+  --topbar-height: 3.25rem;
 
   /* 1rem(--space-4)までは部品の中・部品どうしの間隔、--space-5は塊と塊を切り分ける間隔 */
   --space-1: 0.25rem;
@@ -57,6 +72,33 @@
 
   --motion-duration: 0.2s;
 
-  --sidebar-width: 16rem;
+  --sidebar-width: 16.5rem;
+  /* 狭い窓で引き出すカラムの幅 */
+  --drawer-width: 19rem;
   --content-max-width: 720px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #000000;
+    --color-text: #FAFAFA;
+    --color-text-secondary: #8C8C8C;
+    --color-border: #262626;
+    --color-accent: #F99D1D;
+    --color-selection: #3E2D16;
+  }
+}
+
+/*
+ * 窓の幅に関わる値の導出式。メディアクエリの条件にはvar()を書けないため、サイドバーを畳む
+ * 境目の値はuseDrawer.tsのNARROW_QUERYに持つ。pxは16px/rem換算。
+ *
+ * サイドバーを畳む境目(サイドバーを出したままで内容領域が最小幅を保てる幅):
+ *   --sidebar-width(16.5rem) + 内容領域の最小幅(22.5rem) = 39rem = 624px
+ * サイドバーや内容領域の幅を変えたときは、NARROW_QUERYと下の条件を見直すこと。
+ */
+@media (width < 39rem) {
+  :root {
+    --topbar-height: 3.5rem;
+  }
 }
