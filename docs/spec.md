@@ -7,7 +7,6 @@ Astro製ブログ向けのシンプルなエディタ。MITライセンスで公
 ### 対象と配布
 
 - 対応OSはAndroidとLinux(Kubuntu)。Linuxはバイナリを実行して使う
-- ブランチ管理はGit-Flow
 
 ### 技術
 
