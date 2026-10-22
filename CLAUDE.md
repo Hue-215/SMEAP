@@ -20,6 +20,6 @@
 
 ## GitHubに関するルール
 
-ブランチ戦略はGit Flowを採用する。`main`と`develop`へは直接コミットしない。`feature/*`は`develop`から切って`develop`へ、`release/*`と`hotfix/*`は`main`と`develop`の両方へ取り込む。
+ブランチ戦略はGit Flowを採用する。`main`と`develop`へは直接コミットしない。`feature/*`は`develop`から切って`develop`へ取り込む。`release/*`は`develop`から、`hotfix/*`は`main`から切り、どちらも`main`と`develop`の両方へ取り込む。
 
 PRを作る前に、`pr-review`スキルに従ってレビューを行う。
