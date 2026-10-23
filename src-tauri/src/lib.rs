@@ -1,11 +1,12 @@
 mod commands;
+mod image_protocol;
 mod store;
 
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    image_protocol::register(tauri::Builder::default())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
             let store = {

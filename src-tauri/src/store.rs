@@ -29,6 +29,10 @@ pub enum StoreError {
     InvalidDate { date: String },
     #[error("heroImageが不正です: {name}")]
     InvalidHeroImage { name: String },
+    #[error("画像の参照が不正です: {reference}")]
+    InvalidImageReference { reference: String },
+    #[error("画像がありません: {reference}")]
+    ImageNotFound { reference: String },
     #[error("記事の形式が違います: {slug}: {reason}")]
     Malformed { slug: String, reason: String },
     #[error("ファイルの操作に失敗しました: {path}: {reason}")]
@@ -40,6 +44,17 @@ impl StoreError {
         StoreError::Io {
             path: path.display().to_string(),
             reason: error.to_string(),
+        }
+    }
+
+    // 記事のファイルが無いのは、記事が無いものとして扱う
+    fn not_found_or_io(slug: &str, path: &Path, error: io::Error) -> Self {
+        if error.kind() == io::ErrorKind::NotFound {
+            StoreError::NotFound {
+                slug: slug.to_string(),
+            }
+        } else {
+            StoreError::io(path, error)
         }
     }
 }
@@ -118,6 +133,12 @@ fn check_fields(fields: &ArticleFields) -> Result<(), StoreError> {
 // 本文とheroImageから画像を指すときの、記事ファイルからの相対パス
 fn assets_ref(slug: &str) -> String {
     format!("../../assets/{slug}/")
+}
+
+fn image_name_from_ref<'a>(slug: &str, reference: &'a str) -> Option<&'a str> {
+    reference
+        .strip_prefix(&assets_ref(slug))
+        .filter(|name| is_filename(name))
 }
 
 pub struct Store {
@@ -261,16 +282,29 @@ impl Store {
     pub fn read_article(&self, slug: &str) -> Result<Article, StoreError> {
         validate_slug(slug)?;
         let md = self.md_path(slug);
-        let content = fs::read_to_string(&md).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                StoreError::NotFound {
-                    slug: slug.to_string(),
-                }
-            } else {
-                StoreError::io(&md, error)
+        let content = fs::read_to_string(&md)
+            .map_err(|error| StoreError::not_found_or_io(slug, &md, error))?;
+        parse_md(slug, &content)
+    }
+
+    // referenceは本文に書いた参照(`../../assets/{slug}/01.png`)
+    pub fn read_image(&self, slug: &str, reference: &str) -> Result<Vec<u8>, StoreError> {
+        validate_slug(slug)?;
+        let name = image_name_from_ref(slug, reference).ok_or_else(|| {
+            StoreError::InvalidImageReference {
+                reference: reference.to_string(),
             }
         })?;
-        parse_md(slug, &content)
+        let path = self.assets_dir(slug).join(name);
+        fs::read(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                StoreError::ImageNotFound {
+                    reference: reference.to_string(),
+                }
+            } else {
+                StoreError::io(&path, error)
+            }
+        })
     }
 
     pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
@@ -281,15 +315,8 @@ impl Store {
         fs::create_dir_all(&self.backup_dir)
             .map_err(|error| StoreError::io(&self.backup_dir, error))?;
         let backup = self.backup_path(slug);
-        fs::copy(&md, &backup).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                StoreError::NotFound {
-                    slug: slug.to_string(),
-                }
-            } else {
-                StoreError::io(&backup, error)
-            }
-        })?;
+        fs::copy(&md, &backup)
+            .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
         self.write_md(&Article {
             slug: slug.to_string(),
             fields,
@@ -466,11 +493,9 @@ fn parse_md(slug: &str, content: &str) -> Result<Article, StoreError> {
     let hero_image = match fields.get("heroImage") {
         Some(value) => {
             let path = string("heroImage", value)?;
-            let prefix = assets_ref(slug);
-            let name = path
-                .strip_prefix(&prefix)
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| malformed(format!("heroImageが{prefix}の下を指していない")))?;
+            let name = image_name_from_ref(slug, &path).ok_or_else(|| {
+                malformed(format!("heroImageが{}の下を指していない", assets_ref(slug)))
+            })?;
             Some(name.to_string())
         }
         None => None,
@@ -614,6 +639,54 @@ mod tests {
         assert!(matches!(
             store.create_article("dup"),
             Err(StoreError::AlreadyExists { .. })
+        ));
+    }
+
+    #[test]
+    fn 画像を読む() {
+        let (_tmp, store) = setup();
+        store.create_article("image").unwrap();
+        fs::write(store.assets_dir("image").join("01.png"), [1u8, 2, 3]).unwrap();
+        let reference = |name: &str| format!("../../assets/image/{name}");
+        assert_eq!(
+            store.read_image("image", &reference("01.png")).unwrap(),
+            vec![1, 2, 3]
+        );
+
+        for bad in [
+            "01.png".to_string(),
+            "../../assets/other/01.png".to_string(),
+            "https://example.com/01.png".to_string(),
+            reference(""),
+            reference("../up.png"),
+            reference("a/b.png"),
+            reference("a\\b.png"),
+            reference("a..b.png"),
+            reference("."),
+        ] {
+            assert!(
+                matches!(
+                    store.read_image("image", &bad),
+                    Err(StoreError::InvalidImageReference { reference }) if reference == bad
+                ),
+                "{bad} は不正な参照のはず"
+            );
+        }
+        for bad_slug in ["../x", "A", "a_b", "a/b"] {
+            assert!(matches!(
+                store.read_image(bad_slug, &reference("01.png")),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+        }
+        assert!(matches!(
+            store.read_image("image", &reference("02.png")),
+            Err(StoreError::ImageNotFound { .. })
+        ));
+        // assetsのディレクトリがまだ無い記事
+        store.create_article("no-assets").unwrap();
+        assert!(matches!(
+            store.read_image("no-assets", "../../assets/no-assets/01.png"),
+            Err(StoreError::ImageNotFound { .. })
         ));
     }
 

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { isAndroid } from './platform'
 
 // Rust側のエラー。中身は見ないので種類だけを受ける。
 export interface StoreError {
@@ -16,6 +17,27 @@ export interface ArticleList {
   broken: StoreError[]
 }
 
+export interface Article {
+  slug: string
+  title: string
+  description: string
+  pubDate: string
+  // ファイル名だけ。本文の画像のような参照ではない
+  heroImage: string | null
+  body: string
+}
+
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')
+}
+
+export function readArticle(slug: string): Promise<Article> {
+  return invoke<Article>('read_article', { slug })
+}
+
+// Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。AndroidのTauriは`http://{scheme}.localhost`で受ける。
+// referenceは本文に書いた参照のまま渡し、記事の画像かどうかはRust側が判断する。
+export function articleImageUrl(slug: string, reference: string): string {
+  const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`
+  return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
 }
