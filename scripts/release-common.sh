@@ -1,9 +1,15 @@
 # 配布用のビルドのスクリプト(release-build.sh・release-build-android.sh)が読み込む共通の部分。
 # ビルドした人の絶対パス(ホームディレクトリ・CARGO_HOME・このリポジトリの場所)を、バイナリに
 # 焼き込まれるパス(依存クレートのパニックの位置等)から外す指定と、外れたことの検査を持つ。
+# 画面のライセンスの一覧を作るcargo-aboutが入っているかも、ここで確かめる。
 
 if [[ -n "${RUSTFLAGS:-}" || -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
   echo "RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS を外してから実行してください(指定がこのスクリプトの置き換えの指定で黙って捨てられるため)" >&2
+  exit 1
+fi
+
+if ! command -v cargo-about >/dev/null; then
+  echo "cargo-about を入れてください(画面のライセンスの一覧に使う): cargo install --locked cargo-about" >&2
   exit 1
 fi
 

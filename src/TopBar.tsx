@@ -15,14 +15,6 @@ const exportZipItem: MenuItem = {
   onSelect: () => {},
 }
 
-const settingsItem: MenuItem = {
-  key: 'settings',
-  label: '設定',
-  icon: 'settings',
-  disabled: true,
-  onSelect: () => {},
-}
-
 interface TopBarProps {
   drawer: DrawerState
   sidebarOpen: boolean
@@ -35,6 +27,7 @@ interface TopBarProps {
   saveStatus: SaveStatus | null
   // あれば保存の状態の代わりに、エラーとして出す
   notice: string | null
+  onOpenSettings: () => void
 }
 
 function StatusText({ status, notice }: { status: SaveStatus | null; notice: string | null }) {
@@ -57,6 +50,7 @@ export default function TopBar({
   onInsertImages,
   saveStatus,
   notice,
+  onOpenSettings,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
@@ -67,7 +61,16 @@ export default function TopBar({
     disabled: onRenameSlug === null,
     onSelect: () => onRenameSlug?.(),
   }
-  const menuItems = [renameItem, ...(isAndroid ? [exportZipItem] : []), settingsItem]
+  const menuItems: MenuItem[] = [
+    renameItem,
+    ...(isAndroid ? [exportZipItem] : []),
+    {
+      key: 'settings',
+      label: '設定',
+      icon: 'settings',
+      onSelect: onOpenSettings,
+    },
+  ]
   return (
     <div role="toolbar" aria-label="編集" className="topbar">
       {drawer.narrow ? (

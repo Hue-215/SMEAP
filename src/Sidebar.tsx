@@ -11,9 +11,10 @@ interface SidebarProps {
   selectedSlug: string | null
   onSelect: (slug: string) => void
   onNew: () => void
+  onSettings: () => void
 }
 
-export default function Sidebar({ articles, selectedSlug, onSelect, onNew }: SidebarProps) {
+export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSettings }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -51,7 +52,7 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew }: Sid
         )}
       </nav>
       <div className="sidebar-footer">
-        <button type="button" className="sidebar-settings" disabled>
+        <button type="button" className="sidebar-settings" onClick={onSettings}>
           <Icon name="settings" />
           設定
         </button>

@@ -1,10 +1,11 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import licenses from './scripts/licenses.js'
 
 // ポート(1420)は、src-tauri/tauri.conf.jsonのdevUrlとdevCspに合わせる。
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), licenses()],
   clearScreen: false,
   server: {
     port: 1420,

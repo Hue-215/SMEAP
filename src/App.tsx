@@ -6,6 +6,7 @@ import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import { Drawer } from './Drawer'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
+import Settings from './Settings'
 import Sidebar from './Sidebar'
 import type { ArticlesState } from './Sidebar'
 import SlugDialog, { type SlugDialogMode } from './SlugDialog'
@@ -35,6 +36,7 @@ export default function App() {
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // 同じ文言が続いても出し直すよう、包んで持つ
   const [notice, setNotice] = useState<{ text: string } | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
@@ -135,6 +137,11 @@ export default function App() {
     })
   }
 
+  const openSettings = () => {
+    drawer.close()
+    setSettingsOpen(true)
+  }
+
   const sidebar = (
     <Sidebar
       articles={articles}
@@ -144,6 +151,7 @@ export default function App() {
         drawer.close()
         openSlugDialog({ kind: 'create' })
       }}
+      onSettings={openSettings}
     />
   )
 
@@ -176,6 +184,7 @@ export default function App() {
           onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
           saveStatus={loaded ? saveStatus : null}
           notice={notice?.text ?? null}
+          onOpenSettings={openSettings}
         />
         <div className="editor-scroll">
           <div className="editor-column">
@@ -211,6 +220,7 @@ export default function App() {
           }}
         />
       )}
+      {settingsOpen && <Settings narrow={drawer.narrow} onClose={() => setSettingsOpen(false)} />}
     </div>
   )
 }
