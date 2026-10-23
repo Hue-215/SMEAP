@@ -7,12 +7,21 @@ import {
   type Ref,
   type RefObject,
 } from 'react'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import type { EditorView } from '@codemirror/view'
-import { importBodyImage, type Article, type ArticleFields, type StoreError } from './api'
+import {
+  importBodyImage,
+  importBodyImageFromPath,
+  importClipboardImage,
+  type Article,
+  type ArticleFields,
+  type StoreError,
+} from './api'
 import ArticleHeader, { type FieldsPatch } from './ArticleHeader'
 import { AutoSaver, type SaveStatus } from './autoSave'
 import Editor from './Editor'
 import { insertImageRefs, insertLink } from './editor'
+import { isAndroid } from './platform'
 
 export interface ArticleEditorHandle {
   isDirty: () => boolean
@@ -36,6 +45,53 @@ interface ArticleEditorProps {
 }
 
 type HeaderFields = Omit<ArticleFields, 'body'>
+
+// runは本文に入れる参照を返す。クリップボードに画像が無ければnull
+interface ImageImport {
+  label: string
+  run: (slug: string) => Promise<string | null>
+}
+
+const fromFile = (file: File): ImageImport => ({
+  label: file.name,
+  run: async (slug) => importBodyImage(slug, new Uint8Array(await file.arrayBuffer())),
+})
+
+const fromPath = (path: string): ImageImport => ({
+  label: path,
+  run: (slug) => importBodyImageFromPath(slug, path),
+})
+
+const fromClipboard: ImageImport = { label: 'クリップボード', run: importClipboardImage }
+
+// 取り込めたものだけを入れる
+async function importImages(
+  slug: string,
+  view: RefObject<EditorView | null>,
+  onNotice: (text: string) => void,
+  imports: ImageImport[],
+) {
+  const refs: string[] = []
+  let unsupported = 0
+  let failed = 0
+  for (const image of imports) {
+    try {
+      const ref = await image.run(slug)
+      if (ref !== null) refs.push(ref)
+    } catch (e) {
+      console.error('画像を取り込めませんでした', image.label, e)
+      if ((e as StoreError | undefined)?.kind === 'unsupportedImage') unsupported++
+      else failed++
+    }
+  }
+  if (refs.length > 0) {
+    // 取り込みの間に記事を切り替えると、編集欄はもう無い。取り込んだ画像は参照されないまま残る
+    if (view.current) insertImageRefs(view.current, refs)
+    else console.error('取り込んだ画像を本文に入れられませんでした', slug, refs)
+  }
+  if (failed > 0) onNotice(`${failed + unsupported}枚の画像を取り込めませんでした`)
+  else if (unsupported > 0) onNotice(`${unsupported}枚は使えない形式です`)
+}
 
 function readFields(
   latest: RefObject<HeaderFields>,
@@ -89,28 +145,42 @@ export default function ArticleEditor({
 
   useEffect(() => saver.setPaused(paused), [saver, paused])
 
-  // 取り込めたものだけを入れる
-  const importImages = async (files: File[]) => {
-    const refs: string[] = []
-    let unsupported = 0
-    let failed = 0
-    for (const file of files) {
-      try {
-        refs.push(await importBodyImage(article.slug, new Uint8Array(await file.arrayBuffer())))
-      } catch (e) {
-        console.error('画像を取り込めませんでした', file.name, e)
-        if ((e as StoreError | undefined)?.kind === 'unsupportedImage') unsupported++
-        else failed++
-      }
+  const slug = article.slug
+  const runImports = (imports: ImageImport[]) =>
+    void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
+
+  // LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、Tauriが受けたパスで取り込む
+  useEffect(() => {
+    if (isAndroid) return
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type !== 'drop' || !view.current) return
+        const editor = view.current
+        const x = event.payload.position.x / window.devicePixelRatio
+        const y = event.payload.position.y / window.devicePixelRatio
+        // 本文の外に落としたらカーソルの位置に入れる
+        const target = document.elementFromPoint(x, y)
+        const pos = target && editor.dom.contains(target) ? editor.posAtCoords({ x, y }) : null
+        if (pos !== null) editor.dispatch({ selection: { anchor: pos } })
+        void importImages(
+          slug,
+          view,
+          (text) => callbacks.current.onNotice(text),
+          event.payload.paths.map(fromPath),
+        )
+      })
+      .then((fn) => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
+      .catch((e) => console.error('ドロップを受けられません', e))
+    return () => {
+      disposed = true
+      unlisten?.()
     }
-    if (refs.length > 0) {
-      // 取り込みの間に記事を切り替えると、編集欄はもう無い。取り込んだ画像は参照されないまま残る
-      if (view.current) insertImageRefs(view.current, refs)
-      else console.error('取り込んだ画像を本文に入れられませんでした', article.slug, refs)
-    }
-    if (failed > 0) callbacks.current.onNotice(`${failed + unsupported}枚の画像を取り込めませんでした`)
-    else if (unsupported > 0) callbacks.current.onNotice(`${unsupported}枚は使えない形式です`)
-  }
+  }, [slug])
 
   useImperativeHandle(ref, () => ({
     isDirty: () => saver.isDirty(),
@@ -119,7 +189,7 @@ export default function ArticleEditor({
     insertLink: () => {
       if (view.current) insertLink(view.current)
     },
-    insertImages: (files) => void importImages(files),
+    insertImages: (files) => runImports(files.map(fromFile)),
   }))
 
   const updateFields = (patch: FieldsPatch) => {
@@ -136,7 +206,9 @@ export default function ArticleEditor({
         initialDoc={article.body}
         viewRef={view}
         onChange={() => saver.changed()}
-        onFiles={(files) => void importImages(files)}
+        onPasteImage={(files) =>
+          runImports(files.length > 0 ? files.map(fromFile) : isAndroid ? [] : [fromClipboard])
+        }
       />
     </>
   )

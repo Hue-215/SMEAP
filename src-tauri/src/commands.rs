@@ -1,10 +1,13 @@
 // `async`: 同期のコマンドはメインスレッドで動き、ファイルの読み書きの間は画面が止まる
 
 use std::borrow::Cow;
+use std::fs;
+use std::path::PathBuf;
 
 use tauri::ipc::{InvokeBody, Request};
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::clipboard;
 use crate::store::{self, Article, ArticleFields, ArticleList, Store, StoreError};
 
 #[tauri::command]
@@ -63,6 +66,31 @@ pub fn import_hero_image(
     let slug = slug_of(&request)?;
     let bytes = body_bytes(request.body())?;
     store.import_hero_image(&slug, &bytes)
+}
+
+// ドロップしたファイル。LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、
+// Tauriが受けたパスから読む
+#[tauri::command(async)]
+pub fn import_body_image_from_path(
+    store: State<'_, Store>,
+    slug: String,
+    path: PathBuf,
+) -> Result<String, StoreError> {
+    let data = fs::read(&path).map_err(|error| StoreError::io(&path, error))?;
+    store.import_body_image(&slug, &data)
+}
+
+// クリップボードに画像が無ければNone
+#[tauri::command(async)]
+pub fn import_clipboard_image(
+    app: AppHandle,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<Option<String>, StoreError> {
+    match clipboard::read_image_png(&app)? {
+        Some(png) => store.import_body_image(&slug, &png).map(Some),
+        None => Ok(None),
+    }
 }
 
 // 画像を本文で受けるので、slugはヘッダーで受ける

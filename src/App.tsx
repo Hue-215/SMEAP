@@ -68,19 +68,6 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [notice])
 
-  // Tauriのドロップの受け取りを切っているので、編集欄の外にファイルを落とすとWebViewがそのファイルを開いてしまう
-  useEffect(() => {
-    const block = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
-    }
-    document.addEventListener('dragover', block)
-    document.addEventListener('drop', block)
-    return () => {
-      document.removeEventListener('dragover', block)
-      document.removeEventListener('drop', block)
-    }
-  }, [])
-
   const openArticle = (slug: string) => {
     setArticle({ status: 'loading', slug })
     // 切り替えた後に返ってきた前の記事の読み込みは捨てる

@@ -1,0 +1,7 @@
+{
+  "identifier": "drag-drop",
+  "description": "ドロップしたファイルのパスを受けて、本文の画像として取り込む(src/ArticleEditor.tsx)。受け手の登録と解除だけを与える。",
+  "windows": ["main"],
+  "platforms": ["linux", "macOS", "windows"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

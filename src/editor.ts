@@ -264,18 +264,15 @@ export function insertImageRefs(view: EditorView, refs: string[]) {
 
 const urlPattern = /^https?:\/\/\S+$/
 
-// 文字を選んでURLを貼ると`[文字](URL)`にする。ファイルは画像として取り込みに回し、形式はRust側で確かめる
-// (typeは環境によって空のことがある)。表計算などからのコピーは文字と画像を両方持つので、文字があれば文字として貼る。
-// 画像でないファイルのドロップも受ける。CodeMirrorの既定の処理に任せると、中身を文字として入れてしまう
-function pasteAndDrop(onFiles: (files: File[]) => void): Extension {
+// 文字を選んでURLを貼ると`[文字](URL)`にする。文字が無ければ画像の貼り付けとして渡す(filesは空のことがある)。
+// 表計算などからのコピーは文字と画像を両方持つので、文字があれば文字として貼る
+function pasteHandler(onPasteImage: (files: File[]) => void): Extension {
   return EditorView.domEventHandlers({
     paste: (event, view) => {
       const text = event.clipboardData?.getData('text/plain') ?? ''
       if (!text) {
-        const files = Array.from(event.clipboardData?.files ?? [])
-        if (files.length === 0) return false
         event.preventDefault()
-        onFiles(files)
+        onPasteImage(Array.from(event.clipboardData?.files ?? []))
         return true
       }
       const url = text.trim()
@@ -285,21 +282,15 @@ function pasteAndDrop(onFiles: (files: File[]) => void): Extension {
       insertLink(view, url)
       return true
     },
-    drop: (event, view) => {
-      const files = Array.from(event.dataTransfer?.files ?? [])
-      if (files.length === 0) return false
-      event.preventDefault()
-      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
-      if (pos !== null) view.dispatch({ selection: { anchor: pos } })
-      onFiles(files)
-      return true
-    },
   })
 }
 
-export function editorExtensions(slug: string, onFiles: (files: File[]) => void): Extension[] {
+export function editorExtensions(
+  slug: string,
+  onPasteImage: (files: File[]) => void,
+): Extension[] {
   return [
-    pasteAndDrop(onFiles),
+    pasteHandler(onPasteImage),
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     drawSelection(),

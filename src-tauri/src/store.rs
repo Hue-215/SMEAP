@@ -38,6 +38,8 @@ pub enum StoreError {
     UnsupportedImage,
     #[error("呼び出し方が不正です: {reason}")]
     InvalidRequest { reason: String },
+    #[error("クリップボードを読めませんでした: {reason}")]
+    Clipboard { reason: String },
     #[error("記事の形式が違います: {slug}: {reason}")]
     Malformed { slug: String, reason: String },
     #[error("ファイルの操作に失敗しました: {path}: {reason}")]
@@ -45,7 +47,7 @@ pub enum StoreError {
 }
 
 impl StoreError {
-    fn io(path: &Path, error: impl Display) -> Self {
+    pub(crate) fn io(path: &Path, error: impl Display) -> Self {
         StoreError::Io {
             path: path.display().to_string(),
             reason: error.to_string(),
