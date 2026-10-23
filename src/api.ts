@@ -27,12 +27,18 @@ export interface Article {
   body: string
 }
 
+export type ArticleFields = Omit<Article, 'slug'>
+
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')
 }
 
 export function readArticle(slug: string): Promise<Article> {
   return invoke<Article>('read_article', { slug })
+}
+
+export function saveArticle(slug: string, fields: ArticleFields): Promise<void> {
+  return invoke('save_article', { slug, fields })
 }
 
 export function createArticle(slug: string): Promise<Article> {

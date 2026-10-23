@@ -3,13 +3,16 @@ import { useCloseOnBack } from './useCloseOnBack'
 
 interface DialogProps {
   labelledBy: string
+  describedBy?: string
+  // 操作の確認ならalertdialog
+  role?: 'alertdialog'
   // Esc・Androidの「戻る」で呼ぶ。閉じるのは親が外して行う
   onCancel: () => void
   children: ReactNode
 }
 
 // 描画されている間だけ開いているモーダル。
-export default function Dialog({ labelledBy, onCancel, children }: DialogProps) {
+export default function Dialog({ labelledBy, describedBy, role, onCancel, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null)
   // close()で開く前にフォーカスのあった所へ戻る。DOMから外すだけでは戻らない
   useEffect(() => {
@@ -22,7 +25,9 @@ export default function Dialog({ labelledBy, onCancel, children }: DialogProps) 
     <dialog
       ref={ref}
       className="dialog"
+      role={role}
       aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
       onCancel={(e) => {
         e.preventDefault()
         onCancel()
