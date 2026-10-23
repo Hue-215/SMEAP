@@ -38,6 +38,8 @@ pub enum StoreError {
     UnsupportedImage,
     #[error("呼び出し方が不正です: {reason}")]
     InvalidRequest { reason: String },
+    // クリップボードはLinuxでだけ読む(src/clipboard.rs)
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     #[error("クリップボードを読めませんでした: {reason}")]
     Clipboard { reason: String },
     #[error("記事の形式が違います: {slug}: {reason}")]
