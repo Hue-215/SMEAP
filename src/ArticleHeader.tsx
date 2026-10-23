@@ -38,10 +38,11 @@ function OneLineField({ className, label, value, onChange }: OneLineFieldProps) 
     if (ref.current) fitHeight(ref.current)
   }, [value])
 
-  // 幅が変わると折り返しが変わる
+  // 幅が変わったときと書体が読み込まれたときは、折り返しが変わる
   useEffect(() => {
     const el = ref.current
     if (!el) return
+    void document.fonts.ready.then(() => fitHeight(el))
     let width = el.clientWidth
     const observer = new ResizeObserver(() => {
       if (el.clientWidth === width) return
@@ -60,7 +61,17 @@ function OneLineField({ className, label, value, onChange }: OneLineFieldProps) 
       placeholder={label}
       aria-label={label}
       value={value}
-      onChange={(e) => onChange(flatten(e.target.value))}
+      onChange={(e) => {
+        const el = e.target
+        const flat = flatten(el.value)
+        // 値を書き換えるとカーソルが末尾へ飛ぶので、元の位置に戻す
+        if (flat !== el.value) {
+          const caret = flatten(el.value.slice(0, el.selectionStart)).length
+          el.value = flat
+          el.setSelectionRange(caret, caret)
+        }
+        onChange(flat)
+      }}
       onKeyDown={blockEnter}
     />
   )
@@ -84,14 +95,18 @@ export default function ArticleHeader({ fields, onChange }: ArticleHeaderProps) 
       <div className="article-meta">
         <label className="article-meta-item">
           公開日
-          {/* 入力途中の日付は値が空になるので制御しない。記事を切り替えたらkeyで作り直す */}
+          {/* 入力途中の日付は値が空になるので制御しない。記事を切り替えたらApp.tsxのkeyで作り直す */}
           <input
             type="date"
             required
+            max="9999-12-31"
             defaultValue={fields.pubDate}
             onChange={(e) => {
               const pubDate = e.target.value
-              if (pubDate) onChange({ pubDate })
+              if (pubDate && e.target.validity.valid) onChange({ pubDate })
+            }}
+            onBlur={(e) => {
+              if (!e.target.value || !e.target.validity.valid) e.target.value = fields.pubDate
             }}
           />
         </label>
