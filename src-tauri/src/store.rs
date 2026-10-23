@@ -164,7 +164,7 @@ fn image_extension(data: &[u8]) -> Option<&'static str> {
     }
 }
 
-// 本文の画像の連番。`parse`は`+1`も通すので、数字だけかを先に確かめる
+// 連番として数える名前。拡張子は問わない。`parse`は`+1`も通すので、数字だけかを先に確かめる
 fn image_number(name: &OsStr) -> Option<u32> {
     let stem = Path::new(name).file_stem()?.to_str()?;
     if !stem.bytes().all(|b| b.is_ascii_digit()) {
@@ -181,7 +181,7 @@ fn next_image_number(dir: &Path) -> Result<u32, StoreError> {
             max = max.max(number);
         }
     }
-    // u32::MAXの次は振れないので、最大のまま返して既存名との衝突で失敗させる
+    // u32::MAXの次は振れないので最大のまま返す。同じ名前があればpersist_noclobberで失敗する
     Ok(max.saturating_add(1))
 }
 
@@ -363,7 +363,7 @@ impl Store {
         Ok(format!("![]({}{name})", assets_ref(slug)))
     }
 
-    // heroImageに入れるファイル名を返す。mdのheroImageもここで書き換え、前のファイルは消す
+    // heroImageに入れるファイル名を返す。mdのheroImageもここで書き換える
     pub fn import_hero_image(&self, slug: &str, data: &[u8]) -> Result<String, StoreError> {
         let _guard = self.lock_guard();
         let (dir, ext) = self.prepare_import(slug, data)?;
@@ -374,12 +374,29 @@ impl Store {
         let tmp = write_temp(&dir, data)?;
         tmp.persist(&path)
             .map_err(|error| StoreError::io(&path, error))?;
-        self.write_md(&article)?;
-        if let Some(old) = old.filter(|old| old.as_str() != name) {
+        if let Err(error) = self.write_md(&article) {
+            // mdは前のheroImageを指したままなので、参照されない画像を残さない
+            if old.as_deref() != Some(name.as_str()) {
+                let _ = fs::remove_file(&path);
+            }
+            return Err(error);
+        }
+        if let Some(old) = old.filter(|old| {
+            // 本文が参照していれば消さない
+            old.as_str() != name
+                && !article
+                    .fields
+                    .body
+                    .contains(&format!("{}{old}", assets_ref(slug)))
+        }) {
+            // 取り込みは済んでいるので、消せなくても失敗にしない
             let old_path = dir.join(&old);
             if let Err(error) = fs::remove_file(&old_path) {
                 if error.kind() != io::ErrorKind::NotFound {
-                    return Err(StoreError::io(&old_path, error));
+                    eprintln!(
+                        "前のheroImageを消せませんでした: {}",
+                        StoreError::io(&old_path, error)
+                    );
                 }
             }
         }
@@ -480,7 +497,7 @@ impl Store {
     }
 }
 
-// 置き換え先と同じディレクトリに書く。上書きするかは呼び出し側がpersistで決める
+// persistをrenameで済ませるため、dirには置き換え先と同じディレクトリを渡す。上書きするかは呼び出し側がpersistかpersist_noclobberかで決める
 fn write_temp(dir: &Path, content: &[u8]) -> Result<tempfile::NamedTempFile, StoreError> {
     // NamedTempFileは0600で作るので、0644で作る
     #[cfg(unix)]
@@ -1228,6 +1245,7 @@ mod tests {
             (&b"GIF89a"[..], "gif"),
             (&b"RIFF\x24\x00\x00\x00WEBP"[..], "webp"),
             (&b"\x00\x00\x00\x20ftypavis"[..], "avif"),
+            (&b"\x00\x00\x00\x20ftypavif"[..], "avif"),
         ] {
             let reference = store.import_body_image("format", data).unwrap();
             assert!(
@@ -1285,7 +1303,7 @@ mod tests {
 
         assert_eq!(store.import_hero_image("post", &png()).unwrap(), "hero.png");
         assert!(!dir.join("cover.png").exists());
-        // 本文の画像は消さない
+        // 前のheroImage以外は消さない
         assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
         let read = store.read_article("post").unwrap();
         assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
@@ -1299,6 +1317,55 @@ mod tests {
     }
 
     #[test]
+    fn heroは本文が参照している前のhero_imageを消さない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let mut fields = input("", "2026-01-01");
+        fields.hero_image = Some("01.png".to_string());
+        fields.body = "![表紙](../../assets/post/01.png)".to_string();
+        store.save_article("post", fields).unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("01.png"), b"old").unwrap();
+
+        assert_eq!(store.import_hero_image("post", &png()).unwrap(), "hero.png");
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
+        let read = store.read_article("post").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+    }
+
+    #[test]
+    fn heroを同じ形式で2回取り込んでも名前は変わらない() {
+        let (_tmp, store) = setup();
+        store.create_article("same-format").unwrap();
+        let dir = store.assets_dir("same-format");
+        store.import_hero_image("same-format", &png()).unwrap();
+        let mut second = png();
+        second.push(1);
+        assert_eq!(
+            store.import_hero_image("same-format", &second).unwrap(),
+            "hero.png"
+        );
+        assert_eq!(fs::read(dir.join("hero.png")).unwrap(), second);
+        let read = store.read_article("same-format").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+    }
+
+    #[test]
+    fn mdが壊れた記事へのhero取り込みは失敗する() {
+        let (_tmp, store) = setup();
+        store.create_article("broken").unwrap();
+        fs::write(store.md_path("broken"), "フロントマターの無いmd").unwrap();
+        assert!(matches!(
+            store.import_hero_image("broken", &png()),
+            Err(StoreError::Malformed { .. })
+        ));
+        assert!(fs::read_dir(store.assets_dir("broken"))
+            .unwrap()
+            .next()
+            .is_none());
+    }
+
+    #[test]
     fn 取り込む記事が無ければ失敗する() {
         let (_tmp, store) = setup();
         assert!(matches!(
@@ -1309,6 +1376,7 @@ mod tests {
             store.import_hero_image("missing", &png()),
             Err(StoreError::NotFound { slug }) if slug == "missing"
         ));
+        assert!(!store.assets_dir("missing").exists());
     }
 
     #[test]

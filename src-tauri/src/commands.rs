@@ -1,5 +1,7 @@
 // `async`: 同期のコマンドはメインスレッドで動き、ファイルの読み書きの間は画面が止まる
 
+use std::borrow::Cow;
+
 use tauri::ipc::{InvokeBody, Request};
 use tauri::State;
 
@@ -49,7 +51,8 @@ pub fn import_body_image(
     request: Request<'_>,
 ) -> Result<String, StoreError> {
     let slug = slug_of(&request)?;
-    store.import_body_image(&slug, raw_body(&request)?)
+    let bytes = body_bytes(request.body())?;
+    store.import_body_image(&slug, &bytes)
 }
 
 #[tauri::command(async)]
@@ -58,10 +61,11 @@ pub fn import_hero_image(
     request: Request<'_>,
 ) -> Result<String, StoreError> {
     let slug = slug_of(&request)?;
-    store.import_hero_image(&slug, raw_body(&request)?)
+    let bytes = body_bytes(request.body())?;
+    store.import_hero_image(&slug, &bytes)
 }
 
-// 画像はJSONにせず生のバイト列で受けるので、slugはヘッダーで受ける
+// 画像を本文で受けるので、slugはヘッダーで受ける
 fn slug_of(request: &Request<'_>) -> Result<String, StoreError> {
     request
         .headers()
@@ -69,15 +73,66 @@ fn slug_of(request: &Request<'_>) -> Result<String, StoreError> {
         .and_then(|value| value.to_str().ok())
         .map(str::to_string)
         .ok_or(StoreError::InvalidRequest {
-            reason: "slugのヘッダーが無い".to_string(),
+            reason: "slugのヘッダーが無いか読めない".to_string(),
         })
 }
 
-fn raw_body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], StoreError> {
-    match request.body() {
-        InvokeBody::Raw(bytes) => Ok(bytes),
-        _ => Err(StoreError::InvalidRequest {
-            reason: "本文がバイト列でない".to_string(),
-        }),
+// Androidでは生のバイト列を送れず、数値の配列のJSONで届く
+fn body_bytes(body: &InvokeBody) -> Result<Cow<'_, [u8]>, StoreError> {
+    match body {
+        InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        InvokeBody::Json(value) => {
+            let Some(values) = value.as_array() else {
+                return Err(invalid_body());
+            };
+            let mut bytes = Vec::with_capacity(values.len());
+            for value in values {
+                let byte = value
+                    .as_u64()
+                    .filter(|&byte| byte <= u64::from(u8::MAX))
+                    .ok_or_else(invalid_body)?;
+                bytes.push(byte as u8);
+            }
+            Ok(Cow::Owned(bytes))
+        }
+    }
+}
+
+fn invalid_body() -> StoreError {
+    StoreError::InvalidRequest {
+        reason: "本文がバイト列にならない".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use serde_json::json;
+
+    #[test]
+    fn rawの本文はバイト列そのまま() {
+        let body = InvokeBody::Raw(vec![1, 2, 3]);
+        assert_eq!(body_bytes(&body).unwrap().as_ref(), &[1u8, 2, 3][..]);
+    }
+
+    #[test]
+    fn jsonの数値の配列はバイト列に集める() {
+        let body = InvokeBody::Json(json!([1, 2, 3]));
+        assert_eq!(body_bytes(&body).unwrap().as_ref(), &[1u8, 2, 3][..]);
+    }
+
+    #[test]
+    fn バイト列にならない本文は失敗する() {
+        for body in [
+            InvokeBody::Json(json!([256])),
+            InvokeBody::Json(json!([1, "x"])),
+            InvokeBody::Json(json!("bytes")),
+        ] {
+            assert!(matches!(
+                body_bytes(&body),
+                Err(StoreError::InvalidRequest { .. })
+            ));
+        }
     }
 }
