@@ -1,5 +1,6 @@
 // `async`: 同期のコマンドはメインスレッドで動き、ファイルの読み書きの間は画面が止まる
 
+use tauri::ipc::{InvokeBody, Request};
 use tauri::State;
 
 use crate::store::{self, Article, ArticleFields, ArticleList, Store, StoreError};
@@ -40,4 +41,41 @@ pub fn rename_article(
     new: String,
 ) -> Result<Article, StoreError> {
     store.rename_article(&old, &new)
+}
+
+#[tauri::command(async)]
+pub fn import_body_image(
+    store: State<'_, Store>,
+    request: Request<'_>,
+) -> Result<String, StoreError> {
+    let slug = slug_of(&request)?;
+    store.import_body_image(&slug, raw_body(&request)?)
+}
+
+#[tauri::command(async)]
+pub fn import_hero_image(
+    store: State<'_, Store>,
+    request: Request<'_>,
+) -> Result<String, StoreError> {
+    let slug = slug_of(&request)?;
+    store.import_hero_image(&slug, raw_body(&request)?)
+}
+
+// 画像はJSONにせず生のバイト列で受けるので、slugはヘッダーで受ける
+fn slug_of(request: &Request<'_>) -> Result<String, StoreError> {
+    request
+        .headers()
+        .get("slug")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .ok_or(StoreError::InvalidSlug {
+            slug: String::new(),
+        })
+}
+
+fn raw_body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], StoreError> {
+    match request.body() {
+        InvokeBody::Raw(bytes) => Ok(bytes),
+        _ => Err(StoreError::UnsupportedImage),
+    }
 }

@@ -1,6 +1,7 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fmt::Display;
 use std::fs;
 use std::io::{self, Write};
@@ -33,6 +34,8 @@ pub enum StoreError {
     InvalidImageReference { reference: String },
     #[error("画像がありません: {reference}")]
     ImageNotFound { reference: String },
+    #[error("画像の形式に対応していません")]
+    UnsupportedImage,
     #[error("記事の形式が違います: {slug}: {reason}")]
     Malformed { slug: String, reason: String },
     #[error("ファイルの操作に失敗しました: {path}: {reason}")]
@@ -139,6 +142,46 @@ fn image_name_from_ref<'a>(slug: &str, reference: &'a str) -> Option<&'a str> {
     reference
         .strip_prefix(&assets_ref(slug))
         .filter(|name| is_filename(name))
+}
+
+fn image_extension(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if data.starts_with(b"\xff\xd8\xff") {
+        Some("jpg")
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if data.len() >= 12 && data.starts_with(b"RIFF") && data[8..12].starts_with(b"WEBP") {
+        Some("webp")
+    } else if data.len() >= 12
+        && data[4..8].starts_with(b"ftyp")
+        && (data[8..12].starts_with(b"avif") || data[8..12].starts_with(b"avis"))
+    {
+        Some("avif")
+    } else {
+        None
+    }
+}
+
+// 本文の画像の連番。`parse`は`+1`も通すので、数字だけかを先に確かめる
+fn image_number(path: &Path) -> Option<u32> {
+    let stem = path.file_stem()?.to_str()?;
+    if !stem.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    stem.parse().ok()
+}
+
+fn next_image_number(dir: &Path) -> Result<u32, StoreError> {
+    let mut max = 0;
+    for entry in fs::read_dir(dir).map_err(|error| StoreError::io(dir, error))? {
+        let entry = entry.map_err(|error| StoreError::io(dir, error))?;
+        if let Some(number) = image_number(&entry.path()) {
+            max = max.max(number);
+        }
+    }
+    // u32::MAXの次は振れないので、最大のまま返して既存名との衝突で失敗させる
+    Ok(max.saturating_add(1))
 }
 
 pub struct Store {
@@ -307,6 +350,52 @@ impl Store {
         })
     }
 
+    // 本文に入れる`![](...)`を返す
+    pub fn import_body_image(&self, slug: &str, data: &[u8]) -> Result<String, StoreError> {
+        validate_slug(slug)?;
+        let _guard = self.lock_guard();
+        let ext = image_extension(data).ok_or(StoreError::UnsupportedImage)?;
+        let dir = self.prepare_import(slug)?;
+        let name = format!("{:02}.{}", next_image_number(&dir)?, ext);
+        let path = dir.join(&name);
+        let tmp = write_temp(&dir, data)?;
+        tmp.persist_noclobber(&path)
+            .map_err(|error| StoreError::io(&path, error))?;
+        Ok(format!("![]({}{name})", assets_ref(slug)))
+    }
+
+    // heroImageに入れるファイル名を返す。拡張子の違う古いhero.*は消す
+    pub fn import_hero_image(&self, slug: &str, data: &[u8]) -> Result<String, StoreError> {
+        validate_slug(slug)?;
+        let _guard = self.lock_guard();
+        let ext = image_extension(data).ok_or(StoreError::UnsupportedImage)?;
+        let dir = self.prepare_import(slug)?;
+        let name = format!("hero.{ext}");
+        let path = dir.join(&name);
+        let tmp = write_temp(&dir, data)?;
+        tmp.persist(&path)
+            .map_err(|error| StoreError::io(&path, error))?;
+        for entry in fs::read_dir(&dir).map_err(|error| StoreError::io(&dir, error))? {
+            let entry = entry.map_err(|error| StoreError::io(&dir, error))?;
+            let path = entry.path();
+            if path.file_stem() == Some(OsStr::new("hero")) && entry.file_name() != name.as_str() {
+                fs::remove_file(&path).map_err(|error| StoreError::io(&path, error))?;
+            }
+        }
+        Ok(name)
+    }
+
+    fn prepare_import(&self, slug: &str) -> Result<PathBuf, StoreError> {
+        let md = self.md_path(slug);
+        if let Err(error) = fs::metadata(&md) {
+            return Err(StoreError::not_found_or_io(slug, &md, error));
+        }
+        // gitは空ディレクトリを持たないため
+        let dir = self.assets_dir(slug);
+        fs::create_dir_all(&dir).map_err(|error| StoreError::io(&dir, error))?;
+        Ok(dir)
+    }
+
     pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
@@ -379,24 +468,30 @@ impl Store {
     fn write_md(&self, article: &Article) -> Result<(), StoreError> {
         let md = self.md_path(&article.slug);
         let dir = self.posts_dir(&article.slug);
-        // NamedTempFileは0600で作るので、0644で作る
-        #[cfg(unix)]
-        let mut tmp = tempfile::Builder::new()
-            .permissions(std::fs::Permissions::from_mode(0o644))
-            .tempfile_in(&dir)
-            .map_err(|error| StoreError::io(&dir, error))?;
-        #[cfg(not(unix))]
-        let mut tmp =
-            tempfile::NamedTempFile::new_in(&dir).map_err(|error| StoreError::io(&dir, error))?;
-        tmp.write_all(render_md(article).as_bytes())
-            .map_err(|error| StoreError::io(tmp.path(), error))?;
-        tmp.as_file()
-            .sync_all()
-            .map_err(|error| StoreError::io(tmp.path(), error))?;
+        let tmp = write_temp(&dir, render_md(article).as_bytes())?;
         tmp.persist(&md)
             .map_err(|error| StoreError::io(&md, error))?;
         Ok(())
     }
+}
+
+// 置き換え先と同じディレクトリに書く。上書きするかは呼び出し側がpersistで決める
+fn write_temp(dir: &Path, content: &[u8]) -> Result<tempfile::NamedTempFile, StoreError> {
+    // NamedTempFileは0600で作るので、0644で作る
+    #[cfg(unix)]
+    let mut tmp = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o644))
+        .tempfile_in(dir)
+        .map_err(|error| StoreError::io(dir, error))?;
+    #[cfg(not(unix))]
+    let mut tmp =
+        tempfile::NamedTempFile::new_in(dir).map_err(|error| StoreError::io(dir, error))?;
+    tmp.write_all(content)
+        .map_err(|error| StoreError::io(tmp.path(), error))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|error| StoreError::io(tmp.path(), error))?;
+    Ok(tmp)
 }
 
 // 順にrenameする。どれかが失敗したら、済んだものを逆順に戻してから失敗を返す
@@ -1053,5 +1148,170 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o644);
+    }
+
+    // 形式判定に通る、先頭バイトだけのダミー
+    fn png() -> Vec<u8> {
+        b"\x89PNG\r\n\x1a\n".to_vec()
+    }
+
+    fn jpeg() -> Vec<u8> {
+        b"\xff\xd8\xff\xe0".to_vec()
+    }
+
+    #[test]
+    fn 連番が01から振られる() {
+        let (_tmp, store) = setup();
+        store.create_article("seq").unwrap();
+        assert_eq!(
+            store.import_body_image("seq", &png()).unwrap(),
+            "![](../../assets/seq/01.png)"
+        );
+        assert_eq!(
+            store.import_body_image("seq", &png()).unwrap(),
+            "![](../../assets/seq/02.png)"
+        );
+        assert_eq!(
+            fs::read(store.assets_dir("seq").join("01.png")).unwrap(),
+            png()
+        );
+    }
+
+    #[test]
+    fn 連番は最大の次で空きを詰めない() {
+        let (_tmp, store) = setup();
+        store.create_article("gap").unwrap();
+        let dir = store.assets_dir("gap");
+        fs::write(dir.join("01.png"), b"old").unwrap();
+        fs::write(dir.join("05.JPG"), b"old").unwrap();
+        assert_eq!(
+            store.import_body_image("gap", &png()).unwrap(),
+            "![](../../assets/gap/06.png)"
+        );
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
+        assert_eq!(fs::read(dir.join("05.JPG")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn 連番は数字でない名前を数えない() {
+        let (_tmp, store) = setup();
+        store.create_article("count").unwrap();
+        let dir = store.assets_dir("count");
+        for name in ["hero.png", "notes.txt", ".png", "x.png"] {
+            fs::write(dir.join(name), b"old").unwrap();
+        }
+        assert_eq!(
+            store.import_body_image("count", &png()).unwrap(),
+            "![](../../assets/count/01.png)"
+        );
+        // u32に入らない番号も数えない
+        fs::write(dir.join("4294967296.png"), b"old").unwrap();
+        assert_eq!(
+            store.import_body_image("count", &png()).unwrap(),
+            "![](../../assets/count/02.png)"
+        );
+    }
+
+    #[test]
+    fn 形式から拡張子が決まる() {
+        let (_tmp, store) = setup();
+        store.create_article("format").unwrap();
+        for (data, ext) in [
+            (&b"\x89PNG\r\n\x1a\n"[..], "png"),
+            (&b"\xff\xd8\xff\xe0"[..], "jpg"),
+            (&b"GIF87a"[..], "gif"),
+            (&b"GIF89a"[..], "gif"),
+            (&b"RIFF\x24\x00\x00\x00WEBP"[..], "webp"),
+            (&b"\x00\x00\x00\x20ftypavis"[..], "avif"),
+        ] {
+            let reference = store.import_body_image("format", data).unwrap();
+            assert!(
+                reference.ends_with(&format!(".{ext})")),
+                "{reference} は {ext} のはず"
+            );
+        }
+
+        for bad in [
+            &b""[..],
+            &b"MZ"[..],
+            &b"RIFF\x24\x00"[..],
+            &b"\x00\x00\x00\x20ftypmp42"[..],
+        ] {
+            assert!(
+                matches!(
+                    store.import_body_image("format", bad),
+                    Err(StoreError::UnsupportedImage)
+                ),
+                "未対応の形式のはず"
+            );
+        }
+    }
+
+    #[test]
+    fn heroは上書きして拡張子違いの古いものを消す() {
+        let (_tmp, store) = setup();
+        store.create_article("hero").unwrap();
+        let dir = store.assets_dir("hero");
+        assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
+        assert_eq!(fs::read(dir.join("hero.png")).unwrap(), png());
+        assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
+
+        assert_eq!(
+            store.import_hero_image("hero", &jpeg()).unwrap(),
+            "hero.jpg"
+        );
+        assert!(!dir.join("hero.png").exists());
+        assert_eq!(fs::read(dir.join("hero.jpg")).unwrap(), jpeg());
+
+        // heroでない画像は残る
+        fs::write(dir.join("01.png"), b"old").unwrap();
+        assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
+        assert!(!dir.join("hero.jpg").exists());
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
+    }
+
+    #[test]
+    fn 取り込む記事が無ければ失敗する() {
+        let (_tmp, store) = setup();
+        assert!(matches!(
+            store.import_body_image("missing", &png()),
+            Err(StoreError::NotFound { slug }) if slug == "missing"
+        ));
+        assert!(matches!(
+            store.import_hero_image("missing", &png()),
+            Err(StoreError::NotFound { slug }) if slug == "missing"
+        ));
+    }
+
+    #[test]
+    fn 不正なslugは取り込めない() {
+        let (_tmp, store) = setup();
+        for slug in ["", "../x", "A", "a_b", "a/b"] {
+            assert!(matches!(
+                store.import_body_image(slug, &png()),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+            assert!(matches!(
+                store.import_hero_image(slug, &png()),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn assetsが無くても取り込める() {
+        let (_tmp, store) = setup();
+        store.create_article("fresh").unwrap();
+        fs::remove_dir_all(store.assets_dir("fresh")).unwrap();
+        assert_eq!(
+            store.import_body_image("fresh", &png()).unwrap(),
+            "![](../../assets/fresh/01.png)"
+        );
+        assert_eq!(
+            store.import_hero_image("fresh", &png()).unwrap(),
+            "hero.png"
+        );
+        assert!(store.assets_dir("fresh").join("01.png").exists());
+        assert!(store.assets_dir("fresh").join("hero.png").exists());
     }
 }
