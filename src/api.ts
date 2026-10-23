@@ -67,6 +67,12 @@ export function importClipboardImage(slug: string): Promise<string | null> {
   return invoke<string | null>('import_clipboard_image', { slug })
 }
 
+export type ExportOutcome = { kind: 'saved' | 'cancelled' | 'leftIncomplete' }
+
+export function exportZip(slug: string): Promise<ExportOutcome> {
+  return invoke<ExportOutcome>('export_zip', { slug })
+}
+
 // 入力中の案内に使う。Rust側のvalidate_slug(src-tauri/src/store.rs)とそろえる
 export function isValidSlug(slug: string): boolean {
   return /^[a-z0-9-]+$/.test(slug)

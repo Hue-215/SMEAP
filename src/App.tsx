@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listArticles, readArticle, type Article, type ArticleFields } from './api'
+import { listArticles, readArticle, exportZip, type Article, type ArticleFields } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import { Drawer } from './Drawer'
@@ -10,7 +10,7 @@ import Settings from './Settings'
 import Sidebar from './Sidebar'
 import type { ArticlesState } from './Sidebar'
 import SlugDialog, { type SlugDialogMode } from './SlugDialog'
-import TopBar from './TopBar'
+import TopBar, { type Notice } from './TopBar'
 import { useSwipeToOpen } from './useDrawerSwipe'
 import { useDrawer } from './useDrawer'
 
@@ -38,7 +38,7 @@ export default function App() {
   const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 同じ文言が続いても出し直すよう、包んで持つ
-  const [notice, setNotice] = useState<{ text: string } | null>(null)
+  const [notice, setNotice] = useState<Notice | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
   const loaded = article.status === 'loaded' ? article : null
@@ -137,6 +137,31 @@ export default function App() {
     })
   }
 
+  // 書き出すのはファイルの内容なので、先に保存する
+  const openExportZip = (slug: string) => {
+    void saveOpenArticle().then((ok) => {
+      if (!ok) return
+      exportZip(slug)
+        .then((outcome) => {
+          switch (outcome.kind) {
+            case 'saved':
+              setNotice({ text: 'zipを書き出しました', error: false })
+              break
+            case 'leftIncomplete':
+              setNotice({
+                text: '書き出しが途中で止まりました。保存先のファイルを消してください',
+                error: true,
+              })
+              break
+          }
+        })
+        .catch((e) => {
+          console.error('zipを書き出せませんでした', e)
+          setNotice({ text: 'zipを書き出せませんでした', error: true })
+        })
+    })
+  }
+
   const openSettings = () => {
     drawer.close()
     setSettingsOpen(true)
@@ -180,10 +205,11 @@ export default function App() {
           onRenameSlug={
             loaded ? () => openSlugDialog({ kind: 'rename', slug: loaded.slug }) : null
           }
+          onExportZip={loaded ? () => openExportZip(loaded.slug) : null}
           onInsertLink={loaded ? () => editor.current?.insertLink() : null}
           onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
           saveStatus={loaded ? saveStatus : null}
-          notice={notice?.text ?? null}
+          notice={notice}
           onOpenSettings={openSettings}
         />
         <div className="editor-scroll">
@@ -196,7 +222,7 @@ export default function App() {
                 paused={saveConfirm !== null}
                 onSaveStatus={setSaveStatus}
                 onSaved={onSaved}
-                onNotice={(text) => setNotice({ text })}
+                onNotice={(text) => setNotice({ text, error: true })}
               />
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>
