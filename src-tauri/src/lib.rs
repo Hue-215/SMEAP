@@ -29,6 +29,8 @@ pub fn run() {
             commands::read_article,
             commands::save_article,
             commands::rename_article,
+            commands::import_body_image,
+            commands::import_hero_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

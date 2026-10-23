@@ -49,6 +49,15 @@ export function renameArticle(oldSlug: string, newSlug: string): Promise<Article
   return invoke<Article>('rename_article', { old: oldSlug, new: newSlug })
 }
 
+// 画像は生のバイト列で送り、slugはヘッダーで渡す(src-tauri/src/commands.rs)。Androidでは数値の配列のJSONになる
+export function importBodyImage(slug: string, data: Uint8Array): Promise<string> {
+  return invoke<string>('import_body_image', data, { headers: { slug } })
+}
+
+export function importHeroImage(slug: string, data: Uint8Array): Promise<string> {
+  return invoke<string>('import_hero_image', data, { headers: { slug } })
+}
+
 // 入力中の案内に使う。Rust側のvalidate_slug(src-tauri/src/store.rs)とそろえる
 export function isValidSlug(slug: string): boolean {
   return /^[a-z0-9-]+$/.test(slug)
