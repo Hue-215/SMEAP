@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listArticles, readArticle, type Article } from './api'
+import { listArticles, readArticle, type Article, type ArticleFields } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import { Drawer } from './Drawer'
@@ -60,7 +60,6 @@ export default function App() {
   }, [])
 
   const openArticle = (slug: string) => {
-    setSaveStatus(initialSaveStatus)
     setArticle({ status: 'loading', slug })
     // 切り替えた後に返ってきた前の記事の読み込みは捨てる
     const settle = (next: ArticleState) =>
@@ -80,12 +79,19 @@ export default function App() {
   const selectArticle = (slug: string) => {
     drawer.close()
     if (slug === selectedSlug && article.status !== 'failed') return
-    if (editor.current?.isDirty()) {
-      setSaveConfirm({ action: { kind: 'switch', slug }, title: editor.current.title() })
-      return
-    }
-    openArticle(slug)
+    if (!askToSave({ kind: 'switch', slug })) openArticle(slug)
   }
+
+  // 保存していない変更があれば確認のダイアログを出してtrue
+  const askToSave = (action: PendingAction) => {
+    const current = editor.current
+    if (!current?.isDirty()) return false
+    setSaveConfirm({ action, title: current.title() })
+    return true
+  }
+
+  // 開いている記事が無ければ保存済みとみなす
+  const saveOpenArticle = () => editor.current?.save() ?? Promise.resolve(true)
 
   const proceed = (action: PendingAction) => {
     setSaveConfirm(null)
@@ -100,10 +106,7 @@ export default function App() {
     getCurrentWindow()
       .onCloseRequested(async (event) => {
         await whenSaved()
-        const current = editor.current
-        if (!current?.isDirty()) return
-        event.preventDefault()
-        setSaveConfirm({ action: { kind: 'close' }, title: current.title() })
+        if (askToSave({ kind: 'close' })) event.preventDefault()
       })
       .then((fn) => {
         if (disposed) fn()
@@ -118,7 +121,7 @@ export default function App() {
 
   // slugの変更はファイルから読んだ内容で行い、新しい記事は開いていた記事と入れ替わるので、先に保存する
   const openSlugDialog = (mode: SlugDialogMode) => {
-    void (editor.current?.save() ?? Promise.resolve(true)).then((ok) => {
+    void saveOpenArticle().then((ok) => {
       if (ok) setSlugDialog(mode)
     })
   }
@@ -135,9 +138,15 @@ export default function App() {
     />
   )
 
+  // 一覧に出るのはタイトルと公開日
+  const onSaved = (fields: ArticleFields) => {
+    if (articles.status !== 'loaded' || article.status !== 'loaded') return
+    const listed = articles.articles.find((a) => a.slug === article.slug)
+    if (listed?.title !== fields.title || listed.pubDate !== fields.pubDate) reloadArticles()
+  }
+
   const swipeToOpen = useSwipeToOpen(drawer)
   const onDialogDone = (a: Article) => {
-    if (slugDialog?.kind === 'create') setSaveStatus(initialSaveStatus)
     setSlugDialog(null)
     reloadArticles()
     setArticle({ status: 'loaded', slug: a.slug, article: a })
@@ -166,11 +175,8 @@ export default function App() {
                 ref={editor}
                 article={article.article}
                 paused={saveConfirm !== null}
-                onSaveStatus={(status) => {
-                  setSaveStatus(status)
-                  // タイトルと公開日が一覧に出る
-                  if (!status.failed) reloadArticles()
-                }}
+                onSaveStatus={setSaveStatus}
+                onSaved={onSaved}
               />
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>
@@ -188,7 +194,7 @@ export default function App() {
           onCancel={() => setSaveConfirm(null)}
           onDiscard={() => proceed(saveConfirm.action)}
           onSave={async () => {
-            const ok = (await editor.current?.save()) ?? true
+            const ok = await saveOpenArticle()
             if (ok) proceed(saveConfirm.action)
             return ok
           }}
