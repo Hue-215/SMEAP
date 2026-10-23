@@ -39,6 +39,7 @@ export default function App() {
   const [notice, setNotice] = useState<{ text: string } | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
+  const loaded = article.status === 'loaded' ? article : null
 
   // 後から出した読み込みが先に返ったら、前の読み込みの結果は捨てる
   const listRequest = useRef(0)
@@ -182,15 +183,11 @@ export default function App() {
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onRenameSlug={
-            article.status === 'loaded'
-              ? () => openSlugDialog({ kind: 'rename', slug: article.slug })
-              : null
+            loaded ? () => openSlugDialog({ kind: 'rename', slug: loaded.slug }) : null
           }
-          onInsertLink={article.status === 'loaded' ? () => editor.current?.insertLink() : null}
-          onInsertImages={
-            article.status === 'loaded' ? (files) => editor.current?.insertImages(files) : null
-          }
-          saveStatus={article.status === 'loaded' ? saveStatus : null}
+          onInsertLink={loaded ? () => editor.current?.insertLink() : null}
+          onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
+          saveStatus={loaded ? saveStatus : null}
           notice={notice?.text ?? null}
         />
         <div className="editor-scroll">
@@ -203,7 +200,7 @@ export default function App() {
                 paused={saveConfirm !== null}
                 onSaveStatus={setSaveStatus}
                 onSaved={onSaved}
-                onImageError={(text) => setNotice({ text })}
+                onNotice={(text) => setNotice({ text })}
               />
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>

@@ -233,17 +233,24 @@ const editorTheme = EditorView.theme({
   },
 })
 
-// 選んだ文字を`[文字]()`にし、カーソルを`()`の中に置く
-export function insertLink(view: EditorView) {
+// cursorは挿入した文字の先頭からの位置
+function replaceSelection(view: EditorView, insert: string, cursor = insert.length) {
   const { from, to } = view.state.selection.main
-  const text = view.state.sliceDoc(from, to)
   view.dispatch({
-    changes: { from, to, insert: `[${text}]()` },
-    selection: { anchor: from + text.length + 3 },
+    changes: { from, to, insert },
+    selection: { anchor: from + cursor },
     scrollIntoView: true,
     userEvent: 'input',
   })
   view.focus()
+}
+
+// 選んだ文字を`[文字](url)`にする。urlが空ならカーソルを`()`の中に置く
+export function insertLink(view: EditorView, url = '') {
+  const { from, to } = view.state.selection.main
+  const text = view.state.sliceDoc(from, to)
+  const insert = `[${text}](${url})`
+  replaceSelection(view, insert, url ? insert.length : text.length + 3)
 }
 
 // 画像の記法は行の末尾に画像を出すので、1つずつ行を分ける
@@ -252,14 +259,7 @@ export function insertImageRefs(view: EditorView, refs: string[]) {
   const doc = view.state.doc
   const before = from > doc.lineAt(from).from ? '\n' : ''
   const after = to < doc.lineAt(to).to ? '\n' : ''
-  const insert = before + refs.join('\n') + after
-  view.dispatch({
-    changes: { from, to, insert },
-    selection: { anchor: from + insert.length },
-    scrollIntoView: true,
-    userEvent: 'input',
-  })
-  view.focus()
+  replaceSelection(view, before + refs.join('\n') + after)
 }
 
 const urlPattern = /^https?:\/\/\S+$/
@@ -285,13 +285,7 @@ function pasteAndDrop(onImages: (files: File[]) => void): Extension {
       const { main, ranges } = view.state.selection
       if (main.empty || ranges.length > 1 || !urlPattern.test(url)) return false
       event.preventDefault()
-      const insert = `[${view.state.sliceDoc(main.from, main.to)}](${url})`
-      view.dispatch({
-        changes: { from: main.from, to: main.to, insert },
-        selection: { anchor: main.from + insert.length },
-        scrollIntoView: true,
-        userEvent: 'input.paste',
-      })
+      insertLink(view, url)
       return true
     },
     drop: (event, view) => {

@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -31,8 +30,8 @@ interface ArticleEditorProps {
   paused: boolean
   onSaveStatus: (status: SaveStatus) => void
   onSaved: (fields: ArticleFields) => void
-  // 取り込めなかった画像があったときの、画面に出す文言
-  onImageError: (message: string) => void
+  // 上のバーに出す知らせ
+  onNotice: (text: string) => void
   ref: Ref<ArticleEditorHandle>
 }
 
@@ -52,7 +51,7 @@ export default function ArticleEditor({
   paused,
   onSaveStatus,
   onSaved,
-  onImageError,
+  onNotice,
   ref,
 }: ArticleEditorProps) {
   const [fields, setFields] = useState<HeaderFields>(() => ({
@@ -64,9 +63,9 @@ export default function ArticleEditor({
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
   const latest = useRef(fields)
   const view = useRef<EditorView>(null)
-  const callbacks = useRef({ onSaveStatus, onSaved, onImageError })
+  const callbacks = useRef({ onSaveStatus, onSaved, onNotice })
   useEffect(() => {
-    callbacks.current = { onSaveStatus, onSaved, onImageError }
+    callbacks.current = { onSaveStatus, onSaved, onNotice }
   })
   const [saver] = useState(() => new AutoSaver(article.slug))
 
@@ -91,40 +90,33 @@ export default function ArticleEditor({
   useEffect(() => saver.setPaused(paused), [saver, paused])
 
   // 取り込めたものだけを入れる
-  const importImages = useCallback(
-    async (files: File[]) => {
-      const refs: string[] = []
-      let unsupported = false
-      let failed = false
-      for (const file of files) {
-        try {
-          refs.push(await importBodyImage(article.slug, new Uint8Array(await file.arrayBuffer())))
-        } catch (e) {
-          console.error('画像を取り込めませんでした', file.name, e)
-          if ((e as StoreError).kind === 'unsupportedImage') unsupported = true
-          else failed = true
-        }
+  const importImages = async (files: File[]) => {
+    const refs: string[] = []
+    let unsupported = false
+    let failed = false
+    for (const file of files) {
+      try {
+        refs.push(await importBodyImage(article.slug, new Uint8Array(await file.arrayBuffer())))
+      } catch (e) {
+        console.error('画像を取り込めませんでした', file.name, e)
+        if ((e as StoreError).kind === 'unsupportedImage') unsupported = true
+        else failed = true
       }
-      if (refs.length > 0 && view.current) insertImageRefs(view.current, refs)
-      if (failed) callbacks.current.onImageError('画像を取り込めませんでした')
-      else if (unsupported) callbacks.current.onImageError('この形式の画像は使えません')
-    },
-    [article.slug],
-  )
+    }
+    if (refs.length > 0 && view.current) insertImageRefs(view.current, refs)
+    if (failed) callbacks.current.onNotice('画像を取り込めませんでした')
+    else if (unsupported) callbacks.current.onNotice('この形式の画像は使えません')
+  }
 
-  useImperativeHandle(
-    ref,
-    () => ({
-      isDirty: () => saver.isDirty(),
-      save: () => saver.save(),
-      title: () => latest.current.title,
-      insertLink: () => {
-        if (view.current) insertLink(view.current)
-      },
-      insertImages: (files) => void importImages(files),
-    }),
-    [saver, importImages],
-  )
+  useImperativeHandle(ref, () => ({
+    isDirty: () => saver.isDirty(),
+    save: () => saver.save(),
+    title: () => latest.current.title,
+    insertLink: () => {
+      if (view.current) insertLink(view.current)
+    },
+    insertImages: (files) => void importImages(files),
+  }))
 
   const updateFields = (patch: FieldsPatch) => {
     latest.current = { ...latest.current, ...patch }
