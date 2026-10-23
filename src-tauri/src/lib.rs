@@ -6,8 +6,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = image_protocol::register(tauri::Builder::default());
-    builder
+    image_protocol::register(tauri::Builder::default())
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
             let store = {

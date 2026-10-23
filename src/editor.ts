@@ -130,45 +130,38 @@ function imageField(slug: string): StateField<DecorationSet> {
 function imageDecorations(state: EditorState, slug: string): DecorationSet {
   const widgets: Array<Range<Decoration>> = []
   syntaxTree(state).iterate({
-    from: 0,
-    to: state.doc.length,
     enter: (node) => {
-      if (node.name !== 'Image' || !node.node) return
+      if (node.name !== 'Image') return
       const urlNode = node.node.getChild('URL')
       if (!urlNode) return
-      const url = state.sliceDoc(urlNode.from, urlNode.to)
-      const name = imageUrlName(slug, url)
-      if (name === null) return
+      const reference = state.sliceDoc(urlNode.from, urlNode.to)
+      if (isExternal(reference)) return
       const line = state.doc.lineAt(node.from)
       widgets.push(
         Decoration.widget({
-          widget: new ImageWidget(articleImageUrl(slug, name), name),
+          widget: new ImageWidget(articleImageUrl(slug, reference), reference),
           block: true,
           side: 1,
-        }).range(line.to, line.to),
+        }).range(line.to),
       )
     },
   })
   return Decoration.set(widgets, true)
 }
 
-// 自分の記事の画像だけを対象にする。外部のURLや他の記事の画像は出さない。
-function imageUrlName(slug: string, url: string): string | null {
-  const prefix = `../../assets/${slug}/`
-  if (!url.startsWith(prefix)) return null
-  const name = url.slice(prefix.length)
-  if (name.includes('/') || name.includes('..')) return null
-  return name
+// スキームの付いたURLと`//`で始まるURLは外部の画像とみなし、読み込まない。
+function isExternal(reference: string): boolean {
+  return /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(reference)
 }
 
 class ImageWidget extends WidgetType {
   readonly url: string
-  readonly name: string
+  readonly reference: string
 
-  constructor(url: string, name: string) {
+  constructor(url: string, reference: string) {
     super()
     this.url = url
-    this.name = name
+    this.reference = reference
   }
 
   override eq(other: ImageWidget): boolean {
@@ -185,7 +178,7 @@ class ImageWidget extends WidgetType {
       img.remove()
       const message = document.createElement('span')
       message.className = 'cm-image-error'
-      message.textContent = `画像を読めません: ${this.name}`
+      message.textContent = `画像を読めません: ${this.reference}`
       wrap.appendChild(message)
     })
     wrap.appendChild(img)

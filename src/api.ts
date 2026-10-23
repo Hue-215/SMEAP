@@ -35,7 +35,8 @@ export function readArticle(slug: string): Promise<Article> {
 }
 
 // Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。AndroidではTauriがhttpの形に替える。
-export function articleImageUrl(slug: string, name: string): string {
-  const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(name)}`
+// referenceは本文に書いた参照のまま渡し、記事の画像かどうかはRust側が判断する。
+export function articleImageUrl(slug: string, reference: string): string {
+  const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`
   return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
 }
