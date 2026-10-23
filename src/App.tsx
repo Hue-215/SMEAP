@@ -35,6 +35,8 @@ export default function App() {
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
+  // 同じ文言が続いても出し直すよう、包んで持つ
+  const [notice, setNotice] = useState<{ text: string } | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
 
@@ -57,6 +59,25 @@ export default function App() {
 
   useEffect(() => {
     reloadArticles()
+  }, [])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 5000)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  // Tauriのドロップの受け取りを切っているので、編集欄の外にファイルを落とすとWebViewがそのファイルを開いてしまう
+  useEffect(() => {
+    const block = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+    }
+    document.addEventListener('dragover', block)
+    document.addEventListener('drop', block)
+    return () => {
+      document.removeEventListener('dragover', block)
+      document.removeEventListener('drop', block)
+    }
   }, [])
 
   const openArticle = (slug: string) => {
@@ -165,7 +186,12 @@ export default function App() {
               ? () => openSlugDialog({ kind: 'rename', slug: article.slug })
               : null
           }
+          onInsertLink={article.status === 'loaded' ? () => editor.current?.insertLink() : null}
+          onInsertImages={
+            article.status === 'loaded' ? (files) => editor.current?.insertImages(files) : null
+          }
           saveStatus={article.status === 'loaded' ? saveStatus : null}
+          notice={notice?.text ?? null}
         />
         <div className="editor-scroll">
           <div className="editor-column">
@@ -177,6 +203,7 @@ export default function App() {
                 paused={saveConfirm !== null}
                 onSaveStatus={setSaveStatus}
                 onSaved={onSaved}
+                onImageError={(text) => setNotice({ text })}
               />
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>

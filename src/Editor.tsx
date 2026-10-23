@@ -8,22 +8,24 @@ interface EditorProps {
   // 本文を読むときに使う。編集欄がある間だけ入る
   viewRef: RefObject<EditorView | null>
   onChange: () => void
+  // 貼り付けやドロップで受けた画像
+  onImages: (files: File[]) => void
 }
 
-export default function Editor({ slug, initialDoc, viewRef, onChange }: EditorProps) {
+export default function Editor({ slug, initialDoc, viewRef, onChange, onImages }: EditorProps) {
   const container = useRef<HTMLDivElement>(null)
-  const onChangeRef = useRef(onChange)
+  const callbacks = useRef({ onChange, onImages })
   useEffect(() => {
-    onChangeRef.current = onChange
+    callbacks.current = { onChange, onImages }
   })
 
   useEffect(() => {
     const view = new EditorView({
       doc: initialDoc,
       extensions: [
-        editorExtensions(slug),
+        editorExtensions(slug, (files) => callbacks.current.onImages(files)),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current()
+          if (update.docChanged) callbacks.current.onChange()
         }),
       ],
       parent: container.current ?? undefined,

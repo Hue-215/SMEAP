@@ -233,8 +233,82 @@ const editorTheme = EditorView.theme({
   },
 })
 
-export function editorExtensions(slug: string): Extension[] {
+// 選んだ文字を`[文字]()`にし、カーソルを`()`の中に置く
+export function insertLink(view: EditorView) {
+  const { from, to } = view.state.selection.main
+  const text = view.state.sliceDoc(from, to)
+  view.dispatch({
+    changes: { from, to, insert: `[${text}]()` },
+    selection: { anchor: from + text.length + 3 },
+    scrollIntoView: true,
+    userEvent: 'input',
+  })
+  view.focus()
+}
+
+// 画像の記法は行の末尾に画像を出すので、1つずつ行を分ける
+export function insertImageRefs(view: EditorView, refs: string[]) {
+  const { from, to } = view.state.selection.main
+  const doc = view.state.doc
+  const before = from > doc.lineAt(from).from ? '\n' : ''
+  const after = to < doc.lineAt(to).to ? '\n' : ''
+  const insert = before + refs.join('\n') + after
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + insert.length },
+    scrollIntoView: true,
+    userEvent: 'input',
+  })
+  view.focus()
+}
+
+const urlPattern = /^https?:\/\/\S+$/
+
+function imageFiles(data: DataTransfer | null): File[] {
+  return Array.from(data?.files ?? []).filter((file) => file.type.startsWith('image/'))
+}
+
+// 文字を選んでURLを貼ると`[文字](URL)`にする。画像は取り込む。
+// 表計算などからのコピーは文字と画像を両方持つので、文字があれば文字として貼る
+function pasteAndDrop(onImages: (files: File[]) => void): Extension {
+  return EditorView.domEventHandlers({
+    paste: (event, view) => {
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      if (!text) {
+        const files = imageFiles(event.clipboardData)
+        if (files.length === 0) return false
+        event.preventDefault()
+        onImages(files)
+        return true
+      }
+      const url = text.trim()
+      const { main, ranges } = view.state.selection
+      if (main.empty || ranges.length > 1 || !urlPattern.test(url)) return false
+      event.preventDefault()
+      const insert = `[${view.state.sliceDoc(main.from, main.to)}](${url})`
+      view.dispatch({
+        changes: { from: main.from, to: main.to, insert },
+        selection: { anchor: main.from + insert.length },
+        scrollIntoView: true,
+        userEvent: 'input.paste',
+      })
+      return true
+    },
+    drop: (event, view) => {
+      const files = imageFiles(event.dataTransfer)
+      if (files.length === 0) return false
+      event.preventDefault()
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
+      if (pos !== null) view.dispatch({ selection: { anchor: pos } })
+      onImages(files)
+      return true
+    },
+  })
+}
+
+export function editorExtensions(slug: string, onImages: (files: File[]) => void): Extension[] {
   return [
+    pasteAndDrop(onImages),
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     drawSelection(),
