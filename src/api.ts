@@ -1,33 +1,53 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isAndroid } from './platform'
 
-// Rust側のエラー。中身は見ないので種類だけを受ける。
+// Rust側のエラー。中身は見ないので種類だけを受ける。種類によってpath・reasonを持つ
 export interface StoreError {
   kind: string
+  path?: string
+  reason?: string
 }
 
 export interface ArticleSummary {
   slug: string
   title: string
-  pubDate: string
+  pubDate: string | null
+  warning: boolean
+}
+
+// slugの分かる、読めない記事
+export interface BrokenArticle {
+  slug: string
+  path: string
+  reason: string
+}
+
+// 記事に結び付かない読めない項目
+export interface UnreadableEntry {
+  path: string
+  reason: string
 }
 
 export interface ArticleList {
   articles: ArticleSummary[]
-  broken: StoreError[]
+  broken: BrokenArticle[]
+  unreadable: UnreadableEntry[]
 }
 
 export interface Article {
   slug: string
-  title: string
-  description: string
-  pubDate: string
+  title: string | null
+  description: string | null
+  pubDate: string | null
   // ファイル名だけ。本文の画像のような参照ではない
   heroImage: string | null
   body: string
+  // 読めなかったフロントマターの元の行。画面では表示も編集もせず、保存でそのまま送り返す
+  extraFrontmatter: string
+  warnings: string[]
 }
 
-export type ArticleFields = Omit<Article, 'slug'>
+export type ArticleFields = Omit<Article, 'slug' | 'warnings'>
 
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')

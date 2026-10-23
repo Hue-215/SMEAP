@@ -115,6 +115,7 @@ export default function ArticleEditor({
     description: article.description,
     pubDate: article.pubDate,
     heroImage: article.heroImage,
+    extraFrontmatter: article.extraFrontmatter,
   }))
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
   const latest = useRef(fields)
@@ -185,7 +186,7 @@ export default function ArticleEditor({
   useImperativeHandle(ref, () => ({
     isDirty: () => saver.isDirty(),
     save: () => saver.save(),
-    title: () => latest.current.title,
+    title: () => latest.current.title ?? '',
     insertLink: () => {
       if (view.current) insertLink(view.current)
     },
@@ -200,7 +201,7 @@ export default function ArticleEditor({
 
   return (
     <>
-      <ArticleHeader fields={fields} onChange={updateFields} />
+      <ArticleHeader fields={fields} warnings={article.warnings} onChange={updateFields} />
       <Editor
         slug={article.slug}
         initialDoc={article.body}

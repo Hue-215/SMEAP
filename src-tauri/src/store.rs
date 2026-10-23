@@ -153,7 +153,7 @@ fn is_valid_date(date: &str) -> bool {
         .is_ok_and(|parsed| parsed.format(DATE_FORMAT).to_string() == date)
 }
 
-// 保存と読み込みの両方で通す検証。読めていない項目は確かめない
+// 保存のときに通す検証。読めていない項目は確かめない
 fn check_fields(fields: &ArticleFields) -> Result<(), StoreError> {
     if let Some(date) = &fields.pub_date {
         if !is_valid_date(date) {
@@ -820,9 +820,9 @@ fn read_string(value: &str) -> Option<String> {
     if value.starts_with('"') {
         return serde_json::from_str(value).ok();
     }
-    if let Some(rest) = value.strip_prefix('\'') {
-        let inner = rest.strip_suffix('\'')?;
-        return Some(inner.replace("''", "'"));
+    // `'`で始まり`'`で終わるときだけシングルクォートの形とみなす
+    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+        return Some(value[1..value.len() - 1].replace("''", "'"));
     }
     Some(value.to_string())
 }
@@ -1520,6 +1520,15 @@ mod tests {
         );
         assert_eq!(article.fields.title.as_deref(), Some("a'b"));
         assert!(article.warnings.is_empty());
+
+        // `'`で始まり`'`で終わらない値は、そのままの文字列として読む
+        let article = md_article(
+            &store,
+            "open-single",
+            "---\ntitle: 'それはそう\ndescription: \"\"\npubDate: 2026-01-01\n---\n",
+        );
+        assert_eq!(article.fields.title.as_deref(), Some("'それはそう"));
+        assert!(article.warnings.is_empty());
     }
 
     #[test]
@@ -1955,7 +1964,7 @@ mod tests {
     }
 
     #[test]
-    fn 読めない日付は残しつつ値を入れると書き直る() {
+    fn 読めない日付は残しつつ値を入れると書き直される() {
         let (_tmp, store) = setup();
         let content = "---\ntitle: \"t\"\ndescription: \"d\"\npubDate: 2026-5-1\n---\n本文\n";
         let article = md_article(&store, "keep", content);
