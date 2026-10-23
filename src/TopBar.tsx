@@ -29,7 +29,6 @@ interface TopBarProps {
   onToggleSidebar: () => void
   // nullなら押せない
   onRenameSlug: (() => void) | null
-  // nullなら押せない
   onInsertLink: (() => void) | null
   onInsertImages: ((files: File[]) => void) | null
   // nullなら出さない

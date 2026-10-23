@@ -30,7 +30,7 @@ interface ArticleEditorProps {
   paused: boolean
   onSaveStatus: (status: SaveStatus) => void
   onSaved: (fields: ArticleFields) => void
-  // 上のバーに出す知らせ
+  // エラーとして出す文言
   onNotice: (text: string) => void
   ref: Ref<ArticleEditorHandle>
 }
@@ -92,20 +92,24 @@ export default function ArticleEditor({
   // 取り込めたものだけを入れる
   const importImages = async (files: File[]) => {
     const refs: string[] = []
-    let unsupported = false
-    let failed = false
+    let unsupported = 0
+    let failed = 0
     for (const file of files) {
       try {
         refs.push(await importBodyImage(article.slug, new Uint8Array(await file.arrayBuffer())))
       } catch (e) {
         console.error('画像を取り込めませんでした', file.name, e)
-        if ((e as StoreError).kind === 'unsupportedImage') unsupported = true
-        else failed = true
+        if ((e as StoreError | undefined)?.kind === 'unsupportedImage') unsupported++
+        else failed++
       }
     }
-    if (refs.length > 0 && view.current) insertImageRefs(view.current, refs)
-    if (failed) callbacks.current.onNotice('画像を取り込めませんでした')
-    else if (unsupported) callbacks.current.onNotice('この形式の画像は使えません')
+    if (refs.length > 0) {
+      // 取り込みの間に記事を切り替えると、編集欄はもう無い。取り込んだ画像は参照されないまま残る
+      if (view.current) insertImageRefs(view.current, refs)
+      else console.error('取り込んだ画像を本文に入れられませんでした', article.slug, refs)
+    }
+    if (failed > 0) callbacks.current.onNotice(`${failed + unsupported}枚の画像を取り込めませんでした`)
+    else if (unsupported > 0) callbacks.current.onNotice(`${unsupported}枚は使えない形式です`)
   }
 
   useImperativeHandle(ref, () => ({
@@ -132,7 +136,7 @@ export default function ArticleEditor({
         initialDoc={article.body}
         viewRef={view}
         onChange={() => saver.changed()}
-        onImages={(files) => void importImages(files)}
+        onFiles={(files) => void importImages(files)}
       />
     </>
   )

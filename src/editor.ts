@@ -253,7 +253,7 @@ export function insertLink(view: EditorView, url = '') {
   replaceSelection(view, insert, url ? insert.length : text.length + 3)
 }
 
-// 画像の記法は行の末尾に画像を出すので、1つずつ行を分ける
+// 画像は記法のある行の下に出るので、1つずつ別の行に置く
 export function insertImageRefs(view: EditorView, refs: string[]) {
   const { from, to } = view.state.selection.main
   const doc = view.state.doc
@@ -264,21 +264,18 @@ export function insertImageRefs(view: EditorView, refs: string[]) {
 
 const urlPattern = /^https?:\/\/\S+$/
 
-function imageFiles(data: DataTransfer | null): File[] {
-  return Array.from(data?.files ?? []).filter((file) => file.type.startsWith('image/'))
-}
-
-// 文字を選んでURLを貼ると`[文字](URL)`にする。画像は取り込む。
-// 表計算などからのコピーは文字と画像を両方持つので、文字があれば文字として貼る
-function pasteAndDrop(onImages: (files: File[]) => void): Extension {
+// 文字を選んでURLを貼ると`[文字](URL)`にする。ファイルは画像として取り込みに回し、形式はRust側で確かめる
+// (typeは環境によって空のことがある)。表計算などからのコピーは文字と画像を両方持つので、文字があれば文字として貼る。
+// 画像でないファイルのドロップも受ける。CodeMirrorの既定の処理に任せると、中身を文字として入れてしまう
+function pasteAndDrop(onFiles: (files: File[]) => void): Extension {
   return EditorView.domEventHandlers({
     paste: (event, view) => {
       const text = event.clipboardData?.getData('text/plain') ?? ''
       if (!text) {
-        const files = imageFiles(event.clipboardData)
+        const files = Array.from(event.clipboardData?.files ?? [])
         if (files.length === 0) return false
         event.preventDefault()
-        onImages(files)
+        onFiles(files)
         return true
       }
       const url = text.trim()
@@ -289,20 +286,20 @@ function pasteAndDrop(onImages: (files: File[]) => void): Extension {
       return true
     },
     drop: (event, view) => {
-      const files = imageFiles(event.dataTransfer)
+      const files = Array.from(event.dataTransfer?.files ?? [])
       if (files.length === 0) return false
       event.preventDefault()
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
       if (pos !== null) view.dispatch({ selection: { anchor: pos } })
-      onImages(files)
+      onFiles(files)
       return true
     },
   })
 }
 
-export function editorExtensions(slug: string, onImages: (files: File[]) => void): Extension[] {
+export function editorExtensions(slug: string, onFiles: (files: File[]) => void): Extension[] {
   return [
-    pasteAndDrop(onImages),
+    pasteAndDrop(onFiles),
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     drawSelection(),
