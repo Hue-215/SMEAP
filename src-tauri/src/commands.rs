@@ -68,14 +68,16 @@ fn slug_of(request: &Request<'_>) -> Result<String, StoreError> {
         .get("slug")
         .and_then(|value| value.to_str().ok())
         .map(str::to_string)
-        .ok_or(StoreError::InvalidSlug {
-            slug: String::new(),
+        .ok_or(StoreError::InvalidRequest {
+            reason: "slugのヘッダーが無い".to_string(),
         })
 }
 
 fn raw_body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], StoreError> {
     match request.body() {
         InvokeBody::Raw(bytes) => Ok(bytes),
-        _ => Err(StoreError::UnsupportedImage),
+        _ => Err(StoreError::InvalidRequest {
+            reason: "本文がバイト列でない".to_string(),
+        }),
     }
 }

@@ -36,6 +36,8 @@ pub enum StoreError {
     ImageNotFound { reference: String },
     #[error("画像の形式に対応していません")]
     UnsupportedImage,
+    #[error("呼び出し方が不正です: {reason}")]
+    InvalidRequest { reason: String },
     #[error("記事の形式が違います: {slug}: {reason}")]
     Malformed { slug: String, reason: String },
     #[error("ファイルの操作に失敗しました: {path}: {reason}")]
@@ -151,11 +153,10 @@ fn image_extension(data: &[u8]) -> Option<&'static str> {
         Some("jpg")
     } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
         Some("gif")
-    } else if data.len() >= 12 && data.starts_with(b"RIFF") && data[8..12].starts_with(b"WEBP") {
+    } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(&b"WEBP"[..]) {
         Some("webp")
-    } else if data.len() >= 12
-        && data[4..8].starts_with(b"ftyp")
-        && (data[8..12].starts_with(b"avif") || data[8..12].starts_with(b"avis"))
+    } else if data.get(4..8) == Some(&b"ftyp"[..])
+        && matches!(data.get(8..12), Some(b"avif" | b"avis"))
     {
         Some("avif")
     } else {
@@ -164,8 +165,8 @@ fn image_extension(data: &[u8]) -> Option<&'static str> {
 }
 
 // 本文の画像の連番。`parse`は`+1`も通すので、数字だけかを先に確かめる
-fn image_number(path: &Path) -> Option<u32> {
-    let stem = path.file_stem()?.to_str()?;
+fn image_number(name: &OsStr) -> Option<u32> {
+    let stem = Path::new(name).file_stem()?.to_str()?;
     if !stem.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -176,7 +177,7 @@ fn next_image_number(dir: &Path) -> Result<u32, StoreError> {
     let mut max = 0;
     for entry in fs::read_dir(dir).map_err(|error| StoreError::io(dir, error))? {
         let entry = entry.map_err(|error| StoreError::io(dir, error))?;
-        if let Some(number) = image_number(&entry.path()) {
+        if let Some(number) = image_number(&entry.file_name()) {
             max = max.max(number);
         }
     }
@@ -352,10 +353,8 @@ impl Store {
 
     // 本文に入れる`![](...)`を返す
     pub fn import_body_image(&self, slug: &str, data: &[u8]) -> Result<String, StoreError> {
-        validate_slug(slug)?;
         let _guard = self.lock_guard();
-        let ext = image_extension(data).ok_or(StoreError::UnsupportedImage)?;
-        let dir = self.prepare_import(slug)?;
+        let (dir, ext) = self.prepare_import(slug, data)?;
         let name = format!("{:02}.{}", next_image_number(&dir)?, ext);
         let path = dir.join(&name);
         let tmp = write_temp(&dir, data)?;
@@ -364,36 +363,42 @@ impl Store {
         Ok(format!("![]({}{name})", assets_ref(slug)))
     }
 
-    // heroImageに入れるファイル名を返す。拡張子の違う古いhero.*は消す
+    // heroImageに入れるファイル名を返す。mdのheroImageもここで書き換え、前のファイルは消す
     pub fn import_hero_image(&self, slug: &str, data: &[u8]) -> Result<String, StoreError> {
-        validate_slug(slug)?;
         let _guard = self.lock_guard();
-        let ext = image_extension(data).ok_or(StoreError::UnsupportedImage)?;
-        let dir = self.prepare_import(slug)?;
+        let (dir, ext) = self.prepare_import(slug, data)?;
         let name = format!("hero.{ext}");
+        let mut article = self.read_article(slug)?;
+        let old = article.fields.hero_image.replace(name.clone());
         let path = dir.join(&name);
         let tmp = write_temp(&dir, data)?;
         tmp.persist(&path)
             .map_err(|error| StoreError::io(&path, error))?;
-        for entry in fs::read_dir(&dir).map_err(|error| StoreError::io(&dir, error))? {
-            let entry = entry.map_err(|error| StoreError::io(&dir, error))?;
-            let path = entry.path();
-            if path.file_stem() == Some(OsStr::new("hero")) && entry.file_name() != name.as_str() {
-                fs::remove_file(&path).map_err(|error| StoreError::io(&path, error))?;
+        self.write_md(&article)?;
+        if let Some(old) = old.filter(|old| old.as_str() != name) {
+            let old_path = dir.join(&old);
+            if let Err(error) = fs::remove_file(&old_path) {
+                if error.kind() != io::ErrorKind::NotFound {
+                    return Err(StoreError::io(&old_path, error));
+                }
             }
         }
         Ok(name)
     }
 
-    fn prepare_import(&self, slug: &str) -> Result<PathBuf, StoreError> {
+    fn prepare_import(
+        &self,
+        slug: &str,
+        data: &[u8],
+    ) -> Result<(PathBuf, &'static str), StoreError> {
+        validate_slug(slug)?;
+        let ext = image_extension(data).ok_or(StoreError::UnsupportedImage)?;
         let md = self.md_path(slug);
-        if let Err(error) = fs::metadata(&md) {
-            return Err(StoreError::not_found_or_io(slug, &md, error));
-        }
+        fs::metadata(&md).map_err(|error| StoreError::not_found_or_io(slug, &md, error))?;
         // gitは空ディレクトリを持たないため
         let dir = self.assets_dir(slug);
         fs::create_dir_all(&dir).map_err(|error| StoreError::io(&dir, error))?;
-        Ok(dir)
+        Ok((dir, ext))
     }
 
     pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
@@ -1217,8 +1222,8 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("format").unwrap();
         for (data, ext) in [
-            (&b"\x89PNG\r\n\x1a\n"[..], "png"),
-            (&b"\xff\xd8\xff\xe0"[..], "jpg"),
+            (&png()[..], "png"),
+            (&jpeg()[..], "jpg"),
             (&b"GIF87a"[..], "gif"),
             (&b"GIF89a"[..], "gif"),
             (&b"RIFF\x24\x00\x00\x00WEBP"[..], "webp"),
@@ -1248,13 +1253,14 @@ mod tests {
     }
 
     #[test]
-    fn heroは上書きして拡張子違いの古いものを消す() {
+    fn heroは上書きしてmdのhero_imageが変わる() {
         let (_tmp, store) = setup();
         store.create_article("hero").unwrap();
         let dir = store.assets_dir("hero");
         assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
         assert_eq!(fs::read(dir.join("hero.png")).unwrap(), png());
-        assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
+        let read = store.read_article("hero").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
 
         assert_eq!(
             store.import_hero_image("hero", &jpeg()).unwrap(),
@@ -1262,12 +1268,34 @@ mod tests {
         );
         assert!(!dir.join("hero.png").exists());
         assert_eq!(fs::read(dir.join("hero.jpg")).unwrap(), jpeg());
+        let read = store.read_article("hero").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.jpg"));
+    }
 
-        // heroでない画像は残る
+    #[test]
+    fn heroは前のhero_imageのファイルを消す() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let mut fields = input("", "2026-01-01");
+        fields.hero_image = Some("cover.png".to_string());
+        store.save_article("post", fields).unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("cover.png"), b"cover").unwrap();
         fs::write(dir.join("01.png"), b"old").unwrap();
-        assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
-        assert!(!dir.join("hero.jpg").exists());
+
+        assert_eq!(store.import_hero_image("post", &png()).unwrap(), "hero.png");
+        assert!(!dir.join("cover.png").exists());
+        // 本文の画像は消さない
         assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
+        let read = store.read_article("post").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+
+        // 前のファイルが既に無くても取り込める
+        fs::remove_file(dir.join("hero.png")).unwrap();
+        assert_eq!(
+            store.import_hero_image("post", &jpeg()).unwrap(),
+            "hero.jpg"
+        );
     }
 
     #[test]
