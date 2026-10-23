@@ -1,5 +1,7 @@
 mod clipboard;
 mod commands;
+#[cfg(target_os = "android")]
+mod export;
 mod image_protocol;
 mod store;
 
@@ -7,7 +9,13 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    image_protocol::register(tauri::Builder::default())
+    let builder = image_protocol::register(tauri::Builder::default());
+    // fsとdialogはRust側からだけ使う(src/export.rs)。画面に権限は与えない
+    #[cfg(target_os = "android")]
+    let builder = builder
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init());
+    builder
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
             let store = {
@@ -34,6 +42,8 @@ pub fn run() {
             commands::import_hero_image,
             commands::import_body_image_from_path,
             commands::import_clipboard_image,
+            #[cfg(target_os = "android")]
+            export::export_zip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

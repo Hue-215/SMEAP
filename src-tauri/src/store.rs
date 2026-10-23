@@ -1,10 +1,11 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
@@ -13,6 +14,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 const DATE_FORMAT: &str = "%Y-%m-%d";
 
@@ -499,6 +502,84 @@ impl Store {
             .map_err(|error| StoreError::io(&md, error))?;
         Ok(())
     }
+
+    // 書き出しはAndroidだけ(src/export.rs)
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn write_zip(&self, slug: &str, dest: &Path) -> Result<(), StoreError> {
+        validate_slug(slug)?;
+        let _guard = self.lock_guard();
+        let md = self.md_path(slug);
+        let content =
+            fs::read(&md).map_err(|error| StoreError::not_found_or_io(slug, &md, error))?;
+        let names = self.asset_names(slug)?;
+
+        write_zip_files(slug, &content, &self.assets_dir(slug), &names, dest)
+    }
+
+    // `.`で始まる名前は書きかけの一時ファイル
+    fn asset_names(&self, slug: &str) -> Result<Vec<OsString>, StoreError> {
+        let dir = self.assets_dir(slug);
+        let read = match fs::read_dir(&dir) {
+            Ok(read) => read,
+            // gitは空ディレクトリを持たないため、assetsの無い記事もある
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(StoreError::io(&dir, error)),
+        };
+        let mut names = Vec::new();
+        for entry in read {
+            let entry = entry.map_err(|error| StoreError::io(&dir, error))?;
+            if !entry
+                .file_type()
+                .map_err(|error| StoreError::io(&dir, error))?
+                .is_file()
+            {
+                continue;
+            }
+            let name = entry.file_name();
+            if !name.as_encoded_bytes().starts_with(b".") {
+                names.push(name);
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+}
+
+// zipの日時は時差を持たないので、端末の時刻で書く。画像は圧縮済みなので縮めない
+fn write_zip_files(
+    slug: &str,
+    content: &[u8],
+    assets_dir: &Path,
+    names: &[OsString],
+    dest: &Path,
+) -> Result<(), StoreError> {
+    let to_dest = |error: zip::result::ZipError| StoreError::io(dest, error);
+    let file = File::create(dest).map_err(|error| StoreError::io(dest, error))?;
+    let mut zip = ZipWriter::new(BufWriter::new(file));
+    let stored = SimpleFileOptions::default()
+        .compression_method(CompressionMethod::Stored)
+        .last_modified_time(
+            zip::DateTime::try_from(Local::now().naive_local()).unwrap_or_default(),
+        );
+    zip.start_file(
+        format!("{slug}/src/content/posts/{slug}.md"),
+        stored.compression_method(CompressionMethod::Deflated),
+    )
+    .map_err(to_dest)?;
+    zip.write_all(content)
+        .map_err(|error| StoreError::io(dest, error))?;
+    for name in names {
+        let path = assets_dir.join(name);
+        let mut image = File::open(&path).map_err(|error| StoreError::io(&path, error))?;
+        let entry = format!("{slug}/src/assets/{slug}/{}", name.to_string_lossy());
+        zip.start_file(entry, stored).map_err(to_dest)?;
+        io::copy(&mut image, &mut zip).map_err(|error| StoreError::io(&path, error))?;
+    }
+    zip.finish()
+        .map_err(to_dest)?
+        .into_inner()
+        .map_err(|error| StoreError::io(dest, error.into_error()))?;
+    Ok(())
 }
 
 // persistをrenameで済ませるため、dirには置き換え先と同じディレクトリを渡す。上書きするかは呼び出し側がpersistかpersist_noclobberかで決める
@@ -640,6 +721,8 @@ fn parse_md(slug: &str, content: &str) -> Result<Article, StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::io::Read;
 
     use tempfile::TempDir;
 
@@ -1413,5 +1496,147 @@ mod tests {
         );
         assert!(store.assets_dir("fresh").join("01.png").exists());
         assert!(store.assets_dir("fresh").join("hero.png").exists());
+    }
+
+    fn zip_names(dest: &Path) -> Vec<String> {
+        let zip = zip::ZipArchive::new(fs::File::open(dest).unwrap()).unwrap();
+        zip.file_names().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn zipにmdとassetsの画像が名前順で入る() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        store
+            .save_article("post", input("タイトル", "2026-01-01"))
+            .unwrap();
+        store.import_body_image("post", &jpeg()).unwrap();
+        store.import_body_image("post", &png()).unwrap();
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        assert_eq!(
+            zip_names(&dest),
+            [
+                "post/src/content/posts/post.md".to_string(),
+                "post/src/assets/post/01.jpg".to_string(),
+                "post/src/assets/post/02.png".to_string(),
+            ]
+        );
+        let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+        let mut body = String::new();
+        zip.by_name("post/src/content/posts/post.md")
+            .unwrap()
+            .read_to_string(&mut body)
+            .unwrap();
+        assert_eq!(body, fs::read_to_string(store.md_path("post")).unwrap());
+    }
+
+    #[test]
+    fn zipはassetsが無ければmdだけ() {
+        let (_tmp, store) = setup();
+        store.create_article("fresh").unwrap();
+        fs::remove_dir_all(store.assets_dir("fresh")).unwrap();
+
+        let dest = store.root.parent().unwrap().join("fresh.zip");
+        store.write_zip("fresh", &dest).unwrap();
+        assert_eq!(
+            zip_names(&dest),
+            ["fresh/src/content/posts/fresh.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn zipに書きかけのファイルは入らない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        fs::write(store.assets_dir("post").join(".tmpabc"), b"tmp").unwrap();
+        store.import_body_image("post", &png()).unwrap();
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        assert_eq!(
+            zip_names(&dest),
+            [
+                "post/src/content/posts/post.md".to_string(),
+                "post/src/assets/post/01.png".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn zipの画像は元のファイルと同じ中身() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        store.import_body_image("post", &png()).unwrap();
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+        let mut image = Vec::new();
+        zip.by_name("post/src/assets/post/01.png")
+            .unwrap()
+            .read_to_end(&mut image)
+            .unwrap();
+        assert_eq!(image, png());
+    }
+
+    #[test]
+    fn zipにassetsの中のディレクトリは入らない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        fs::create_dir(store.assets_dir("post").join("sub")).unwrap();
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        assert_eq!(
+            zip_names(&dest),
+            ["post/src/content/posts/post.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn 不正なslugはzipにできない() {
+        let (_tmp, store) = setup();
+        let dest = store.root.parent().unwrap().join("bad.zip");
+        for slug in ["", "../x"] {
+            assert!(matches!(
+                store.write_zip(slug, &dest),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+        }
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn 存在しない記事はzipにできない() {
+        let (_tmp, store) = setup();
+        let dest = store.root.parent().unwrap().join("missing.zip");
+        assert!(matches!(
+            store.write_zip("missing", &dest),
+            Err(StoreError::NotFound { slug }) if slug == "missing"
+        ));
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn zipにバックアップは入らない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        store
+            .save_article("post", input("v2", "2026-01-01"))
+            .unwrap();
+        store
+            .save_article("post", input("v3", "2026-01-02"))
+            .unwrap();
+        assert!(store.backup_path("post").exists());
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        let names = zip_names(&dest);
+        assert!(
+            !names.iter().any(|name| name.contains("backup")),
+            "{names:?}"
+        );
     }
 }

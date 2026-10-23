@@ -6,13 +6,9 @@ import type { MenuItem } from './MenuButton'
 import { isAndroid } from './platform'
 import type { DrawerState } from './useDrawer'
 
-// まだ作っていない操作は、押せない項目として出す。
-const exportZipItem: MenuItem = {
-  key: 'export-zip',
-  label: 'zipで書き出す',
-  icon: 'folder_zip',
-  disabled: true,
-  onSelect: () => {},
+export interface Notice {
+  text: string
+  error: boolean
 }
 
 interface TopBarProps {
@@ -21,22 +17,26 @@ interface TopBarProps {
   onToggleSidebar: () => void
   // nullなら押せない
   onRenameSlug: (() => void) | null
+  onExportZip: (() => void) | null
   onInsertLink: (() => void) | null
   onInsertImages: ((files: File[]) => void) | null
   // nullなら出さない
   saveStatus: SaveStatus | null
-  // あれば保存の状態の代わりに、エラーとして出す
-  notice: string | null
+  // あれば保存の状態の代わりに出す
+  notice: Notice | null
   onOpenSettings: () => void
 }
 
-function StatusText({ status, notice }: { status: SaveStatus | null; notice: string | null }) {
-  const error = notice ?? (status?.failed ? '保存できませんでした' : null)
-  const text =
-    error ?? (status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : '')
+function StatusText({ status, notice }: { status: SaveStatus | null; notice: Notice | null }) {
+  const saved = status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : ''
+  const shown: Notice =
+    notice ??
+    (status?.failed
+      ? { text: '保存できませんでした', error: true }
+      : { text: saved, error: false })
   return (
-    <span role="status" className={error ? 'save-status error' : 'save-status'}>
-      {text}
+    <span role="status" className={shown.error ? 'save-status error' : 'save-status'}>
+      {shown.text}
     </span>
   )
 }
@@ -46,6 +46,7 @@ export default function TopBar({
   sidebarOpen,
   onToggleSidebar,
   onRenameSlug,
+  onExportZip,
   onInsertLink,
   onInsertImages,
   saveStatus,
@@ -60,6 +61,13 @@ export default function TopBar({
     icon: 'edit',
     disabled: onRenameSlug === null,
     onSelect: () => onRenameSlug?.(),
+  }
+  const exportZipItem: MenuItem = {
+    key: 'export-zip',
+    label: 'zipで書き出す',
+    icon: 'folder_zip',
+    disabled: onExportZip === null,
+    onSelect: () => onExportZip?.(),
   }
   const menuItems: MenuItem[] = [
     renameItem,
