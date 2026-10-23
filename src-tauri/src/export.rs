@@ -17,7 +17,8 @@ use crate::store::{Store, StoreError};
 pub enum ExportOutcome {
     Saved,
     Cancelled,
-    LeftIncomplete,
+    // Androidではstderrがlogcatに出ないので、理由は画面へ返して残す
+    LeftIncomplete { reason: String },
 }
 
 #[tauri::command(async)]
@@ -31,7 +32,7 @@ pub fn export_zip(
         .app_cache_dir()
         .map_err(|error| StoreError::io(Path::new("app_cache_dir"), error))?;
     fs::create_dir_all(&cache_dir).map_err(|error| StoreError::io(&cache_dir, error))?;
-    // 落とすと消える。強制終了で残ったものは、キャッシュとしてOSが消す
+    // dropすると消える。強制終了で残ったものは、キャッシュとしてOSが消すことがある
     let staged = tempfile::NamedTempFile::new_in(&cache_dir)
         .map_err(|error| StoreError::io(&cache_dir, error))?;
     store.write_zip(&slug, staged.path())?;
@@ -46,23 +47,21 @@ pub fn export_zip(
         return Ok(ExportOutcome::Cancelled);
     };
 
-    // 開く手順がpanicしても(Androidのfs側は、提供元がファイル記述子を返さないとpanicする)
-    // 失敗として返す
+    // Androidのfs側は、提供元がファイル記述子を返さないとpanicする
     let copied = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut dest = open_chosen(&app, chosen)?;
         io::copy(&mut File::open(staged.path())?, &mut dest)?;
         sync(&dest)
     }))
-    .unwrap_or_else(|_| Err(io::Error::other("保存先のファイルを開くのがpanicした")));
-    if let Err(error) = copied {
-        eprintln!("選ばれたファイルへ書き写せませんでした: {error}");
-        return Ok(ExportOutcome::LeftIncomplete);
-    }
-    Ok(ExportOutcome::Saved)
+    .unwrap_or_else(|_| Err(io::Error::other("保存先のファイルを開く途中でpanicした")));
+    Ok(match copied {
+        Ok(()) => ExportOutcome::Saved,
+        Err(error) => ExportOutcome::LeftIncomplete {
+            reason: error.to_string(),
+        },
+    })
 }
 
-// 保存画面が返したものを、中身を置き換えて書く形で開く。パスで届くものと`content://`のURIで
-// 届くもの(URIは`tauri-plugin-fs`で開く)の両方がある
 fn open_chosen(app: &AppHandle, chosen: FilePath) -> io::Result<File> {
     match chosen {
         FilePath::Path(path) => File::create(path),

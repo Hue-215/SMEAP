@@ -137,29 +137,42 @@ export default function App() {
     })
   }
 
+  // 保存画面を出す前にzipを作るので、その間にもう一度押されても1つだけにする
+  const exporting = useRef(false)
   // 書き出すのはファイルの内容なので、先に保存する
   const openExportZip = (slug: string) => {
-    void saveOpenArticle().then((ok) => {
-      if (!ok) return
-      exportZip(slug)
-        .then((outcome) => {
-          switch (outcome.kind) {
-            case 'saved':
-              setNotice({ text: 'zipを書き出しました', error: false })
-              break
-            case 'leftIncomplete':
-              setNotice({
-                text: '書き出しが途中で止まりました。保存先のファイルを消してください',
-                error: true,
-              })
-              break
+    if (exporting.current) return
+    exporting.current = true
+    void saveOpenArticle()
+      .then(async (ok) => {
+        if (!ok) return
+        const outcome = await exportZip(slug)
+        switch (outcome.kind) {
+          case 'saved':
+            setNotice({ text: 'zipを書き出しました', error: false })
+            break
+          case 'cancelled':
+            break
+          case 'leftIncomplete':
+            console.error('zipを書き写せませんでした', outcome.reason)
+            setNotice({
+              text: '書き出しが途中で止まりました。保存先のファイルを消してください',
+              error: true,
+            })
+            break
+          default: {
+            const unknown: never = outcome
+            console.error('書き出しの結果が分かりません', unknown)
           }
-        })
-        .catch((e) => {
-          console.error('zipを書き出せませんでした', e)
-          setNotice({ text: 'zipを書き出せませんでした', error: true })
-        })
-    })
+        }
+      })
+      .catch((e) => {
+        console.error('zipを書き出せませんでした', e)
+        setNotice({ text: 'zipを書き出せませんでした', error: true })
+      })
+      .finally(() => {
+        exporting.current = false
+      })
   }
 
   const openSettings = () => {

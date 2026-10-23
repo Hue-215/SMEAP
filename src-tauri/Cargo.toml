@@ -21,14 +21,14 @@ thiserror = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tempfile = "3"
 percent-encoding = "2"
-# Androidで記事をzipにして書き出す(src/export.rs)。store.rsのテストでも使うので全ターゲットに置く
+# 記事をzipにする(src/store.rs)。書き出しはAndroidだけだが、store.rsはOSで分けないので全ターゲットに置く
 zip = { version = "8.6", default-features = false, features = ["chrono", "deflate-flate2-zlib-rs"] }
 
 # 貼り付けた画像をクリップボードから読む(src/clipboard.rs)。TauriがLinuxで使っている版にそろえる
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 
-# 保存画面を出し、選ばれた`content://`のURIへ書く(src/export.rs)。画面に権限は与えない
+# 保存画面を出し、選ばれた`content://`のURIへ書く(src/export.rs)
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

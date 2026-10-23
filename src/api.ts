@@ -67,7 +67,11 @@ export function importClipboardImage(slug: string): Promise<string | null> {
   return invoke<string | null>('import_clipboard_image', { slug })
 }
 
-export type ExportOutcome = { kind: 'saved' | 'cancelled' | 'leftIncomplete' }
+// Rust側のExportOutcome(src-tauri/src/export.rs)とそろえる
+export type ExportOutcome =
+  | { kind: 'saved' }
+  | { kind: 'cancelled' }
+  | { kind: 'leftIncomplete'; reason: string }
 
 export function exportZip(slug: string): Promise<ExportOutcome> {
   return invoke<ExportOutcome>('export_zip', { slug })

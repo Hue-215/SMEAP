@@ -1,7 +1,7 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
 use std::fs::File;
@@ -514,11 +514,10 @@ impl Store {
         let names = self.asset_names(slug)?;
 
         write_zip_files(slug, &content, &self.assets_dir(slug), &names, dest)
-            .map_err(|error| StoreError::io(dest, error))
     }
 
     // `.`で始まる名前は書きかけの一時ファイル
-    fn asset_names(&self, slug: &str) -> Result<Vec<String>, StoreError> {
+    fn asset_names(&self, slug: &str) -> Result<Vec<OsString>, StoreError> {
         let dir = self.assets_dir(slug);
         let read = match fs::read_dir(&dir) {
             Ok(read) => read,
@@ -536,8 +535,8 @@ impl Store {
             {
                 continue;
             }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !name.starts_with('.') {
+            let name = entry.file_name();
+            if !name.as_encoded_bytes().starts_with(b".") {
                 names.push(name);
             }
         }
@@ -551,10 +550,12 @@ fn write_zip_files(
     slug: &str,
     content: &[u8],
     assets_dir: &Path,
-    names: &[String],
+    names: &[OsString],
     dest: &Path,
-) -> zip::result::ZipResult<()> {
-    let mut zip = ZipWriter::new(BufWriter::new(File::create(dest)?));
+) -> Result<(), StoreError> {
+    let to_dest = |error: zip::result::ZipError| StoreError::io(dest, error);
+    let file = File::create(dest).map_err(|error| StoreError::io(dest, error))?;
+    let mut zip = ZipWriter::new(BufWriter::new(file));
     let stored = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Stored)
         .last_modified_time(
@@ -563,15 +564,21 @@ fn write_zip_files(
     zip.start_file(
         format!("{slug}/src/content/posts/{slug}.md"),
         stored.compression_method(CompressionMethod::Deflated),
-    )?;
-    zip.write_all(content)?;
+    )
+    .map_err(to_dest)?;
+    zip.write_all(content)
+        .map_err(|error| StoreError::io(dest, error))?;
     for name in names {
-        zip.start_file(format!("{slug}/src/assets/{slug}/{name}"), stored)?;
-        io::copy(&mut File::open(assets_dir.join(name))?, &mut zip)?;
+        let path = assets_dir.join(name);
+        let mut image = File::open(&path).map_err(|error| StoreError::io(&path, error))?;
+        let entry = format!("{slug}/src/assets/{slug}/{}", name.to_string_lossy());
+        zip.start_file(entry, stored).map_err(to_dest)?;
+        io::copy(&mut image, &mut zip).map_err(|error| StoreError::io(&path, error))?;
     }
-    zip.finish()?
+    zip.finish()
+        .map_err(to_dest)?
         .into_inner()
-        .map_err(|error| error.into_error())?;
+        .map_err(|error| StoreError::io(dest, error.into_error()))?;
     Ok(())
 }
 
@@ -1555,6 +1562,50 @@ mod tests {
                 "post/src/assets/post/01.png".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn zipの画像は元のファイルと同じ中身() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        store.import_body_image("post", &png()).unwrap();
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
+        let mut image = Vec::new();
+        zip.by_name("post/src/assets/post/01.png")
+            .unwrap()
+            .read_to_end(&mut image)
+            .unwrap();
+        assert_eq!(image, png());
+    }
+
+    #[test]
+    fn zipにassetsの中のディレクトリは入らない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        fs::create_dir(store.assets_dir("post").join("sub")).unwrap();
+
+        let dest = store.root.parent().unwrap().join("post.zip");
+        store.write_zip("post", &dest).unwrap();
+        assert_eq!(
+            zip_names(&dest),
+            ["post/src/content/posts/post.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn 不正なslugはzipにできない() {
+        let (_tmp, store) = setup();
+        let dest = store.root.parent().unwrap().join("bad.zip");
+        for slug in ["", "../x"] {
+            assert!(matches!(
+                store.write_zip(slug, &dest),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+        }
+        assert!(!dest.exists());
     }
 
     #[test]
