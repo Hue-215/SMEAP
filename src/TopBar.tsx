@@ -21,16 +21,24 @@ const settingsItem: MenuItem = {
   onSelect: () => {},
 }
 
-const menuItems: MenuItem[] = isAndroid ? [exportZipItem, settingsItem] : [settingsItem]
-
 interface TopBarProps {
   drawer: DrawerState
   sidebarOpen: boolean
   onToggleSidebar: () => void
+  // nullなら押せない
+  onRenameSlug: (() => void) | null
 }
 
-export default function TopBar({ drawer, sidebarOpen, onToggleSidebar }: TopBarProps) {
+export default function TopBar({ drawer, sidebarOpen, onToggleSidebar, onRenameSlug }: TopBarProps) {
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
+  const renameItem: MenuItem = {
+    key: 'rename-slug',
+    label: 'slugを変更',
+    icon: 'edit',
+    disabled: onRenameSlug === null,
+    onSelect: () => onRenameSlug?.(),
+  }
+  const menuItems = [renameItem, ...(isAndroid ? [exportZipItem] : []), settingsItem]
   return (
     <div role="toolbar" aria-label="編集" className="topbar">
       {drawer.narrow ? (
@@ -65,7 +73,7 @@ export default function TopBar({ drawer, sidebarOpen, onToggleSidebar }: TopBarP
       <button type="button" className="icon-button" disabled aria-label="画像を挿入" title="画像を挿入">
         <Icon name="image" />
       </button>
-      {drawer.narrow && <MenuButton label="その他" items={menuItems} />}
+      <MenuButton label="その他" items={menuItems} />
     </div>
   )
 }

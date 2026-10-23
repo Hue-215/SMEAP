@@ -5,6 +5,7 @@ import Editor from './Editor'
 import { Drawer } from './Drawer'
 import Sidebar from './Sidebar'
 import type { ArticlesState } from './Sidebar'
+import SlugDialog, { type SlugDialogMode } from './SlugDialog'
 import TopBar from './TopBar'
 import { useSwipeToOpen } from './useDrawerSwipe'
 import { useDrawer } from './useDrawer'
@@ -20,9 +21,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
+  const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
 
-  useEffect(() => {
+  const reloadArticles = () => {
     listArticles()
       .then((list) => {
         if (list.broken.length > 0) console.warn('読めない記事があります', list.broken)
@@ -32,6 +34,10 @@ export default function App() {
         console.error('記事一覧を読めませんでした', e)
         setArticles({ status: 'failed' })
       })
+  }
+
+  useEffect(() => {
+    reloadArticles()
   }, [])
 
   // 読めなかった記事は、選び直したら読み直す。
@@ -62,10 +68,20 @@ export default function App() {
       articles={articles}
       selectedSlug={selectedSlug}
       onSelect={selectArticle}
+      onNew={() => {
+        drawer.close()
+        setSlugDialog({ kind: 'create' })
+      }}
     />
   )
 
   const swipeToOpen = useSwipeToOpen(drawer)
+  // slugの変更では画面上の未保存の変更を捨てる。保存(#7)ができたら、変更の前に保存する
+  const onDialogDone = (a: Article) => {
+    setSlugDialog(null)
+    reloadArticles()
+    setArticle({ status: 'loaded', slug: a.slug, article: a })
+  }
 
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
@@ -75,6 +91,11 @@ export default function App() {
           drawer={drawer}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onRenameSlug={
+            article.status === 'loaded'
+              ? () => setSlugDialog({ kind: 'rename', slug: article.slug })
+              : null
+          }
         />
         <div className="editor-scroll">
           <div className="editor-column">
@@ -89,6 +110,9 @@ export default function App() {
           </div>
         </div>
       </main>
+      {slugDialog && (
+        <SlugDialog mode={slugDialog} onDone={onDialogDone} onCancel={() => setSlugDialog(null)} />
+      )}
     </div>
   )
 }

@@ -352,9 +352,84 @@ button:is(:disabled, [aria-disabled='true']) {
   height: 3rem;
 }
 
-/* 背後の画面を覆う暗幕(引き出したカラムの後ろ)。明暗のテーマによらず同じ色にする。 */
-.scrim {
+/* 背後の画面を覆う暗幕(引き出したカラムやダイアログの後ろ)。明暗のテーマによらず同じ色にする。 */
+.scrim,
+.dialog::backdrop {
   background: rgb(0 0 0 / 0.5);
+}
+
+/* Dialog.tsx */
+.dialog {
+  width: min(440px, 100vw - 2rem);
+  padding: 1.5rem;
+  border: var(--border-width) solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-strong);
+}
+
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.dialog-buttons button {
+  height: var(--control-size-md);
+  padding: 0 var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+}
+
+.dialog-buttons button[type='submit'] {
+  border: 0;
+  background: var(--color-text);
+  color: var(--color-bg);
+}
+
+.slug-dialog-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.slug-dialog-label {
+  font-size: var(--font-size-sm);
+}
+
+.slug-dialog-input {
+  height: var(--control-size-md);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--color-field-border);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.slug-dialog-hint,
+.slug-dialog-destination {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.slug-dialog-hint.error {
+  color: var(--color-error);
+}
+
+.slug-dialog-destination {
+  overflow-wrap: anywhere;
 }
 
 /* 狭い窓で畳む左のカラム(記事一覧)の入れ物(Drawer.tsx)。広い窓ではカラムを並びの中に
