@@ -358,7 +358,7 @@ button:is(:disabled, [aria-disabled='true']) {
   background: rgb(0 0 0 / 0.5);
 }
 
-/* Dialog.tsx */
+/* ダイアログ(Dialog.tsx・SlugDialog.tsx)。 */
 .dialog {
   width: min(440px, 100vw - 2rem);
   padding: 1.5rem;

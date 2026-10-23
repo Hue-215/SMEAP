@@ -936,6 +936,23 @@ mod tests {
         })
         .unwrap();
         assert_eq!(value, serde_json::json!({"kind": "notFound", "slug": "a"}));
+        // 画面はkindで文言を選ぶ(SlugDialog.tsx)
+        for (error, kind) in [
+            (
+                StoreError::AlreadyExists {
+                    slug: "a".to_string(),
+                },
+                "alreadyExists",
+            ),
+            (
+                StoreError::InvalidSlug {
+                    slug: "a".to_string(),
+                },
+                "invalidSlug",
+            ),
+        ] {
+            assert_eq!(serde_json::to_value(error).unwrap()["kind"], kind);
+        }
 
         let article = article_of("a", &input("タイトル", "2026-01-01"));
         let value = serde_json::to_value(&article).unwrap();

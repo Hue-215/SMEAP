@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { listArticles, readArticle, type Article } from './api'
 import ArticleHeader, { type FieldsPatch } from './ArticleHeader'
 import Editor from './Editor'
@@ -24,13 +24,18 @@ export default function App() {
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
 
+  // 後から出した読み込みが先に返ったら、前の読み込みの結果は捨てる
+  const listRequest = useRef(0)
   const reloadArticles = () => {
+    const request = ++listRequest.current
     listArticles()
       .then((list) => {
+        if (request !== listRequest.current) return
         if (list.broken.length > 0) console.warn('読めない記事があります', list.broken)
         setArticles({ status: 'loaded', articles: list.articles })
       })
       .catch((e) => {
+        if (request !== listRequest.current) return
         console.error('記事一覧を読めませんでした', e)
         setArticles({ status: 'failed' })
       })
@@ -76,7 +81,7 @@ export default function App() {
   )
 
   const swipeToOpen = useSwipeToOpen(drawer)
-  // slugの変更では画面上の未保存の変更を捨てる。保存(#7)ができたら、変更の前に保存する
+  // 開いていた記事の画面上の未保存の変更は捨てる。保存(#7)ができたら、ダイアログを開く前に保存する
   const onDialogDone = (a: Article) => {
     setSlugDialog(null)
     reloadArticles()

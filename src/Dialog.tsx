@@ -11,8 +11,11 @@ interface DialogProps {
 // 描画されている間だけ開いているモーダル。
 export default function Dialog({ labelledBy, onCancel, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null)
+  // close()で開く前にフォーカスのあった所へ戻る。DOMから外すだけでは戻らない
   useEffect(() => {
-    ref.current?.showModal()
+    const dialog = ref.current
+    dialog?.showModal()
+    return () => dialog?.close()
   }, [])
   useCloseOnBack(true, onCancel)
   return (

@@ -27,16 +27,17 @@ const texts = {
   },
 }
 
-const failureMessages: Record<string, string> = {
-  alreadyExists: '同じslugの記事があります',
-  invalidSlug: invalidSlugMessage,
-}
+const failureMessages = new Map([
+  ['alreadyExists', '同じslugの記事があります'],
+  ['invalidSlug', invalidSlugMessage],
+  ['notFound', '元の記事が見つかりません'],
+])
 
 export default function SlugDialog({ mode, onDone, onCancel }: SlugDialogProps) {
   const text = texts[mode.kind]
   const currentSlug = mode.kind === 'rename' ? mode.slug : null
   const [value, setValue] = useState(currentSlug ?? '')
-  // Rust側から返った失敗の文言。入力を変えたら消す
+  // 送信の失敗の文言
   const [failure, setFailure] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -56,17 +57,22 @@ export default function SlugDialog({ mode, onDone, onCancel }: SlugDialogProps) 
     e.preventDefault()
     if (submitDisabled) return
     setSubmitting(true)
-    const request = currentSlug === null ? createArticle(value) : renameArticle(currentSlug, value)
-    request.then(onDone).catch((err) => {
+    const request = mode.kind === 'create' ? createArticle(value) : renameArticle(mode.slug, value)
+    request.then(onDone, (err) => {
       setSubmitting(false)
       console.error(text.failed, err)
       const kind = (err as StoreError | undefined)?.kind
-      setFailure((kind && failureMessages[kind]) || text.failed)
+      setFailure((kind && failureMessages.get(kind)) ?? text.failed)
     })
   }
 
+  // 送信中に閉じると、閉じたあとに結果が反映されてしまう
+  const cancel = () => {
+    if (!submitting) onCancel()
+  }
+
   return (
-    <Dialog labelledBy={headingId} onCancel={onCancel}>
+    <Dialog labelledBy={headingId} onCancel={cancel}>
       <form className="dialog-form" onSubmit={onSubmit}>
         <h2 id={headingId} className="dialog-title">
           {text.title}
@@ -104,7 +110,7 @@ export default function SlugDialog({ mode, onDone, onCancel }: SlugDialogProps) 
           </p>
         </div>
         <div className="dialog-buttons">
-          <button type="button" onClick={onCancel}>
+          <button type="button" onClick={cancel} disabled={submitting}>
             キャンセル
           </button>
           <button type="submit" disabled={submitDisabled}>
