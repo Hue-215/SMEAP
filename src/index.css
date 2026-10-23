@@ -145,12 +145,12 @@ button:is(:disabled, [aria-disabled='true']) {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) 1.5rem;
-  margin-top: 1.25rem;
+  margin-top: var(--space-4);
   margin-bottom: var(--space-5);
   padding: var(--space-3) 0;
   border-top: var(--border-width) solid var(--color-border);
   border-bottom: var(--border-width) solid var(--color-border);
-  font-size: 0.8125rem;
+  font-size: var(--font-size-sm);
 }
 
 .article-meta-item {
@@ -173,18 +173,13 @@ button:is(:disabled, [aria-disabled='true']) {
 }
 
 .article-meta-button {
-  height: 2rem;
+  height: var(--control-size-md);
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   padding: 0 0.625rem;
   border: var(--border-width) solid var(--color-border);
   color: var(--color-text);
-}
-
-.article-meta-button .icon {
-  width: 1.125rem;
-  height: 1.125rem;
 }
 
 /* アイコン1つだけを置くボタンの箱。箱の大きさ(--control-size-md)とアイコンの大きさ
@@ -252,9 +247,10 @@ button:is(:disabled, [aria-disabled='true']) {
   text-align: left;
 }
 
-/* 文字と並べるアイコン(メニューの項目・サイドバー下の設定)。 */
+/* 文字と並べるアイコン(メニューの項目・サイドバー下の設定・サムネイルのボタン)。 */
 .menu-item .icon,
-.sidebar-settings .icon {
+.sidebar-settings .icon,
+.article-meta-button .icon {
   width: 1.25rem;
   height: 1.25rem;
 }

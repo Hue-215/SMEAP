@@ -1,30 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
 import type { Article } from './api'
 import Icon from './Icon'
 
 type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'heroImage'>
-export type FieldsPatch = Partial<Pick<Article, 'title' | 'description' | 'pubDate'>>
+export type FieldsPatch = Partial<Omit<Fields, 'heroImage'>>
 
 interface ArticleHeaderProps {
   fields: Fields
   onChange: (patch: FieldsPatch) => void
-}
-
-// field-sizingはLinuxのWebKitGTKが未対応のため、高さは自前で合わせる。
-function useAutoHeight(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (el) fitHeight(el)
-  }, [ref, value])
-
-  // 幅が変わると折り返しが変わる
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const observer = new ResizeObserver(() => fitHeight(el))
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [ref])
 }
 
 function fitHeight(el: HTMLTextAreaElement) {
@@ -39,33 +22,64 @@ const blockEnter = (e: KeyboardEvent<HTMLTextAreaElement>) => {
   if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.preventDefault()
 }
 
-export default function ArticleHeader({ fields, onChange }: ArticleHeaderProps) {
-  const titleRef = useRef<HTMLTextAreaElement>(null)
-  const descriptionRef = useRef<HTMLTextAreaElement>(null)
-  useAutoHeight(titleRef, fields.title)
-  useAutoHeight(descriptionRef, fields.description)
+interface OneLineFieldProps {
+  className: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+}
+
+// 折り返して高さが伸びる、改行の入らない欄。
+// field-sizingはLinuxのWebKitGTKが未対応のため、高さは自前で合わせる。
+function OneLineField({ className, label, value, onChange }: OneLineFieldProps) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  useLayoutEffect(() => {
+    if (ref.current) fitHeight(ref.current)
+  }, [value])
+
+  // 幅が変わると折り返しが変わる
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let width = el.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return
+      width = el.clientWidth
+      fitHeight(el)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   return (
+    <textarea
+      ref={ref}
+      className={className}
+      rows={1}
+      placeholder={label}
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(flatten(e.target.value))}
+      onKeyDown={blockEnter}
+    />
+  )
+}
+
+export default function ArticleHeader({ fields, onChange }: ArticleHeaderProps) {
+  return (
     <header>
-      <textarea
-        ref={titleRef}
+      <OneLineField
         className="article-title"
-        rows={1}
-        placeholder="タイトル"
-        aria-label="タイトル"
+        label="タイトル"
         value={fields.title}
-        onChange={(e) => onChange({ title: flatten(e.target.value) })}
-        onKeyDown={blockEnter}
+        onChange={(title) => onChange({ title })}
       />
-      <textarea
-        ref={descriptionRef}
+      <OneLineField
         className="article-description"
-        rows={1}
-        placeholder="説明"
-        aria-label="説明"
+        label="説明"
         value={fields.description}
-        onChange={(e) => onChange({ description: flatten(e.target.value) })}
-        onKeyDown={blockEnter}
+        onChange={(description) => onChange({ description })}
       />
       <div className="article-meta">
         <label className="article-meta-item">
