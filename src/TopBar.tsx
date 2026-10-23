@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { formatSavedTime, type SaveStatus } from './autoSave'
 import Icon from './Icon'
 import MenuButton from './MenuButton'
@@ -28,18 +29,20 @@ interface TopBarProps {
   onToggleSidebar: () => void
   // nullなら押せない
   onRenameSlug: (() => void) | null
+  onInsertLink: (() => void) | null
+  onInsertImages: ((files: File[]) => void) | null
   // nullなら出さない
   saveStatus: SaveStatus | null
+  // あれば保存の状態の代わりに、エラーとして出す
+  notice: string | null
 }
 
-function SaveStatusText({ status }: { status: SaveStatus | null }) {
-  const text = status?.failed
-    ? '保存できませんでした'
-    : status?.savedAt
-      ? `保存済み ${formatSavedTime(status.savedAt)}`
-      : ''
+function StatusText({ status, notice }: { status: SaveStatus | null; notice: string | null }) {
+  const error = notice ?? (status?.failed ? '保存できませんでした' : null)
+  const text =
+    error ?? (status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : '')
   return (
-    <span role="status" className={status?.failed ? 'save-status error' : 'save-status'}>
+    <span role="status" className={error ? 'save-status error' : 'save-status'}>
       {text}
     </span>
   )
@@ -50,8 +53,12 @@ export default function TopBar({
   sidebarOpen,
   onToggleSidebar,
   onRenameSlug,
+  onInsertLink,
+  onInsertImages,
   saveStatus,
+  notice,
 }: TopBarProps) {
+  const fileInput = useRef<HTMLInputElement>(null)
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
   const renameItem: MenuItem = {
     key: 'rename-slug',
@@ -89,20 +96,47 @@ export default function TopBar({
         </button>
       )}
       {drawer.narrow ? (
-        <SaveStatusText status={saveStatus} />
+        <StatusText status={saveStatus} notice={notice} />
       ) : (
         <span className="topbar-spacer" aria-hidden="true" />
       )}
-      <button type="button" className="icon-button" disabled aria-label="リンク" title="リンク">
+      <button
+        type="button"
+        className="icon-button"
+        disabled={onInsertLink === null}
+        onClick={() => onInsertLink?.()}
+        aria-label="リンク"
+        title="リンク"
+      >
         <Icon name="link" />
       </button>
-      <button type="button" className="icon-button" disabled aria-label="画像を挿入" title="画像を挿入">
+      <button
+        type="button"
+        className="icon-button"
+        disabled={onInsertImages === null}
+        onClick={() => fileInput.current?.click()}
+        aria-label="画像を挿入"
+        title="画像を挿入"
+      >
         <Icon name="image" />
       </button>
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? [])
+          // 同じファイルを続けて選んでもchangeが起きるよう空にする
+          e.target.value = ''
+          if (files.length > 0) onInsertImages?.(files)
+        }}
+      />
       {!drawer.narrow && (
         <>
           <span className="topbar-divider" aria-hidden="true" />
-          <SaveStatusText status={saveStatus} />
+          <StatusText status={saveStatus} notice={notice} />
         </>
       )}
       <MenuButton label="その他" items={menuItems} />

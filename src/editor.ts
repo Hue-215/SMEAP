@@ -233,8 +233,64 @@ const editorTheme = EditorView.theme({
   },
 })
 
-export function editorExtensions(slug: string): Extension[] {
+// cursorは挿入した文字の先頭からの位置
+function replaceSelection(view: EditorView, insert: string, cursor = insert.length) {
+  const { from, to } = view.state.selection.main
+  view.dispatch({
+    changes: { from, to, insert },
+    selection: { anchor: from + cursor },
+    scrollIntoView: true,
+    userEvent: 'input',
+  })
+  view.focus()
+}
+
+// 選んだ文字を`[文字](url)`にする。urlが空ならカーソルを`()`の中に置く
+export function insertLink(view: EditorView, url = '') {
+  const { from, to } = view.state.selection.main
+  const text = view.state.sliceDoc(from, to)
+  const insert = `[${text}](${url})`
+  replaceSelection(view, insert, url ? insert.length : text.length + 3)
+}
+
+// 画像は記法のある行の下に出るので、1つずつ別の行に置く
+export function insertImageRefs(view: EditorView, refs: string[]) {
+  const { from, to } = view.state.selection.main
+  const doc = view.state.doc
+  const before = from > doc.lineAt(from).from ? '\n' : ''
+  const after = to < doc.lineAt(to).to ? '\n' : ''
+  replaceSelection(view, before + refs.join('\n') + after)
+}
+
+const urlPattern = /^https?:\/\/\S+$/
+
+// 文字を選んでURLを貼ると`[文字](URL)`にする。文字が無ければ画像の貼り付けとして渡す(filesは空のことがある)。
+// 表計算などからのコピーは文字と画像を両方持つので、文字があれば文字として貼る
+function pasteHandler(onPasteImage: (files: File[]) => void): Extension {
+  return EditorView.domEventHandlers({
+    paste: (event, view) => {
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      if (!text) {
+        event.preventDefault()
+        onPasteImage(Array.from(event.clipboardData?.files ?? []))
+        return true
+      }
+      const url = text.trim()
+      const { main, ranges } = view.state.selection
+      if (main.empty || ranges.length > 1 || !urlPattern.test(url)) return false
+      event.preventDefault()
+      insertLink(view, url)
+      return true
+    },
+  })
+}
+
+export function editorExtensions(
+  slug: string,
+  onPasteImage: (files: File[]) => void,
+): Extension[] {
   return [
+    pasteHandler(onPasteImage),
     history(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     drawSelection(),

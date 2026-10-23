@@ -8,22 +8,24 @@ interface EditorProps {
   // 本文を読むときに使う。編集欄がある間だけ入る
   viewRef: RefObject<EditorView | null>
   onChange: () => void
+  // 文字の無い貼り付け。filesは空のことがある
+  onPasteImage: (files: File[]) => void
 }
 
-export default function Editor({ slug, initialDoc, viewRef, onChange }: EditorProps) {
+export default function Editor({ slug, initialDoc, viewRef, onChange, onPasteImage }: EditorProps) {
   const container = useRef<HTMLDivElement>(null)
-  const onChangeRef = useRef(onChange)
+  const callbacks = useRef({ onChange, onPasteImage })
   useEffect(() => {
-    onChangeRef.current = onChange
+    callbacks.current = { onChange, onPasteImage }
   })
 
   useEffect(() => {
     const view = new EditorView({
       doc: initialDoc,
       extensions: [
-        editorExtensions(slug),
+        editorExtensions(slug, (files) => callbacks.current.onPasteImage(files)),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current()
+          if (update.docChanged) callbacks.current.onChange()
         }),
       ],
       parent: container.current ?? undefined,

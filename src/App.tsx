@@ -35,8 +35,11 @@ export default function App() {
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
+  // 同じ文言が続いても出し直すよう、包んで持つ
+  const [notice, setNotice] = useState<{ text: string } | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
+  const loaded = article.status === 'loaded' ? article : null
 
   // 後から出した読み込みが先に返ったら、前の読み込みの結果は捨てる
   const listRequest = useRef(0)
@@ -58,6 +61,12 @@ export default function App() {
   useEffect(() => {
     reloadArticles()
   }, [])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), 5000)
+    return () => clearTimeout(timer)
+  }, [notice])
 
   const openArticle = (slug: string) => {
     setArticle({ status: 'loading', slug })
@@ -161,11 +170,12 @@ export default function App() {
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onRenameSlug={
-            article.status === 'loaded'
-              ? () => openSlugDialog({ kind: 'rename', slug: article.slug })
-              : null
+            loaded ? () => openSlugDialog({ kind: 'rename', slug: loaded.slug }) : null
           }
-          saveStatus={article.status === 'loaded' ? saveStatus : null}
+          onInsertLink={loaded ? () => editor.current?.insertLink() : null}
+          onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
+          saveStatus={loaded ? saveStatus : null}
+          notice={notice?.text ?? null}
         />
         <div className="editor-scroll">
           <div className="editor-column">
@@ -177,6 +187,7 @@ export default function App() {
                 paused={saveConfirm !== null}
                 onSaveStatus={setSaveStatus}
                 onSaved={onSaved}
+                onNotice={(text) => setNotice({ text })}
               />
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>

@@ -1,3 +1,4 @@
+mod clipboard;
 mod commands;
 mod image_protocol;
 mod store;
@@ -31,6 +32,8 @@ pub fn run() {
             commands::rename_article,
             commands::import_body_image,
             commands::import_hero_image,
+            commands::import_body_image_from_path,
+            commands::import_clipboard_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

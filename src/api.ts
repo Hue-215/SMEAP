@@ -58,6 +58,15 @@ export function importHeroImage(slug: string, data: Uint8Array): Promise<string>
   return invoke<string>('import_hero_image', data, { headers: { slug } })
 }
 
+export function importBodyImageFromPath(slug: string, path: string): Promise<string> {
+  return invoke<string>('import_body_image_from_path', { slug, path })
+}
+
+// クリップボードに画像が無ければnull。Linuxだけで読める
+export function importClipboardImage(slug: string): Promise<string | null> {
+  return invoke<string | null>('import_clipboard_image', { slug })
+}
+
 // 入力中の案内に使う。Rust側のvalidate_slug(src-tauri/src/store.rs)とそろえる
 export function isValidSlug(slug: string): boolean {
   return /^[a-z0-9-]+$/.test(slug)
