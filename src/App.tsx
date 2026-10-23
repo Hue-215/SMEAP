@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { listArticles, readArticle, type Article } from './api'
+import ArticleHeader, { type FieldsPatch } from './ArticleHeader'
 import Editor from './Editor'
 import { Drawer } from './Drawer'
 import Sidebar from './Sidebar'
@@ -51,6 +52,11 @@ export default function App() {
       })
   }
 
+  const updateFields = (patch: FieldsPatch) =>
+    setArticle((current) =>
+      current.status === 'loaded' ? { ...current, article: { ...current.article, ...patch } } : current,
+    )
+
   const sidebar = (
     <Sidebar
       articles={articles}
@@ -73,7 +79,10 @@ export default function App() {
         <div className="editor-scroll">
           <div className="editor-column">
             {article.status === 'loaded' ? (
-              <Editor key={article.slug} slug={article.slug} initialDoc={article.article.body} />
+              <Fragment key={article.slug}>
+                <ArticleHeader fields={article.article} onChange={updateFields} />
+                <Editor slug={article.slug} initialDoc={article.article.body} />
+              </Fragment>
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>
             ) : null}
