@@ -576,7 +576,10 @@ button:is(:disabled, [aria-disabled='true']) {
   max-width: none;
   max-height: none;
   margin: 0;
-  padding: 0;
+  /* top layerに出るので、#rootの余白で安全領域を避けられない */
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
   border: 0;
 }
 
@@ -670,10 +673,16 @@ button:is(:disabled, [aria-disabled='true']) {
   color: var(--color-text-secondary);
 }
 
+.settings-filter:has(:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
 .settings-filter input {
   flex: 1;
   min-width: 0;
   border: 0;
+  outline: none;
   background: none;
   color: var(--color-text);
   font: inherit;
