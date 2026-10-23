@@ -22,6 +22,7 @@ export interface Article {
   title: string
   description: string
   pubDate: string
+  // ファイル名だけ。本文の画像のような参照ではない
   heroImage: string | null
   body: string
 }
@@ -34,7 +35,7 @@ export function readArticle(slug: string): Promise<Article> {
   return invoke<Article>('read_article', { slug })
 }
 
-// Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。AndroidではTauriがhttpの形に替える。
+// Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。AndroidのTauriは`http://{scheme}.localhost`で受ける。
 // referenceは本文に書いた参照のまま渡し、記事の画像かどうかはRust側が判断する。
 export function articleImageUrl(slug: string, reference: string): string {
   const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`

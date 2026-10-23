@@ -1,4 +1,4 @@
-//! 本文の画像を読む独自プロトコル。URIは`/{slug}/{本文に書いた参照}`で、どちらもパーセントエンコードする。
+//! 本文の画像を読む独自プロトコル。パスは`/{slug}/{本文に書いた参照}`で、どちらもパーセントエンコードする。
 
 use tauri::http::{Response, StatusCode};
 use tauri::{Manager, Runtime};
@@ -16,11 +16,7 @@ pub fn register<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
 }
 
 fn response_for<R: Runtime>(app: &tauri::AppHandle<R>, path: &str) -> Response<Vec<u8>> {
-    let Some((slug, reference)) = path
-        .strip_prefix('/')
-        .and_then(|rest| rest.split_once('/'))
-        .and_then(|(slug, reference)| Some((percent_decode(slug)?, percent_decode(reference)?)))
-    else {
+    let Some((slug, reference)) = parse_path(path) else {
         return empty(StatusCode::NOT_FOUND);
     };
     let Some(content_type) = content_type(&reference) else {
@@ -35,12 +31,20 @@ fn response_for<R: Runtime>(app: &tauri::AppHandle<R>, path: &str) -> Response<V
             .body(data)
             .expect("固定のヘッダーでレスポンスを作れる"),
         Err(
-            StoreError::NotFound { .. }
+            StoreError::ImageNotFound { .. }
             | StoreError::InvalidSlug { .. }
-            | StoreError::InvalidImageName { .. },
+            | StoreError::InvalidImageReference { .. },
         ) => empty(StatusCode::NOT_FOUND),
-        Err(_) => empty(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(error) => {
+            eprintln!("画像を読めませんでした: {error}");
+            empty(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
+}
+
+fn parse_path(path: &str) -> Option<(String, String)> {
+    let (slug, reference) = path.strip_prefix('/')?.split_once('/')?;
+    Some((percent_decode(slug)?, percent_decode(reference)?))
 }
 
 fn percent_decode(text: &str) -> Option<String> {
@@ -67,4 +71,29 @@ fn empty(status: StatusCode) -> Response<Vec<u8>> {
         .status(status)
         .body(Vec::new())
         .expect("本文の無いレスポンスを作れる")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn パスをslugと参照に分ける() {
+        assert_eq!(
+            parse_path("/a-1/..%2F..%2Fassets%2Fa-1%2F%E7%94%BB%20%23.png"),
+            Some(("a-1".to_string(), "../../assets/a-1/画 #.png".to_string()))
+        );
+        assert_eq!(parse_path("/a-1"), None);
+        assert_eq!(parse_path("a-1/x.png"), None);
+        assert_eq!(parse_path("/a-1/%FF.png"), None);
+    }
+
+    #[test]
+    fn 画像の形式だけを返す() {
+        assert_eq!(content_type("../../assets/a/01.PNG"), Some("image/png"));
+        assert_eq!(content_type("01.jpeg"), Some("image/jpeg"));
+        // svgはスクリプトを含められるので返さない
+        assert_eq!(content_type("01.svg"), None);
+        assert_eq!(content_type("01"), None);
+    }
 }

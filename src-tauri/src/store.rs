@@ -29,8 +29,10 @@ pub enum StoreError {
     InvalidDate { date: String },
     #[error("heroImageが不正です: {name}")]
     InvalidHeroImage { name: String },
-    #[error("画像のファイル名が不正です: {name}")]
-    InvalidImageName { name: String },
+    #[error("画像の参照が不正です: {reference}")]
+    InvalidImageReference { reference: String },
+    #[error("画像がありません: {reference}")]
+    ImageNotFound { reference: String },
     #[error("記事の形式が違います: {slug}: {reason}")]
     Malformed { slug: String, reason: String },
     #[error("ファイルの操作に失敗しました: {path}: {reason}")]
@@ -288,12 +290,21 @@ impl Store {
     // referenceは本文に書いた参照(`../../assets/{slug}/01.png`)
     pub fn read_image(&self, slug: &str, reference: &str) -> Result<Vec<u8>, StoreError> {
         validate_slug(slug)?;
-        let name =
-            image_name_from_ref(slug, reference).ok_or_else(|| StoreError::InvalidImageName {
-                name: reference.to_string(),
-            })?;
+        let name = image_name_from_ref(slug, reference).ok_or_else(|| {
+            StoreError::InvalidImageReference {
+                reference: reference.to_string(),
+            }
+        })?;
         let path = self.assets_dir(slug).join(name);
-        fs::read(&path).map_err(|error| StoreError::not_found_or_io(slug, &path, error))
+        fs::read(&path).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                StoreError::ImageNotFound {
+                    reference: reference.to_string(),
+                }
+            } else {
+                StoreError::io(&path, error)
+            }
+        })
     }
 
     pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
@@ -651,13 +662,14 @@ mod tests {
             reference("a/b.png"),
             reference("a\\b.png"),
             reference("a..b.png"),
+            reference("."),
         ] {
             assert!(
                 matches!(
                     store.read_image("image", &bad),
-                    Err(StoreError::InvalidImageName { name }) if name == bad
+                    Err(StoreError::InvalidImageReference { reference }) if reference == bad
                 ),
-                "{bad} は不正な画像名のはず"
+                "{bad} は不正な参照のはず"
             );
         }
         for bad_slug in ["../x", "A", "a_b", "a/b"] {
@@ -668,7 +680,13 @@ mod tests {
         }
         assert!(matches!(
             store.read_image("image", &reference("02.png")),
-            Err(StoreError::NotFound { .. })
+            Err(StoreError::ImageNotFound { .. })
+        ));
+        // assetsのディレクトリがまだ無い記事
+        store.create_article("no-assets").unwrap();
+        assert!(matches!(
+            store.read_image("no-assets", "../../assets/no-assets/01.png"),
+            Err(StoreError::ImageNotFound { .. })
         ));
     }
 

@@ -40,7 +40,7 @@ import {
 import { articleImageUrl } from './api'
 
 // ベースの"Link/... Image/...": tags.linkは記号とURLにも下線を引き継ぐ。リンクは文字の部分にだけ
-// 下線を付け(リンク内の太字などには付かない)、画像は行ごと灰色にする。
+// 下線を付け(リンク内の太字などには付かない)、画像は記法全体を灰色にする。
 const urlTags: MarkdownConfig = {
   props: [
     styleTags({
@@ -64,7 +64,6 @@ const highlight = HighlightStyle.define([
   { tag: tags.monospace, fontFamily: 'var(--font-family-mono)' },
 ])
 
-// 見出しの行にクラスを付ける。書体と大きさはthemeの側で当てる。
 const headingLine = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
@@ -95,7 +94,7 @@ function headingDecorations(view: EditorView): DecorationSet {
       enter: (node) => {
         const level = headingLevel(node.name)
         if (level === null) return
-        // Setext見出しは下線の行も含めて2行ある
+        // Setext見出しは下線の行も含めて複数行になる
         const decoration = Decoration.line({ class: `cm-heading-${level}` })
         const doc = view.state.doc
         for (let n = doc.lineAt(node.from).number; n <= doc.lineAt(node.to).number; n++) {
@@ -114,7 +113,7 @@ function headingLevel(nodeName: string): number | null {
   return match ? Number(match[1]) : null
 }
 
-// 行をまたぐウィジェットはViewPluginから出せないのでStateFieldに置く。構文木は後から解析が
+// ブロックのウィジェットはViewPluginから出せないのでStateFieldに置く。構文木は後から解析が
 // 進むことがあるので、木が替わったときも作り直す。
 function imageField(slug: string): StateField<DecorationSet> {
   return StateField.define<DecorationSet>({

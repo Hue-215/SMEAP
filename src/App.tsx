@@ -10,17 +10,16 @@ import { useDrawer } from './useDrawer'
 
 type ArticleState =
   | { status: 'none' }
-  | { status: 'loading' }
-  | { status: 'loaded'; article: Article }
-  | { status: 'failed' }
+  | { status: 'loading' | 'failed'; slug: string }
+  | { status: 'loaded'; slug: string; article: Article }
 
 export default function App() {
   const drawer = useDrawer()
   // 広い窓のサイドバーの開け閉め。狭い窓では引き出し(drawer)が開け閉めを担う。
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
+  const selectedSlug = article.status === 'none' ? null : article.slug
 
   useEffect(() => {
     listArticles()
@@ -34,32 +33,22 @@ export default function App() {
       })
   }, [])
 
-  // 切り替えた後に返ってきた前の記事の読み込みは捨てる。
-  useEffect(() => {
-    if (selectedSlug === null) return
-    let stale = false
-    readArticle(selectedSlug)
-      .then((loaded) => {
-        if (!stale) setArticle({ status: 'loaded', article: loaded })
-      })
-      .catch((e) => {
-        if (stale) return
-        console.error('記事を読めませんでした', e)
-        setArticle({ status: 'failed' })
-      })
-    return () => {
-      stale = true
-    }
-  }, [selectedSlug])
-
-  // 'loading'はeffectの中で同期的にsetStateしないよう、ここで入れる。同じ記事を選び直したときは
-  // effectが走らないので入れない。
+  // 読めなかった記事は、選び直したら読み直す。
   const selectArticle = (slug: string) => {
-    if (slug !== selectedSlug) {
-      setSelectedSlug(slug)
-      setArticle({ status: 'loading' })
-    }
     drawer.close()
+    if (slug === selectedSlug && article.status !== 'failed') return
+    setArticle({ status: 'loading', slug })
+    // 切り替えた後に返ってきた前の記事の読み込みは捨てる
+    const settle = (next: ArticleState) =>
+      setArticle((current) =>
+        current.status === 'loading' && current.slug === slug ? next : current,
+      )
+    readArticle(slug)
+      .then((loaded) => settle({ status: 'loaded', slug, article: loaded }))
+      .catch((e) => {
+        console.error('記事を読めませんでした', e)
+        settle({ status: 'failed', slug })
+      })
   }
 
   const sidebar = (
@@ -84,11 +73,7 @@ export default function App() {
         <div className="editor-scroll">
           <div className="editor-column">
             {article.status === 'loaded' ? (
-              <Editor
-                key={article.article.slug}
-                slug={article.article.slug}
-                doc={article.article.body}
-              />
+              <Editor key={article.slug} slug={article.slug} initialDoc={article.article.body} />
             ) : article.status === 'failed' ? (
               <p className="editor-message">記事を読めませんでした</p>
             ) : null}

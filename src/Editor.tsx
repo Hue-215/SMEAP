@@ -4,20 +4,20 @@ import { editorExtensions } from './editor'
 
 interface EditorProps {
   slug: string
-  doc: string
+  initialDoc: string
 }
 
-export default function Editor({ slug, doc }: EditorProps) {
+export default function Editor({ slug, initialDoc }: EditorProps) {
   const container = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const view = new EditorView({
-      doc,
+      doc: initialDoc,
       extensions: editorExtensions(slug),
       parent: container.current ?? undefined,
     })
     return () => view.destroy()
-  }, [slug, doc])
+  }, [slug, initialDoc])
 
   return <div ref={container} />
 }
