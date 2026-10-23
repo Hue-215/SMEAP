@@ -285,6 +285,9 @@ function pasteHandler(onPasteImage: (files: File[]) => void): Extension {
   })
 }
 
+const styleNonce =
+  document.querySelector<HTMLMetaElement>('meta[name="style-nonce"]')?.content ?? ''
+
 export function editorExtensions(
   slug: string,
   onPasteImage: (files: File[]) => void,
@@ -301,5 +304,6 @@ export function editorExtensions(
     headingLine,
     imageField(slug),
     editorTheme,
+    EditorView.cspNonce.of(styleNonce),
   ]
 }
