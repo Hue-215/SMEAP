@@ -195,12 +195,15 @@ class ImageWidget extends WidgetType {
 
 const editorTheme = EditorView.theme({
   '&': {
-    fontFamily: 'var(--font-family-prose)',
     fontWeight: '400',
     fontSize: 'var(--font-size-md)',
-    lineHeight: '1.9',
     color: 'var(--color-text)',
     background: 'transparent',
+  },
+  // 既定のテーマが.cm-scrollerに等幅の書体と行の高さを当てるので、ここで上書きする
+  '.cm-scroller': {
+    fontFamily: 'var(--font-family-prose)',
+    lineHeight: '1.9',
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-content': {
