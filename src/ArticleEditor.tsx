@@ -23,16 +23,21 @@ export interface ArticleEditorHandle {
 interface ArticleEditorProps {
   // 開いたときの内容。記事を切り替えたら、keyで作り直す
   article: Article
-  // trueの間は自動保存しない
+  // trueの間は決まった間隔での保存をしない
   paused: boolean
   onSaveStatus: (status: SaveStatus) => void
   onSaved: (fields: ArticleFields) => void
   ref: Ref<ArticleEditorHandle>
 }
 
-function readFields(latest: RefObject<Article>, view: RefObject<EditorView | null>): ArticleFields {
-  const { slug: _, ...fields } = latest.current
-  return { ...fields, body: view.current?.state.doc.toString() ?? fields.body }
+type HeaderFields = Omit<ArticleFields, 'body'>
+
+function readFields(
+  latest: RefObject<HeaderFields>,
+  view: RefObject<EditorView | null>,
+): ArticleFields {
+  if (!view.current) throw new Error('本文の編集欄が無い')
+  return { ...latest.current, body: view.current.state.doc.toString() }
 }
 
 // 開いている記事の入力欄と、その自動保存。
@@ -43,9 +48,14 @@ export default function ArticleEditor({
   onSaved,
   ref,
 }: ArticleEditorProps) {
-  const [fields, setFields] = useState(article)
+  const [fields, setFields] = useState<HeaderFields>(() => ({
+    title: article.title,
+    description: article.description,
+    pubDate: article.pubDate,
+    heroImage: article.heroImage,
+  }))
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
-  const latest = useRef(article)
+  const latest = useRef(fields)
   const view = useRef<EditorView>(null)
   const callbacks = useRef({ onSaveStatus, onSaved })
   useEffect(() => {
@@ -60,9 +70,9 @@ export default function ArticleEditor({
       onStatus: (status) => callbacks.current.onSaveStatus(status),
       onSaved: (fields) => callbacks.current.onSaved(fields),
     })
-    // Androidでは、裏へ回したアプリが知らせなく終了されることがある
+    // Androidでは、裏へ回したアプリが知らせなく終了されることがある。確認のダイアログを出している間も保存する
     const onVisibilityChange = () => {
-      if (document.hidden) saver.flush()
+      if (document.hidden && saver.isDirty()) void saver.save()
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {

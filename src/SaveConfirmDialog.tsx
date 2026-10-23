@@ -4,7 +4,6 @@ import Dialog from './Dialog'
 
 interface SaveConfirmDialogProps {
   title: string
-  // この記事を開いてから最後に保存できた時刻
   savedAt: Date | null
   onCancel: () => void
   onDiscard: () => void

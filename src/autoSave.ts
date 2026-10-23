@@ -7,7 +7,6 @@ const MAX_DELAY = 120_000
 export interface SaveStatus {
   // この記事を開いてから最後に保存できた時刻
   savedAt: Date | null
-  // 最後の保存に失敗したか
   failed: boolean
 }
 
@@ -16,13 +15,13 @@ export const initialSaveStatus: SaveStatus = { savedAt: null, failed: false }
 // 保存は記事をまたいで1つずつ順に行う
 let queue: Promise<unknown> = Promise.resolve()
 
-// 書いている途中の記事を読まないよう、記事を読む前に待つ
+// それまでに頼まれた保存がすべて終わるのを待つ
 export function whenSaved(): Promise<void> {
   return queue.then(() => {})
 }
 
 export interface AutoSaverHost {
-  // 保存する内容。保存を頼まれたときに読む
+  // 保存する内容。保存を頼まれたときに読む。読めなければ投げる
   read: () => ArticleFields
   onStatus: (status: SaveStatus) => void
   onSaved: (fields: ArticleFields) => void
@@ -70,30 +69,37 @@ export class AutoSaver {
     else if (this.isDirty()) this.schedule()
   }
 
-  // 止めていなければ、間隔を待たずに保存する
-  flush() {
-    if (!this.paused && this.isDirty()) void this.save()
-  }
-
   // 失敗したらfalse。未保存の変更が無ければ、前の保存を待ってtrue
   save(): Promise<boolean> {
     this.clearTimers()
     if (!this.isDirty()) return whenSaved().then(() => true)
-    if (!this.host) return Promise.resolve(false)
+    let fields: ArticleFields
+    try {
+      if (!this.host) throw new Error('画面から外した後に保存を頼まれた')
+      fields = this.host.read()
+    } catch (e) {
+      console.error('保存する内容を読めませんでした', this.slug, e)
+      return Promise.resolve(false)
+    }
     const target = this.revision
-    const fields = this.host.read()
-    const job = queue.then(() => this.write(target, fields))
+    // 1つの保存の失敗で、後の保存が止まらないようにする
+    const job = queue
+      .then(() => this.write(target, fields))
+      .catch((e) => {
+        console.error('保存の後の処理に失敗しました', this.slug, e)
+        return false
+      })
     queue = job
     return job
   }
 
   private async write(target: number, fields: ArticleFields): Promise<boolean> {
-    // 前に頼まれた保存が、後の変更まで含めて済ませていることがある
+    // 同じ版の保存を続けて頼まれたら、2回目は書かない
     if (target <= this.savedRevision) return true
     try {
       await saveArticle(this.slug, fields)
     } catch (e) {
-      console.error('記事を保存できませんでした', e)
+      console.error('記事を保存できませんでした', this.slug, e)
       this.setStatus({ savedAt: this.status.savedAt, failed: true })
       // 入力が無くても、決まった間隔で保存し直す
       if (this.host && !this.paused) {
