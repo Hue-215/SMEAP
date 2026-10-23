@@ -115,7 +115,6 @@ export default function ArticleEditor({
     description: article.description,
     pubDate: article.pubDate,
     heroImage: article.heroImage,
-    extraFrontmatter: article.extraFrontmatter,
   }))
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
   const latest = useRef(fields)

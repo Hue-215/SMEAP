@@ -42,8 +42,6 @@ export interface Article {
   // ファイル名だけ。本文の画像のような参照ではない
   heroImage: string | null
   body: string
-  // 読めなかったフロントマターの元の行。画面では表示も編集もせず、保存でそのまま送り返す
-  extraFrontmatter: string
   warnings: string[]
 }
 

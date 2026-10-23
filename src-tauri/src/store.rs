@@ -1,5 +1,6 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
@@ -74,13 +75,16 @@ pub struct Article {
     pub slug: String,
     #[serde(flatten)]
     pub fields: ArticleFields,
+    // 消費しなかったエントリをそのまま
+    #[serde(skip)]
+    pub extra: Vec<Entry>,
     // 読んだときだけ意味を持つ
     #[serde(default)]
     pub warnings: Vec<String>,
 }
 
 // 保存のときは画面からslugを除いた残りを受け取る。Noneの項目は書かない
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleFields {
     pub title: Option<String>,
@@ -88,9 +92,6 @@ pub struct ArticleFields {
     pub pub_date: Option<String>,
     pub hero_image: Option<String>,
     pub body: String,
-    // 読めなかったフロントマターの元の行。書き戻すまで残す
-    #[serde(default)]
-    pub extra_frontmatter: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,6 +112,15 @@ pub struct UnreadableEntry {
     pub reason: String,
 }
 
+impl UnreadableEntry {
+    fn new(path: &Path, error: impl Display) -> Self {
+        Self {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
+    }
+}
+
 // slugの分かる、開けない記事
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +128,16 @@ pub struct BrokenArticle {
     pub slug: String,
     pub path: String,
     pub reason: String,
+}
+
+impl BrokenArticle {
+    fn new(slug: &str, path: &Path, reason: impl Display) -> Self {
+        Self {
+            slug: slug.to_string(),
+            path: path.display().to_string(),
+            reason: reason.to_string(),
+        }
+    }
 }
 
 // 一覧で読めなかったものは、一覧全体を失敗させずにbrokenとunreadableで返す
@@ -282,20 +302,14 @@ impl Store {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
-                    unreadable.push(UnreadableEntry {
-                        path: self.root.display().to_string(),
-                        reason: error.to_string(),
-                    });
+                    unreadable.push(UnreadableEntry::new(&self.root, error));
                     continue;
                 }
             };
             let file_type = match entry.file_type() {
                 Ok(file_type) => file_type,
                 Err(error) => {
-                    unreadable.push(UnreadableEntry {
-                        path: entry.path().display().to_string(),
-                        reason: error.to_string(),
-                    });
+                    unreadable.push(UnreadableEntry::new(&entry.path(), error));
                     continue;
                 }
             };
@@ -320,11 +334,11 @@ impl Store {
                 Err(StoreError::NotFound { .. }) => {
                     // 記事の一部が残っていれば、壊れた記事として開けなかったと出す
                     if self.posts_dir(name).exists() || self.assets_dir(name).exists() {
-                        broken.push(BrokenArticle {
-                            slug: name.to_string(),
-                            path: self.md_path(name).display().to_string(),
-                            reason: "mdがありません".to_string(),
-                        });
+                        broken.push(BrokenArticle::new(
+                            name,
+                            &self.md_path(name),
+                            "mdがありません",
+                        ));
                     }
                 }
                 Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
@@ -332,14 +346,7 @@ impl Store {
                     path,
                     reason,
                 }),
-                Err(_) => {
-                    // slugを確かめた後なので来ない
-                    broken.push(BrokenArticle {
-                        slug: name.to_string(),
-                        path: self.md_path(name).display().to_string(),
-                        reason: "記事を読めません".to_string(),
-                    });
-                }
+                Err(error) => broken.push(BrokenArticle::new(name, &self.md_path(name), error)),
             }
         }
         broken.sort_by(|a, b| a.slug.cmp(&b.slug));
@@ -381,11 +388,10 @@ impl Store {
                     title: Some(String::new()),
                     description: Some(String::new()),
                     pub_date: Some(today()),
-                    hero_image: None,
-                    body: String::new(),
-                    extra_frontmatter: String::new(),
+                    ..Default::default()
                 },
                 warnings: Vec::new(),
+                extra: Vec::new(),
             };
             self.write_md(&article)?;
             Ok(article)
@@ -501,10 +507,13 @@ impl Store {
         let backup = self.backup_path(slug);
         fs::copy(&md, &backup)
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
+        // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く
+        let extra = self.read_article(slug)?.extra;
         self.write_md(&Article {
             slug: slug.to_string(),
             fields,
             warnings: Vec::new(),
+            extra,
         })
     }
 
@@ -722,9 +731,19 @@ fn render_md(article: &Article) -> String {
         md.push_str(&format!("heroImage: {}\n", json_string(&path)));
         written.push("heroImage");
     }
-    let extra = filter_extra(&fields.extra_frontmatter, &written);
-    if !extra.is_empty() {
-        md.push_str(&extra);
+    let extra = article
+        .extra
+        .iter()
+        // Someで書いたkeyと同じkeyのエントリだけは書かない
+        .filter(|entry| {
+            !(entry
+                .key_value
+                .as_ref()
+                .is_some_and(|(key, _)| written.contains(&key.as_str())))
+        })
+        .flat_map(|entry| entry.lines.iter().map(String::as_str));
+    for line in extra {
+        md.push_str(line);
         md.push('\n');
     }
     md.push_str("---\n");
@@ -732,86 +751,75 @@ fn render_md(article: &Article) -> String {
     md
 }
 
-fn filter_extra(extra: &str, written: &[&str]) -> String {
-    let lines: Vec<String> = frontmatter_entries(extra)
-        .into_iter()
-        .filter(|entry| match &entry.key {
-            Some(key) => !written.contains(&key.as_str()),
-            None => true,
-        })
-        .flat_map(|entry| entry.lines)
-        .collect();
-    lines.join("\n")
-}
-
-// フロントマターを`---\n`で囲んでいるときだけ分ける。末尾の`\n---`でも閉じる
+// フロントマターを`---\n`で囲んでいるときだけ分ける。2行目以降で最初に現れる`---`だけの行を
+// 閉じとし、その行の後ろが本文。閉じの行がファイル末尾で改行が無くてもよい
 fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
     let rest = content.strip_prefix("---\n")?;
-    // 項目を1つも書かない保存は空のフロントマターになる
-    if let Some(body) = rest.strip_prefix("---\n") {
-        return Some(("", body));
-    }
-    if rest == "---" {
-        return Some(("", ""));
-    }
-    match rest.find("\n---\n") {
-        Some(pos) => Some((&rest[..pos], &rest[pos + 5..])),
-        None => {
-            let frontmatter = rest.strip_suffix("\n---")?;
-            Some((frontmatter, ""))
+    let mut offset = 0;
+    loop {
+        // 閉じの行がファイル末尾で改行が無くても1行として見る
+        let line_end = rest[offset..].find('\n').map_or(rest.len(), |i| offset + i);
+        if &rest[offset..line_end] == "---" {
+            // 閉じの行の直前の改行はfrontmatterに含めない
+            let frontmatter = if offset == 0 { "" } else { &rest[..offset - 1] };
+            let body = rest.get(line_end + 1..).unwrap_or("");
+            return Some((frontmatter, body));
         }
+        if line_end == rest.len() {
+            return None;
+        }
+        offset = line_end + 1;
     }
 }
 
 // フロントマターのエントリ。続きの行も含めて元の行を覚え、読めなかった分を書き戻すため
-#[derive(Debug)]
-struct Entry {
-    // `key: value`の行から始まるエントリだけがkeyを持つ
-    key: Option<String>,
-    // 最初の行の`:`の後をtrimした値
-    value: Option<String>,
+#[derive(Clone, Debug, PartialEq)]
+pub struct Entry {
+    // `key: value`の行から始まるエントリだけがkeyと値を持つ
+    key_value: Option<(String, String)>,
     lines: Vec<String>,
 }
 
 // 既知のkeyの並び。項目の調べ方と警告の順番をこの並びにする
 const KNOWN_KEYS: [&str; 4] = ["title", "description", "pubDate", "heroImage"];
 
+// 必須のkey。KNOWN_KEYSの先頭と同じ並び
+const REQUIRED_KEYS: [&str; 3] = ["title", "description", "pubDate"];
+
 fn frontmatter_entries(frontmatter: &str) -> Vec<Entry> {
+    // 項目を1つも書かない保存(`---\n---\n`)のときは、空のエントリにしない
+    if frontmatter.is_empty() {
+        return Vec::new();
+    }
     let mut entries: Vec<Entry> = Vec::new();
     for line in frontmatter.split('\n') {
         let first = line.chars().next();
-        let starts_entry =
-            first.is_some_and(|c| !c.is_whitespace() && c != '#' && c != '-') && line.contains(':');
-        if starts_entry {
-            let (key, value) = line.split_once(':').expect("コロンを含む行");
+        let is_key = first.is_some_and(|c| !c.is_whitespace() && c != '#' && c != '-');
+        if is_key {
+            // コロンの無い行はkeyの無いエントリにする
             entries.push(Entry {
-                key: Some(key.trim().to_string()),
-                value: Some(value.trim().to_string()),
+                key_value: line
+                    .split_once(':')
+                    .map(|(key, value)| (key.trim().to_string(), value.trim().to_string())),
                 lines: vec![line.to_string()],
             });
-        } else if first.is_some_and(|c| c.is_whitespace() || c == '-') {
-            // 続きの行。前のエントリが無ければ独立のエントリにする
-            match entries.last_mut() {
-                Some(last) => last.lines.push(line.to_string()),
-                None => entries.push(Entry {
-                    key: None,
-                    value: None,
+        } else {
+            // 続きの行・空行・コメント。前のエントリが無ければ独立のエントリにする
+            let continues = first.is_some_and(|c| c.is_whitespace() || c == '-');
+            match (continues, entries.last_mut()) {
+                (true, Some(last)) => last.lines.push(line.to_string()),
+                _ => entries.push(Entry {
+                    key_value: None,
                     lines: vec![line.to_string()],
                 }),
             }
-        } else {
-            entries.push(Entry {
-                key: None,
-                value: None,
-                lines: vec![line.to_string()],
-            });
         }
     }
     entries
 }
 
 fn known_index(entry: &Entry) -> Option<usize> {
-    let key = entry.key.as_deref()?;
+    let key = entry.key_value.as_ref()?.0.as_str();
     KNOWN_KEYS.iter().position(|known| *known == key)
 }
 
@@ -827,22 +835,24 @@ fn read_string(value: &str) -> Option<String> {
     Some(value.to_string())
 }
 
-// 読める値だけ読み、読めなかった部分はextra_frontmatterに元の行を残す
+// 読める値だけ読み、読めなかった部分はextraに元の行を残す
 fn parse_md(slug: &str, content: &str) -> Article {
-    let content = content.replace("\r\n", "\n");
+    // CRLFのmdは置き換えて読む。`\r`の無いmdは借用のまま
+    let content = if content.contains('\r') {
+        Cow::Owned(content.replace("\r\n", "\n"))
+    } else {
+        Cow::Borrowed(content)
+    };
     match split_frontmatter(&content) {
         Some((frontmatter, body)) => parse_frontmatter(slug, frontmatter, body),
         None => Article {
             slug: slug.to_string(),
             fields: ArticleFields {
-                title: None,
-                description: None,
-                pub_date: None,
-                hero_image: None,
-                body: content.clone(),
-                extra_frontmatter: String::new(),
+                body: content.into_owned(),
+                ..Default::default()
             },
             warnings: vec![NO_FRONTMATTER.to_string()],
+            extra: Vec::new(),
         },
     }
 }
@@ -852,12 +862,8 @@ const NO_FRONTMATTER: &str = "フロントマターがありません。全体�
 fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
     let entries = frontmatter_entries(frontmatter);
     let mut fields = ArticleFields {
-        title: None,
-        description: None,
-        pub_date: None,
-        hero_image: None,
         body: body.to_string(),
-        extra_frontmatter: String::new(),
+        ..Default::default()
     };
 
     // 既知のkeyごとのエントリの数。複数あるkeyはどのエントリも使わない
@@ -880,47 +886,41 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
         }
         if entry.lines.len() > 1 {
             // 続きの行がある値は確定しない。警告には1行目の値だけを出す
-            unreadable.push(format!(
-                "{}を読めません: {}",
-                KNOWN_KEYS[index],
-                entry.value.as_deref().unwrap_or("")
-            ));
+            let value = entry
+                .key_value
+                .as_ref()
+                .map(|(_, value)| value.as_str())
+                .unwrap_or("");
+            unreadable.push(format!("{}を読めません: {value}", KNOWN_KEYS[index]));
             continue;
         }
-        let value = entry.value.as_deref().unwrap_or("");
         let key = KNOWN_KEYS[index];
-        match key {
-            "title" | "description" => {
-                if let Some(text) = read_string(value) {
-                    if index == 0 {
-                        fields.title = Some(text);
-                    } else {
-                        fields.description = Some(text);
-                    }
-                    consumed[i] = true;
-                } else {
-                    unreadable.push(format!("{key}を読めません: {value}"));
-                }
+        let value = entry
+            .key_value
+            .as_ref()
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("");
+        // keyごとの値の読み方。読めたら項目に入れる値を返す
+        let parsed = match key {
+            "title" | "description" => read_string(value),
+            "pubDate" => read_string(value).filter(|date| is_valid_date(date)),
+            "heroImage" => read_string(value)
+                .and_then(|path| image_name_from_ref(slug, &path).map(str::to_string)),
+            _ => None,
+        };
+        // Someを書いたkeyだけをconsumedにして、読めなかった値は警告にしてextraに残す
+        if let Some(parsed) = parsed {
+            match key {
+                "title" => fields.title = Some(parsed),
+                "description" => fields.description = Some(parsed),
+                "pubDate" => fields.pub_date = Some(parsed),
+                "heroImage" => fields.hero_image = Some(parsed),
+                // KNOWN_KEYSは上の4つだけ
+                _ => {}
             }
-            "pubDate" => {
-                if let Some(date) = read_string(value).filter(|date| is_valid_date(date)) {
-                    fields.pub_date = Some(date);
-                    consumed[i] = true;
-                } else {
-                    unreadable.push(format!("{key}を読めません: {value}"));
-                }
-            }
-            "heroImage" => {
-                let name = read_string(value)
-                    .and_then(|path| image_name_from_ref(slug, &path).map(str::to_string));
-                if let Some(name) = name {
-                    fields.hero_image = Some(name);
-                    consumed[i] = true;
-                } else {
-                    unreadable.push(format!("{key}を読めません: {value}"));
-                }
-            }
-            _ => {}
+            consumed[i] = true;
+        } else {
+            unreadable.push(format!("{key}を読めません: {value}"));
         }
     }
 
@@ -932,24 +932,23 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
         .map(|(key, _)| format!("{key}が重複しています"))
         .collect();
     warnings.append(&mut unreadable);
-    for (index, key) in KNOWN_KEYS.iter().enumerate().take(3) {
+    for (index, key) in REQUIRED_KEYS.iter().enumerate() {
         if counts[index] == 0 {
             warnings.push(format!("{key}がありません"));
         }
     }
 
-    fields.extra_frontmatter = entries
-        .iter()
+    let extra: Vec<Entry> = entries
+        .into_iter()
         .zip(consumed)
         .filter(|(_, consumed)| !*consumed)
-        .flat_map(|(entry, _)| entry.lines.clone())
-        .collect::<Vec<_>>()
-        .join("\n");
-
+        .map(|(entry, _)| entry)
+        .collect();
     Article {
         slug: slug.to_string(),
         fields,
         warnings,
+        extra,
     }
 }
 
@@ -974,7 +973,6 @@ mod tests {
             pub_date: Some(pub_date.to_string()),
             hero_image: None,
             body: String::new(),
-            extra_frontmatter: String::new(),
         }
     }
 
@@ -983,7 +981,19 @@ mod tests {
             slug: slug.to_string(),
             fields: fields.clone(),
             warnings: Vec::new(),
+            extra: Vec::new(),
         }
+    }
+
+    // Article.extraのエントリの、元の行を並べたもの
+    fn extra_md(article: &Article) -> String {
+        article
+            .extra
+            .iter()
+            .flat_map(|entry| entry.lines.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     // mdを直接書いて読む。フロントマターの読み方を確かめるのに使う
@@ -1021,7 +1031,7 @@ mod tests {
         assert_eq!(created.fields.pub_date.as_deref(), Some(today().as_str()));
         assert_eq!(created.fields.hero_image, None);
         assert_eq!(created.fields.body, "");
-        assert_eq!(created.fields.extra_frontmatter, "");
+        assert!(created.extra.is_empty());
         assert!(created.warnings.is_empty());
 
         let read = store.read_article("first-post").unwrap();
@@ -1041,7 +1051,6 @@ mod tests {
             pub_date: Some("2026-02-14".to_string()),
             hero_image: Some("hero.png".to_string()),
             body: "本文1行目\n2行目\n\n最終行".to_string(),
-            extra_frontmatter: String::new(),
         };
         store.save_article("roundtrip", original.clone()).unwrap();
         assert_eq!(
@@ -1301,7 +1310,6 @@ mod tests {
             pub_date: Some("2026-04-01".to_string()),
             hero_image: Some("hero.png".to_string()),
             body: "![絵](../../assets/old-slug/pic.png)".to_string(),
-            extra_frontmatter: String::new(),
         };
         store.save_article("old-slug", first.clone()).unwrap();
         let revised = ArticleFields {
@@ -1431,7 +1439,7 @@ mod tests {
         store.save_article("no-fm", article.fields.clone()).unwrap();
         let read = store.read_article("no-fm").unwrap();
         assert_eq!(read.fields.body, "本文です\n");
-        assert_eq!(read.fields.extra_frontmatter, "");
+        assert!(read.extra.is_empty());
         assert_eq!(
             read.warnings,
             [
@@ -1449,7 +1457,7 @@ mod tests {
         let article = md_article(&store, "no-fence", "title: \"t\"\n\n本文です\n2行目\n");
         assert_fields(&article, None, None, None, None);
         assert_eq!(article.fields.body, "title: \"t\"\n\n本文です\n2行目\n");
-        assert_eq!(article.fields.extra_frontmatter, "");
+        assert!(article.extra.is_empty());
         assert_eq!(
             article.warnings,
             ["フロントマターがありません。全体を本文として読みました"]
@@ -1492,7 +1500,7 @@ mod tests {
         );
         assert_fields(&article, Some("t"), Some("d"), Some("2026-01-01"), None);
         assert_eq!(article.fields.body, "\n本文\n");
-        assert_eq!(article.fields.extra_frontmatter, "");
+        assert!(article.extra.is_empty());
         assert!(article.warnings.is_empty());
     }
 
@@ -1541,7 +1549,7 @@ mod tests {
         );
         assert_fields(&article, Some("t"), Some("d"), Some("2026-01-01"), None);
         assert_eq!(
-            article.fields.extra_frontmatter,
+            extra_md(&article),
             "\n# コメント\ntags:\n  - a\n  - b\nmc: 入力"
         );
         assert!(article.warnings.is_empty());
@@ -1556,10 +1564,7 @@ mod tests {
             "---\ntitle: \"t\"\ntitle: \"t2\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n",
         );
         assert_fields(&article, None, Some(""), Some("2026-01-01"), None);
-        assert_eq!(
-            article.fields.extra_frontmatter,
-            "title: \"t\"\ntitle: \"t2\""
-        );
+        assert_eq!(extra_md(&article), "title: \"t\"\ntitle: \"t2\"");
         assert_eq!(article.warnings, ["titleが重複しています"]);
     }
 
@@ -1573,7 +1578,7 @@ mod tests {
             "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-5-1\n---\n",
         );
         assert_fields(&article, Some("t"), Some(""), None, None);
-        assert_eq!(article.fields.extra_frontmatter, "pubDate: 2026-5-1");
+        assert_eq!(extra_md(&article), "pubDate: 2026-5-1");
         assert_eq!(article.warnings, ["pubDateを読めません: 2026-5-1"]);
 
         // JSONの文字列になっていない
@@ -1583,7 +1588,7 @@ mod tests {
             "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: 01.png\n---\n",
         );
         assert_fields(&article, Some("t"), Some(""), Some("2026-01-01"), None);
-        assert_eq!(article.fields.extra_frontmatter, "heroImage: 01.png");
+        assert_eq!(extra_md(&article), "heroImage: 01.png");
         assert_eq!(article.warnings, ["heroImageを読めません: 01.png"]);
 
         // 別の記事の下を指している
@@ -1594,7 +1599,7 @@ mod tests {
         );
         assert_fields(&article, Some("t"), Some(""), Some("2026-01-01"), None);
         assert_eq!(
-            article.fields.extra_frontmatter,
+            extra_md(&article),
             "heroImage: \"../../assets/another/x.png\""
         );
         assert_eq!(
@@ -1613,7 +1618,7 @@ mod tests {
             "---\ntitle:\n  続きの行\ndescription: \"\"\npubDate: 2026-01-01\n---\n",
         );
         assert_fields(&article, None, Some(""), Some("2026-01-01"), None);
-        assert_eq!(article.fields.extra_frontmatter, "title:\n  続きの行");
+        assert_eq!(extra_md(&article), "title:\n  続きの行");
         assert_eq!(article.warnings, ["titleを読めません: "]);
     }
 
@@ -1672,7 +1677,6 @@ mod tests {
                 "pubDate": "2026-01-01",
                 "heroImage": null,
                 "body": "",
-                "extraFrontmatter": "",
                 "warnings": [],
             })
         );
@@ -1693,7 +1697,6 @@ mod tests {
                 pub_date: Some("2026-01-01".to_string()),
                 hero_image: None,
                 body: "本文".to_string(),
-                extra_frontmatter: String::new(),
             }
         );
     }
@@ -1969,7 +1972,7 @@ mod tests {
         let content = "---\ntitle: \"t\"\ndescription: \"d\"\npubDate: 2026-5-1\n---\n本文\n";
         let article = md_article(&store, "keep", content);
         assert_eq!(article.fields.pub_date, None);
-        assert_eq!(article.fields.extra_frontmatter, "pubDate: 2026-5-1");
+        assert_eq!(extra_md(&article), "pubDate: 2026-5-1");
 
         store
             .save_article(
@@ -2007,10 +2010,7 @@ mod tests {
         let content =
             "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\ntags:\n  - a\n  - b\nnote: めも\n---\n本文\n";
         let article = md_article(&store, "keep-extras", content);
-        assert_eq!(
-            article.fields.extra_frontmatter,
-            "tags:\n  - a\n  - b\nnote: めも"
-        );
+        assert_eq!(extra_md(&article), "tags:\n  - a\n  - b\nnote: めも");
 
         store.save_article("keep-extras", article.fields).unwrap();
         assert_eq!(
@@ -2018,10 +2018,7 @@ mod tests {
             content
         );
         let article = store.read_article("keep-extras").unwrap();
-        assert_eq!(
-            article.fields.extra_frontmatter,
-            "tags:\n  - a\n  - b\nnote: めも"
-        );
+        assert_eq!(extra_md(&article), "tags:\n  - a\n  - b\nnote: めも");
         assert!(article.warnings.is_empty());
     }
 

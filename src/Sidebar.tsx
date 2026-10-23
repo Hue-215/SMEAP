@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
@@ -22,52 +22,23 @@ interface SidebarProps {
   onSettings: () => void
 }
 
-function BrokenDialog({ broken, onClose }: { broken: BrokenArticle; onClose: () => void }) {
-  const headingId = useId()
-  return (
-    <Dialog labelledBy={headingId} onCancel={onClose}>
-      <div className="dialog-form">
-        <h2 id={headingId} className="dialog-title">
-          読めない記事
-        </h2>
-        <div className="dialog-detail">
-          <p>slug: {broken.slug}</p>
-          <p>理由: {broken.reason}</p>
-          <p className="dialog-detail-path">{broken.path}</p>
-        </div>
-        <div className="dialog-buttons">
-          <button type="button" onClick={onClose}>
-            閉じる
-          </button>
-        </div>
-      </div>
-    </Dialog>
-  )
-}
-
-function UnreadableDialog({
-  unreadable,
+function DialogDetail({
+  title,
   onClose,
+  children,
 }: {
-  unreadable: UnreadableEntry[]
+  title: string
   onClose: () => void
+  children: ReactNode
 }) {
   const headingId = useId()
   return (
     <Dialog labelledBy={headingId} onCancel={onClose}>
       <div className="dialog-form">
         <h2 id={headingId} className="dialog-title">
-          読めない項目
+          {title}
         </h2>
-        <div className="dialog-detail">
-          {unreadable.map((entry, index) => (
-            <p key={`${entry.path} ${index}`}>
-              <span className="dialog-detail-path">{entry.path}</span>
-              <br />
-              {entry.reason}
-            </p>
-          ))}
-        </div>
+        <div className="dialog-body">{children}</div>
         <div className="dialog-buttons">
           <button type="button" onClick={onClose}>
             閉じる
@@ -85,7 +56,6 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSet
     articles.status === 'loaded' && brokenSlug !== null
       ? (articles.broken.find((b) => b.slug === brokenSlug) ?? null)
       : null
-  const unreadableDialog = articles.status === 'loaded' ? articles.unreadable : []
 
   return (
     <>
@@ -152,7 +122,7 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSet
               {articles.unreadable.length > 0 && (
                 <button
                   type="button"
-                  className="sidebar-unreadable"
+                  className="sidebar-message sidebar-unreadable"
                   onClick={() => setUnreadableOpen(true)}
                 >
                   読めない項目が{articles.unreadable.length}件あります
@@ -168,9 +138,23 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSet
           </button>
         </div>
       </aside>
-      {brokenDialog && <BrokenDialog broken={brokenDialog} onClose={() => setBrokenSlug(null)} />}
-      {unreadableOpen && (
-        <UnreadableDialog unreadable={unreadableDialog} onClose={() => setUnreadableOpen(false)} />
+      {brokenDialog && (
+        <DialogDetail title="読めない記事" onClose={() => setBrokenSlug(null)}>
+          <p>slug: {brokenDialog.slug}</p>
+          <p>理由: {brokenDialog.reason}</p>
+          <p>{brokenDialog.path}</p>
+        </DialogDetail>
+      )}
+      {unreadableOpen && articles.status === 'loaded' && (
+        <DialogDetail title="読めない項目" onClose={() => setUnreadableOpen(false)}>
+          {articles.unreadable.map((entry, index) => (
+            <p key={`${entry.path} ${index}`}>
+              {entry.path}
+              <br />
+              {entry.reason}
+            </p>
+          ))}
+        </DialogDetail>
       )}
     </>
   )
