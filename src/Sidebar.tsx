@@ -10,9 +10,10 @@ interface SidebarProps {
   articles: ArticlesState
   selectedSlug: string | null
   onSelect: (slug: string) => void
+  onNew: () => void
 }
 
-export default function Sidebar({ articles, selectedSlug, onSelect }: SidebarProps) {
+export default function Sidebar({ articles, selectedSlug, onSelect, onNew }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -22,7 +23,7 @@ export default function Sidebar({ articles, selectedSlug, onSelect }: SidebarPro
           className="icon-button"
           aria-label="新しい記事"
           title="新しい記事"
-          disabled
+          onClick={onNew}
         >
           <Icon name="add" />
         </button>

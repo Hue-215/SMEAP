@@ -35,6 +35,19 @@ export function readArticle(slug: string): Promise<Article> {
   return invoke<Article>('read_article', { slug })
 }
 
+export function createArticle(slug: string): Promise<Article> {
+  return invoke<Article>('create_article', { slug })
+}
+
+export function renameArticle(oldSlug: string, newSlug: string): Promise<Article> {
+  return invoke<Article>('rename_article', { old: oldSlug, new: newSlug })
+}
+
+// 入力中の案内に使う。Rust側のvalidate_slug(src-tauri/src/store.rs)とそろえる
+export function isValidSlug(slug: string): boolean {
+  return /^[a-z0-9-]+$/.test(slug)
+}
+
 // Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。AndroidのTauriは`http://{scheme}.localhost`で受ける。
 // referenceは本文に書いた参照のまま渡し、記事の画像かどうかはRust側が判断する。
 export function articleImageUrl(slug: string, reference: string): string {

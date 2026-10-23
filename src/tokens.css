@@ -34,6 +34,9 @@
   --color-border: #E0E0E0;
   --color-accent: #D57C00;
   --color-selection: #F0DFC8;
+  --color-error: #B3261E;
+  /* 入力欄の枠。地の色と3:1をとるため仕切り線より濃い */
+  --color-field-border: #8A8A8A;
 
   /* 画面の文字。本文は--font-family-prose */
   --font-family: 'Noto Sans JP', sans-serif;
@@ -85,6 +88,8 @@
     --color-border: #262626;
     --color-accent: #F99D1D;
     --color-selection: #3E2D16;
+    --color-error: #F08A7E;
+    --color-field-border: #5A5A5A;
   }
 }
 
