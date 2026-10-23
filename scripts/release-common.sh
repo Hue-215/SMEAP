@@ -7,6 +7,11 @@ if [[ -n "${RUSTFLAGS:-}" || -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
   exit 1
 fi
 
+if ! command -v cargo-about >/dev/null; then
+  echo "cargo-about を入れてください(画面のライセンスの一覧に使う): cargo install --locked cargo-about" >&2
+  exit 1
+fi
+
 # 置き換える場所は、書かれたままのパス(cargoはCARGO_HOMEのリンクを解決せずに使う)と、
 # リンクを解決したパスの両方を持つ。
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
