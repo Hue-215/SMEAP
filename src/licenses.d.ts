@@ -1,5 +1,4 @@
-// virtual:licensesはscripts/licenses.tsのViteプラグインが出す仮想モジュール。設定画面が動的
-// importで読む。
+// scripts/licenses.tsのViteプラグインが出す仮想モジュール。
 declare module 'virtual:licenses' {
   export interface License {
     name: string

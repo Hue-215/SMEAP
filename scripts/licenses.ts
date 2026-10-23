@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import type { Plugin } from 'vite'
+import type { ConfigEnv, Plugin } from 'vite'
 import type { License } from 'virtual:licenses'
 
 // 作業中のカレントディレクトリによらず、このファイルの位置から求める。
@@ -35,7 +35,7 @@ function readManifest(dir: string): PackageManifest {
   return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as PackageManifest
 }
 
-// パッケージの置き場所。Nodeと同じく、親のディレクトリから上へnode_modules/<name>を探す。
+// パッケージの置き場所。Nodeと同じく、依存元のディレクトリから上へnode_modules/<name>を探す。
 function resolvePackageDir(name: string, fromDir: string): string {
   for (let dir = fromDir; ; dir = dirname(dir)) {
     const resolved = join(dir, 'node_modules', name)
@@ -44,29 +44,22 @@ function resolvePackageDir(name: string, fromDir: string): string {
   }
 }
 
-// package.jsonのlicenseの表示。"A OR B"でMITを含むならMIT(文としてはMITの1本だけを入れている)。
-function licenseLabel(manifest: PackageManifest): string {
+// ライセンスの表示と文。文はLICENSE*・LICENCE*・COPYING*(大文字小文字を区別しない、.spdxは目録なので除く)。
+// "A OR B"でMITを選べて、MITの文のファイル(LICENSE-MITなど)があれば、MITだけを載せる。
+function packageLicense(dir: string, manifest: PackageManifest, name: string) {
   const raw = typeof manifest.license === 'string' ? manifest.license : manifest.license?.type
-  if (raw === undefined) return ''
-  return /\bMIT\b/.test(raw) && raw.includes(' OR ') ? 'MIT' : raw
-}
-
-// ライセンス文。LICENSE*・LICENCE*・COPYING*(大文字小文字を区別しない)。.spdxは目録なので除く。
-// 複数あるときは、名前にMITを含むものだけを採り、無ければ全部をつなぐ。
-function licenseText(dir: string, name: string): string {
-  const files = readdirSync(dir).filter(
-    (file) => /^(licen[cs]e|copying)/i.test(file) && !file.toLowerCase().endsWith('.spdx'),
-  )
-  const withMIT = files.filter((file) => /MIT/i.test(file))
-  const picked = withMIT.length === 0 ? files : withMIT
-  if (picked.length === 0) throw new Error(`ライセンス文のファイルが見つかりません: ${name}`)
-  return picked
+  if (!raw) throw new Error(`package.jsonにlicenseがありません: ${name}`)
+  const files = readdirSync(dir)
+    .filter((file) => /^(licen[cs]e|copying)/i.test(file) && !file.toLowerCase().endsWith('.spdx'))
     .sort()
-    .map((file) => readFileSync(join(dir, file), 'utf8'))
-    .join('\n\n')
+  if (files.length === 0) throw new Error(`ライセンス文のファイルが見つかりません: ${name}`)
+  const mitFiles = files.filter((file) => /(^|[^a-z])mit([^a-z0-9-]|$)/i.test(file))
+  const chooseMIT = / OR /.test(raw) && /(^|[\s(])MIT($|[\s)])/.test(raw) && mitFiles.length > 0
+  const read = (picked: string[]) => picked.map((file) => readFileSync(join(dir, file), 'utf8')).join('\n\n')
+  return chooseMIT ? { license: 'MIT', text: read(mitFiles) } : { license: raw, text: read(files) }
 }
 
-// dependenciesを再帰的にたどって集める。devDependenciesは集めない。
+// dependenciesだけをたどる(dev・optional・peerは見ない)。
 function collectJsLicenses(): License[] {
   const licenses: License[] = []
   // 同じディレクトリは、複数のパッケージから参照されていても一度だけ集める
@@ -80,8 +73,7 @@ function collectJsLicenses(): License[] {
       licenses.push({
         name: manifest.name ?? name,
         version: manifest.version ?? '',
-        license: licenseLabel(manifest),
-        text: licenseText(pkgDir, manifest.name ?? name),
+        ...packageLicense(pkgDir, manifest, manifest.name ?? name),
       })
       visit(pkgDir, manifest.dependencies)
     }
@@ -108,14 +100,18 @@ async function collectRustLicenses(target: string): Promise<License[]> {
       '--config',
       'src-tauri/about.toml',
     ],
-    // 出力のJSONは数メガバイトになる
+    // 出力のJSONは既定の上限(1MB)を超える
     { cwd: rootDir, maxBuffer: 256 * 1024 * 1024 },
-  )
+  ).catch((e: unknown) => {
+    throw new Error('cargo aboutを実行できません(入っていなければ: cargo install --locked cargo-about)', {
+      cause: e,
+    })
+  })
   const about = JSON.parse(stdout) as AboutJson
   const crates = new Map<string, CrateLicenses>()
   for (const { id, text, used_by } of about.licenses) {
     for (const { crate } of used_by) {
-      // アプリ自身のクレート
+      // アプリ自身は一覧の先頭に別に載せる
       if (crate.name === 'astro-notepad') continue
       const key = `${crate.name}@${crate.version}`
       const entry = crates.get(key) ?? { name: crate.name, version: crate.version, ids: [], texts: [] }
@@ -163,13 +159,20 @@ async function collectLicenses(target: string | undefined): Promise<License[]> {
       a.name.localeCompare(b.name, 'en', { sensitivity: 'base' }) ||
       a.version.localeCompare(b.version, 'en', { sensitivity: 'base', numeric: true }),
   )
+  const keys = new Set<string>()
+  for (const { name, version } of rest) {
+    // 設定画面が行を見分けるのに使う
+    const key = `${name}@${version}`
+    if (keys.has(key)) throw new Error(`同じ名前と版が2つあります: ${key}`)
+    keys.add(key)
+  }
   return [app, ...rest]
 }
 
-// 仮想モジュール`virtual:licenses`。設定画面が動的importで、ライセンスの一覧(License[])を読む。
+// 仮想モジュール`virtual:licenses`。
 export default function licenses(): Plugin {
-  // configがloadより先に出るので、buildで動いたかどうかをここで覚えておく
-  let command = 'serve'
+  // configはloadより先に呼ばれる
+  let command: ConfigEnv['command'] = 'serve'
   return {
     name: 'licenses',
     config(_, { command: envCommand }) {
@@ -180,9 +183,14 @@ export default function licenses(): Plugin {
     },
     async load(id) {
       if (id !== '\0virtual:licenses') return null
-      // クレートはtauri buildでだけ集める(CIのフロントエンドのジョブはcargo-aboutを持たないため)
+      // クレートは、tauri buildがTAURI_ENV_*を渡したときだけ集める。素のvite build(CIのフロントエンドの
+      // ジョブ)と開発サーバーでは集めない
+      const target = process.env.TAURI_ENV_TARGET_TRIPLE
+      if (command === 'build' && process.env.TAURI_ENV_PLATFORM !== undefined && target === undefined) {
+        throw new Error('tauri buildからTAURI_ENV_TARGET_TRIPLEが渡されていません')
+      }
       return `export default ${JSON.stringify(
-        await collectLicenses(command === 'build' ? process.env.TAURI_ENV_TARGET_TRIPLE : undefined),
+        await collectLicenses(command === 'build' ? target : undefined),
       )}`
     },
   }

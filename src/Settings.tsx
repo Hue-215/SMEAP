@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Dialog from './Dialog'
 import Icon from './Icon'
 import type { License } from 'virtual:licenses'
@@ -19,12 +19,31 @@ export default function Settings({ narrow, onClose }: SettingsProps) {
   const [page, setPage] = useState<'top' | 'list'>('top')
   const [shown, setShown] = useState<ShownText | null>(null)
   const headingId = useId()
+  const backButton = useRef<HTMLButtonElement>(null)
+  const body = useRef<HTMLDivElement>(null)
+  // 全文から戻ったときに、一覧の位置へ戻す
+  const listScroll = useRef(0)
+
+  useLayoutEffect(() => {
+    if (body.current) body.current.scrollTop = page === 'list' && !shown ? listScroll.current : 0
+  }, [page, shown])
+  // 押したボタンがページごと消えるので、フォーカスを戻るボタンへ移す
+  useEffect(() => {
+    backButton.current?.focus()
+  }, [page, shown])
+
+  const show = (text: ShownText) => {
+    listScroll.current = body.current?.scrollTop ?? 0
+    setShown(text)
+  }
 
   // 1段上のページへ(Esc・Androidの「戻る」も)。トップからは編集画面に戻る
   const back = () => {
     if (shown) setShown(null)
-    else if (page === 'list') setPage('top')
-    else onClose()
+    else if (page === 'list') {
+      listScroll.current = 0
+      setPage('top')
+    } else onClose()
   }
 
   const [heading, backLabel] = shown
@@ -37,14 +56,20 @@ export default function Settings({ narrow, onClose }: SettingsProps) {
     <Dialog labelledBy={headingId} onCancel={back} className="settings-dialog">
       <div className="settings">
         <div className="topbar">
-          <button type="button" className="icon-button" aria-label={backLabel} onClick={back}>
+          <button
+            ref={backButton}
+            type="button"
+            className="icon-button"
+            aria-label={backLabel}
+            onClick={back}
+          >
             <Icon name="arrow_back" />
           </button>
           <h1 id={headingId} className="settings-title">
             {heading}
           </h1>
         </div>
-        <div className="settings-body">
+        <div ref={body} className="settings-body">
           <div className="settings-content">
             {page === 'top' ? (
               <>
@@ -67,7 +92,7 @@ export default function Settings({ narrow, onClose }: SettingsProps) {
               <>
                 {/* 全文から戻ったときに絞り込みを残すため、隠すだけにする */}
                 <div hidden={shown !== null}>
-                  <LicenseList narrow={narrow} onShow={setShown} />
+                  <LicenseList narrow={narrow} onShow={show} />
                 </div>
                 {shown && <pre className="settings-text">{shown.text}</pre>}
               </>
