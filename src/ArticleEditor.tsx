@@ -15,7 +15,7 @@ import {
   importClipboardImage,
   importHeroImage,
   type Article,
-  type ArticleFields,
+  type EditedFields,
   type StoreError,
   type Warning,
 } from './api'
@@ -40,13 +40,13 @@ interface ArticleEditorProps {
   // trueの間は決まった間隔での保存をしない
   paused: boolean
   onSaveStatus: (status: SaveStatus) => void
-  onSaved: (fields: ArticleFields) => void
+  onSaved: (fields: EditedFields) => void
   // エラーとして出す文言
   onNotice: (text: string) => void
   ref: Ref<ArticleEditorHandle>
 }
 
-type HeaderFields = Omit<ArticleFields, 'body'>
+type HeaderFields = Omit<EditedFields, 'body'>
 type HeaderKey = keyof HeaderFields
 
 // runは本文に入れる参照を返す。クリップボードに画像が無ければnull
@@ -102,7 +102,7 @@ async function importImages(
 function readFields(
   latest: RefObject<HeaderFields>,
   view: RefObject<EditorView | null>,
-): ArticleFields {
+): EditedFields {
   if (!view.current) throw new Error('本文の編集欄が無い')
   return { ...latest.current, body: view.current.state.doc.toString() }
 }
@@ -158,7 +158,10 @@ export default function ArticleEditor({
   const runImports = (imports: ImageImport[]) =>
     void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
 
+  // 続けて選ぶと取り込みが並んで走り、mdと表示が別の画像を指すことがあるので、終わるまで選ばせない
+  const [heroImporting, setHeroImporting] = useState(false)
   const pickHeroImage = async (file: File) => {
+    setHeroImporting(true)
     try {
       const name = await importHeroImage(slug, new Uint8Array(await file.arrayBuffer()))
       setHeroImage(name)
@@ -167,6 +170,8 @@ export default function ArticleEditor({
       callbacks.current.onNotice(
         isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした',
       )
+    } finally {
+      setHeroImporting(false)
     }
   }
 
@@ -228,7 +233,7 @@ export default function ArticleEditor({
   }
 
   const warnings = article.warnings.filter((warning: Warning) => {
-    // 読めなかったheroImageの警告は、サムネイルを取り込んだら出さない
+    // heroImageの警告は、サムネイルを取り込んだら出さない(取り込みでmdの行を書き直す)
     if (warning.key === 'heroImage' && heroImage !== article.heroImage) return false
     return warning.key === null || !edited.has(warning.key as HeaderKey)
   })
@@ -239,6 +244,7 @@ export default function ArticleEditor({
         fields={{ ...fields, heroImage }}
         warnings={warnings}
         onChange={updateFields}
+        heroImporting={heroImporting}
         onPickHeroImage={(file) => void pickHeroImage(file)}
       />
       <Editor

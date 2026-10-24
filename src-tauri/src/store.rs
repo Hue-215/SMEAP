@@ -519,7 +519,7 @@ impl Store {
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
         // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く。
         // 開いたときに読めなかった項目は保存の時点で消費されていることがあるので、
-        // Noneの項目は読み直して読めた値で補う
+        // Noneの項目は読み直して読めた値で補う。heroImageはimport_hero_imageが書き換えるので、いつも読み直した値を使う
         let original = self.read_article(slug)?;
         let fields = ArticleFields {
             title: fields.title.or(original.fields.title),
@@ -2078,6 +2078,25 @@ mod tests {
             store.import_hero_image("post", &jpeg()).unwrap(),
             "hero.jpg"
         );
+    }
+
+    #[test]
+    fn 開いた後に差し替えたheroは開いたときの内容の保存で戻らない() {
+        let (_tmp, store) = setup();
+        store.create_article("swap").unwrap();
+        store.import_hero_image("swap", &png()).unwrap();
+        let opened = store.read_article("swap").unwrap();
+        assert_eq!(
+            store.import_hero_image("swap", &jpeg()).unwrap(),
+            "hero.jpg"
+        );
+        store.save_article("swap", edited(&opened)).unwrap();
+
+        let read = store.read_article("swap").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.jpg"));
+        let dir = store.assets_dir("swap");
+        assert!(dir.join("hero.jpg").is_file());
+        assert!(!dir.join("hero.png").exists());
     }
 
     #[test]

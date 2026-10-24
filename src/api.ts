@@ -53,7 +53,7 @@ export interface Article {
 }
 
 // heroImageはimportHeroImageが書き換えるので、保存では渡さない
-export type ArticleFields = Omit<Article, 'slug' | 'warnings' | 'heroImage'>
+export type EditedFields = Omit<Article, 'slug' | 'warnings' | 'heroImage'>
 
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')
@@ -63,7 +63,7 @@ export function readArticle(slug: string): Promise<Article> {
   return invoke<Article>('read_article', { slug })
 }
 
-export function saveArticle(slug: string, fields: ArticleFields): Promise<void> {
+export function saveArticle(slug: string, fields: EditedFields): Promise<void> {
   return invoke('save_article', { slug, fields })
 }
 

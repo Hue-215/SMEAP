@@ -1,4 +1,4 @@
-import { saveArticle, type ArticleFields } from './api'
+import { saveArticle, type EditedFields } from './api'
 
 // 仮の間隔(docs/spec.md)。入力が止まってからと、入力が続いていても保存するまで
 const IDLE_DELAY = 15_000
@@ -22,9 +22,9 @@ export function whenSaved(): Promise<void> {
 
 export interface AutoSaverHost {
   // 保存する内容。保存を頼まれたときに読む。読めなければ投げる
-  read: () => ArticleFields
+  read: () => EditedFields
   onStatus: (status: SaveStatus) => void
-  onSaved: (fields: ArticleFields) => void
+  onSaved: (fields: EditedFields) => void
 }
 
 // 開いている1つの記事の自動保存。変更のたびに番号を進め、保存した番号と比べて未保存かを見る。
@@ -73,7 +73,7 @@ export class AutoSaver {
   save(): Promise<boolean> {
     this.clearTimers()
     if (!this.isDirty()) return whenSaved().then(() => true)
-    let fields: ArticleFields
+    let fields: EditedFields
     try {
       if (!this.host) throw new Error('画面から外した後に保存を頼まれた')
       fields = this.host.read()
@@ -93,7 +93,7 @@ export class AutoSaver {
     return job
   }
 
-  private async write(target: number, fields: ArticleFields): Promise<boolean> {
+  private async write(target: number, fields: EditedFields): Promise<boolean> {
     // 同じ版の保存を続けて頼まれたら、2回目は書かない
     if (target <= this.savedRevision) return true
     try {

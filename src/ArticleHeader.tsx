@@ -10,6 +10,7 @@ interface ArticleHeaderProps {
   fields: Fields
   warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
+  heroImporting: boolean
   onPickHeroImage: (file: File) => void
 }
 
@@ -84,6 +85,7 @@ export default function ArticleHeader({
   fields,
   warnings,
   onChange,
+  heroImporting,
   onPickHeroImage,
 }: ArticleHeaderProps) {
   const fileInput = useRef<HTMLInputElement>(null)
@@ -141,6 +143,7 @@ export default function ArticleHeader({
           <button
             type="button"
             className="article-meta-button"
+            disabled={heroImporting}
             onClick={() => fileInput.current?.click()}
           >
             <Icon name="image" />
