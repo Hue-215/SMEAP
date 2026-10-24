@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { StoreError } from './api'
+import { UnsavedArticleError, type PostsDir, type StoreError } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
 import { isAndroid } from './platform'
@@ -7,8 +7,8 @@ import type { License } from 'virtual:licenses'
 
 interface SettingsProps {
   narrow: boolean
-  // 読み込む前はnull
-  postsDir: string | null
+  // 読めていない間はnull
+  postsDir: PostsDir | null
   // デスクトップだけ
   onPickPostsDir: () => Promise<void>
   // Androidだけ
@@ -89,8 +89,8 @@ export default function Settings({
               <>
                 <h2 className="settings-h2">記事の保存先</h2>
                 {isAndroid ? (
-                  postsDir !== null && (
-                    <PostsDirNameRow initial={postsDir} onChange={onChangePostsDirName} />
+                  postsDir?.kind === 'android' && (
+                    <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
                   )
                 ) : (
                   <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
@@ -130,11 +130,12 @@ function PostsDirRow({
   postsDir,
   onPick,
 }: {
-  postsDir: string | null
+  postsDir: PostsDir | null
   onPick: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+  const dirs = postsDir?.kind === 'desktop' ? postsDir : null
 
   const pick = async () => {
     setBusy(true)
@@ -143,7 +144,13 @@ function PostsDirRow({
       await onPick()
     } catch (e) {
       console.error('記事のディレクトリを変えられませんでした', e)
-      setFailure('変更できませんでした')
+      setFailure(
+        (e as StoreError | undefined)?.kind === 'invalidPostsDir'
+          ? 'このディレクトリは記事の保存先に使えません'
+          : e instanceof UnsavedArticleError
+            ? '開いている記事を保存できませんでした'
+            : '変更できませんでした',
+      )
     } finally {
       setBusy(false)
     }
@@ -155,7 +162,14 @@ function PostsDirRow({
         <button type="button" className="settings-row" onClick={pick} disabled={busy}>
           <span className="settings-row-main">
             記事のディレクトリ
-            <span className="settings-note">{postsDir}</span>
+            <span className="settings-note posts-dir-note">
+              {dirs && (
+                <>
+                  <span>記事: {dirs.postsDir}</span>
+                  <span>画像: {dirs.assetsDir}/{'{slug}'}/</span>
+                </>
+              )}
+            </span>
           </span>
           <Icon name="chevron_right" />
         </button>

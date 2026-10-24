@@ -9,8 +9,10 @@ import {
   setPostsDirName,
   readArticle,
   exportZip,
+  UnsavedArticleError,
   type Article,
   type EditedFields,
+  type PostsDir,
   type StoreError,
 } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
@@ -43,9 +45,13 @@ interface SaveConfirm {
 export default function App() {
   const drawer = useDrawer()
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
-  // デスクトップは記事のディレクトリの絶対パス、Androidはzipの中の`src/content/`の下の名前
-  const [postsDir, setPostsDir] = useState<string | null>(null)
-  const destination = postsDir !== null && isAndroid ? `./src/content/${postsDir}` : postsDir
+  const [postsDir, setPostsDir] = useState<PostsDir | null>(null)
+  const destination =
+    postsDir === null
+      ? null
+      : postsDir.kind === 'desktop'
+        ? postsDir.postsDir
+        : `./src/content/${postsDir.name}`
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
@@ -87,9 +93,15 @@ export default function App() {
 
   useEffect(() => {
     reloadArticles()
-    ;(isAndroid ? getPostsDirName() : getPostsDir())
-      .then(setPostsDir)
-      .catch((e) => console.error('記事のディレクトリを読めませんでした', e))
+    if (isAndroid) {
+      getPostsDirName()
+        .then((name) => setPostsDir({ kind: 'android', name }))
+        .catch((e) => console.error('記事のディレクトリを読めませんでした', e))
+    } else {
+      getPostsDir()
+        .then((location) => setPostsDir({ kind: 'desktop', ...location }))
+        .catch((e) => console.error('記事のディレクトリを読めませんでした', e))
+    }
   }, [])
 
   useEffect(() => {
@@ -211,18 +223,18 @@ export default function App() {
 
   // 開いている記事は前のディレクトリのものなので、選び直したら閉じる
   const pickPostsDirAndReload = async () => {
-    if (!(await saveOpenArticle())) throw new Error('開いている記事を保存できませんでした')
+    if (!(await saveOpenArticle())) throw new UnsavedArticleError()
     await whenSaved()
     const picked = await pickPostsDir()
     if (picked === null) return
     setArticle({ status: 'none' })
-    setPostsDir(picked)
+    setPostsDir({ kind: 'desktop', ...picked })
     reloadArticles()
   }
 
   const changePostsDirName = async (name: string) => {
     await setPostsDirName(name)
-    setPostsDir(name)
+    setPostsDir({ kind: 'android', name })
   }
 
   const openSettings = () => {

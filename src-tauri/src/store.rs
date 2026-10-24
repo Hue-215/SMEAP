@@ -7,7 +7,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, RwLock};
+use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -194,7 +194,7 @@ fn is_valid_date(date: &str) -> bool {
 }
 
 // 本文とheroImageから画像を指すときの、記事ファイルからの相対パス。
-// mdがsrc/content/postsにあるので2つ上でsrcに届き、そこからassets/{slug}/を指す
+// mdから2つ上の`assets/{slug}/`を指す。assetsの置き場所はこれに合わせて決める(assets_base_of)
 fn assets_ref(slug: &str) -> String {
     format!("../../assets/{slug}/")
 }
@@ -244,9 +244,14 @@ fn next_image_number(dir: &Path) -> Result<u32, StoreError> {
     Ok(max.saturating_add(1))
 }
 
-// assetsの親を組み立てる。画像の参照`../../assets/`は変わらないので、assetsは常に
-// 記事のディレクトリの親の親の下に置く。`..`はjoinしない
+// `assets/{slug}`の親を組み立てる。画像の参照はassets_refの相対パスで決まるので、
+// assetsは常に記事のディレクトリの親の親の下に置く
 fn assets_base_of(posts_dir: &Path) -> Result<PathBuf, StoreError> {
+    if !posts_dir.is_absolute() {
+        return Err(StoreError::InvalidPostsDir {
+            path: posts_dir.display().to_string(),
+        });
+    }
     posts_dir
         .parent()
         .and_then(Path::parent)
@@ -256,15 +261,27 @@ fn assets_base_of(posts_dir: &Path) -> Result<PathBuf, StoreError> {
         })
 }
 
+// 差し替えはデスクトップだけ(src/settings.rs)
 #[cfg_attr(target_os = "android", allow(dead_code))]
 pub(crate) fn check_posts_dir(posts_dir: &Path) -> Result<(), StoreError> {
     assets_base_of(posts_dir).map(drop)
 }
 
+// std::hash::DefaultHasherは版によって値が変わりうるので、FNV-1aを手で書く
+fn posts_dir_hash(posts_dir: &Path) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in posts_dir.as_os_str().as_encoded_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
 pub struct Store {
-    // 記事のディレクトリとassetsの親の組。デスクトップでは実行中に差し替えられる
+    // デスクトップでは実行中に差し替えられる
     dirs: RwLock<Dirs>,
-    backup_dir: PathBuf,
+    // この下を記事のディレクトリごとに分ける
+    backup_root: PathBuf,
     // コマンドはasyncで別スレッドから並んで呼ばれるので、書き換えの間は排他する
     lock: Mutex<()>,
 }
@@ -272,30 +289,33 @@ pub struct Store {
 struct Dirs {
     posts_dir: PathBuf,
     assets_base: PathBuf,
+    backup_dir: PathBuf,
+}
+
+fn dirs_of(posts_dir: &Path, backup_root: &Path) -> Result<Dirs, StoreError> {
+    Ok(Dirs {
+        posts_dir: posts_dir.to_path_buf(),
+        assets_base: assets_base_of(posts_dir)?,
+        backup_dir: backup_root.join(posts_dir_hash(posts_dir)),
+    })
 }
 
 impl Store {
-    pub fn new(posts_dir: PathBuf, backup_dir: PathBuf) -> Result<Self, StoreError> {
-        let assets_base = assets_base_of(&posts_dir)?;
+    pub fn new(posts_dir: PathBuf, backup_root: PathBuf) -> Result<Self, StoreError> {
+        let dirs = dirs_of(&posts_dir, &backup_root)?;
         Ok(Self {
-            dirs: RwLock::new(Dirs {
-                posts_dir,
-                assets_base,
-            }),
-            backup_dir,
+            dirs: RwLock::new(dirs),
+            backup_root,
             lock: Mutex::new(()),
         })
     }
 
-    // 差し替えはlock_guardを取ってからにし、書き込み中の操作と重ならないようにする
+    // lock_guardを取ってから差し替え、書き込み中の操作と重ならないようにする。差し替えはデスクトップだけ(src/settings.rs)
     #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn set_posts_dir(&self, posts_dir: PathBuf) -> Result<(), StoreError> {
-        let assets_base = assets_base_of(&posts_dir)?;
+        let dirs = dirs_of(&posts_dir, &self.backup_root)?;
         let _guard = self.lock_guard();
-        *self.dirs.write().unwrap() = Dirs {
-            posts_dir,
-            assets_base,
-        };
+        *self.dirs.write().unwrap_or_else(PoisonError::into_inner) = dirs;
         Ok(())
     }
 
@@ -307,7 +327,21 @@ impl Store {
     }
 
     pub(crate) fn posts_dir(&self) -> PathBuf {
-        self.dirs.read().unwrap().posts_dir.clone()
+        self.dirs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .posts_dir
+            .clone()
+    }
+
+    // 画面に画像の置き場所を見せる(src/settings.rs)。デスクトップだけ
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    pub(crate) fn assets_base(&self) -> PathBuf {
+        self.dirs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .assets_base
+            .clone()
     }
 
     fn md_path(&self, slug: &str) -> PathBuf {
@@ -315,11 +349,19 @@ impl Store {
     }
 
     fn assets_dir(&self, slug: &str) -> PathBuf {
-        self.dirs.read().unwrap().assets_base.join(slug)
+        self.dirs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .assets_base
+            .join(slug)
     }
 
     fn backup_path(&self, slug: &str) -> PathBuf {
-        self.backup_dir.join(format!("{slug}.md"))
+        self.dirs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .backup_dir
+            .join(format!("{slug}.md"))
     }
 
     pub fn list_articles(&self) -> Result<ArticleList, StoreError> {
@@ -563,9 +605,11 @@ impl Store {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
         let md = self.md_path(slug);
-        fs::create_dir_all(&self.backup_dir)
-            .map_err(|error| StoreError::io(&self.backup_dir, error))?;
         let backup = self.backup_path(slug);
+        let backup_dir = backup
+            .parent()
+            .expect("backup_pathはバックアップのファイル");
+        fs::create_dir_all(backup_dir).map_err(|error| StoreError::io(backup_dir, error))?;
         fs::copy(&md, &backup)
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
         // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く。
@@ -677,7 +721,7 @@ impl Store {
         Ok(())
     }
 
-    // zipの中のmdは`src/content/{posts_dir_name}/`の下。名前はAstroのプロジェクトに合わせて受け取る
+    // 書き出しはAndroidだけ(src/export.rs)
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub fn write_zip(
         &self,
@@ -838,6 +882,19 @@ pub(crate) fn is_filename(name: &str) -> bool {
         && !name.contains('/')
         && !name.contains('\\')
         && !name.contains("..")
+}
+
+// `src/content/`の下のディレクトリ名を確かめる。`.`で始まる名前はAstroのglobが読まないので断る
+// 設定での名前の変更はAndroidだけ(src/settings.rs)
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+pub(crate) fn validate_posts_dir_name(name: &str) -> Result<(), StoreError> {
+    if is_filename(name) && !name.starts_with('.') {
+        Ok(())
+    } else {
+        Err(StoreError::InvalidPostsDirName {
+            name: name.to_string(),
+        })
+    }
 }
 
 // 文字列の値はJSONの文字列にして書く。YAMLのダブルクォート文字列として読める
@@ -2977,7 +3034,12 @@ mod tests {
     #[test]
     fn 親の親の無いパスは記事のディレクトリに使えない() {
         let tmp = TempDir::new().unwrap();
-        for bad in [PathBuf::from("/"), PathBuf::from("/a"), PathBuf::from("a")] {
+        for bad in [
+            PathBuf::from("/"),
+            PathBuf::from("/a"),
+            PathBuf::from("a"),
+            PathBuf::from("a/b/c"),
+        ] {
             assert!(
                 matches!(
                     Store::new(bad.clone(), tmp.path().join("backup")),
@@ -2987,18 +3049,80 @@ mod tests {
                 bad.display()
             );
         }
-        let store = Store::new(
-            tmp.path().join("root/src/content/posts"),
-            tmp.path().join("backup"),
-        )
-        .unwrap();
+        let posts_dir = tmp.path().join("root/src/content/posts");
+        let store = Store::new(posts_dir.clone(), tmp.path().join("backup")).unwrap();
         assert!(matches!(
             store.set_posts_dir(PathBuf::from("/a")),
             Err(StoreError::InvalidPostsDir { .. })
         ));
         // 失敗しても差し替わらない
+        assert_eq!(store.posts_dir(), posts_dir);
         store.create_article("kept").unwrap();
         assert_eq!(slugs(&store.list_articles().unwrap().articles), ["kept"]);
+    }
+
+    #[test]
+    fn バックアップは記事のディレクトリごとに分かれる() {
+        let tmp = TempDir::new().unwrap();
+        let backup_root = tmp.path().join("backup");
+        let store_a =
+            Store::new(tmp.path().join("a/src/content/posts"), backup_root.clone()).unwrap();
+        let store_b =
+            Store::new(tmp.path().join("b/src/content/blog"), backup_root.clone()).unwrap();
+
+        store_a.create_article("same").unwrap();
+        store_a
+            .save_article("same", input("a", "2026-01-01"))
+            .unwrap();
+        store_b.create_article("same").unwrap();
+        store_b
+            .save_article("same", input("b", "2026-01-01"))
+            .unwrap();
+        store_b
+            .save_article("same", input("b2", "2026-01-02"))
+            .unwrap();
+
+        // それぞれ別のディレクトリに、上書き前の内容が残る
+        let backup_a = store_a.backup_path("same");
+        let backup_b = store_b.backup_path("same");
+        assert_ne!(backup_a, backup_b);
+        let content_a = fs::read_to_string(&backup_a).unwrap();
+        assert!(content_a.contains("title: \"\""));
+        assert!(!content_a.contains("title: \"b\""));
+        assert!(fs::read_to_string(&backup_b)
+            .unwrap()
+            .contains("title: \"b\""));
+
+        // bで消してもaのバックアップは残る
+        store_b.delete_article("same").unwrap();
+        assert!(backup_a.exists());
+        assert!(!backup_b.exists());
+
+        // bでrenameしてもaのバックアップは残る
+        store_b.create_article("same").unwrap();
+        store_b
+            .save_article("same", input("b2", "2026-01-01"))
+            .unwrap();
+        store_b.rename_article("same", "renamed").unwrap();
+        assert!(store_b.backup_path("renamed").exists());
+        assert!(backup_a.exists());
+        assert!(!backup_b.exists());
+    }
+
+    #[test]
+    fn 記事のディレクトリ名の検証() {
+        for ok in ["blog", "posts"] {
+            assert!(validate_posts_dir_name(ok).is_ok(), "{ok} は妥当なはず");
+        }
+        for ng in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x"] {
+            assert!(
+                matches!(
+                    validate_posts_dir_name(ng),
+                    Err(StoreError::InvalidPostsDirName { name }) if name == ng
+                ),
+                "{ng} は不正なはず"
+            );
+        }
     }
 
     #[test]

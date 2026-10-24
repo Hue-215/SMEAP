@@ -862,3 +862,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 .posts-dir-name input:disabled {
   opacity: 0.5;
 }
+
+.posts-dir-note > span {
+  display: block;
+}

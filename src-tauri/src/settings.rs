@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::store::{self, Store};
 use crate::store::{write_temp, StoreError};
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     #[cfg(not(target_os = "android"))]
@@ -47,37 +47,64 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, StoreError> {
 
 // 読めなくても起動は止めず、既定の設定で始める
 pub fn load(app: &AppHandle) -> Settings {
-    read(app).unwrap_or_else(|error| {
+    let settings = read(app).unwrap_or_else(|error| {
         eprintln!("設定を読めませんでした: {error}");
         Settings::default()
-    })
+    });
+    // 検証を通らない名前が残っていたら、無かったものとして扱う
+    #[cfg(target_os = "android")]
+    let settings = match &settings.posts_dir_name {
+        Some(name) if crate::store::validate_posts_dir_name(name).is_err() => {
+            eprintln!("設定のディレクトリ名が不正です: {name}");
+            Settings::default()
+        }
+        _ => settings,
+    };
+    settings
 }
 
 fn read(app: &AppHandle) -> Result<Settings, StoreError> {
-    let file = file_path(app)?;
-    let content = match fs::read_to_string(&file) {
+    read_from(&file_path(app)?)
+}
+
+fn read_from(file: &Path) -> Result<Settings, StoreError> {
+    let content = match fs::read_to_string(file) {
         Ok(content) => content,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
-        Err(error) => return Err(StoreError::io(&file, error)),
+        Err(error) => return Err(StoreError::io(file, error)),
     };
-    serde_json::from_str(&content).map_err(|error| StoreError::io(&file, error))
+    serde_json::from_str(&content).map_err(|error| StoreError::io(file, error))
 }
 
 fn save(app: &AppHandle, settings: &Settings) -> Result<(), StoreError> {
-    let file = file_path(app)?;
+    save_to(&file_path(app)?, settings)
+}
+
+fn save_to(file: &Path, settings: &Settings) -> Result<(), StoreError> {
     let dir = file.parent().expect("settings.jsonの親がある");
     fs::create_dir_all(dir).map_err(|error| StoreError::io(dir, error))?;
-    let json = serde_json::to_string(settings).map_err(|error| StoreError::io(&file, error))?;
+    let json = serde_json::to_string(settings).map_err(|error| StoreError::io(file, error))?;
     write_temp(dir, json.as_bytes())?
-        .persist(&file)
-        .map_err(|error| StoreError::io(&file, error.error))?;
+        .persist(file)
+        .map_err(|error| StoreError::io(file, error.error))?;
     Ok(())
 }
 
 #[cfg(not(target_os = "android"))]
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostsLocation {
+    pub posts_dir: String,
+    pub assets_dir: String,
+}
+
+#[cfg(not(target_os = "android"))]
 #[tauri::command]
-pub fn get_posts_dir(store: State<'_, Store>) -> String {
-    store.posts_dir().display().to_string()
+pub fn get_posts_dir(store: State<'_, Store>) -> PostsLocation {
+    PostsLocation {
+        posts_dir: store.posts_dir().display().to_string(),
+        assets_dir: store.assets_base().display().to_string(),
+    }
 }
 
 // キャンセルされたらNone
@@ -85,12 +112,14 @@ pub fn get_posts_dir(store: State<'_, Store>) -> String {
 #[tauri::command(async)]
 pub fn pick_posts_dir(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     store: State<'_, Store>,
-) -> Result<Option<String>, StoreError> {
+) -> Result<Option<PostsLocation>, StoreError> {
     use tauri_plugin_dialog::DialogExt;
 
     let current = store.posts_dir();
     let mut dialog = app.dialog().file();
+    dialog = dialog.set_parent(&window);
     if current.is_dir() {
         dialog = dialog.set_directory(&current);
     }
@@ -110,7 +139,10 @@ pub fn pick_posts_dir(
         },
     )?;
     store.set_posts_dir(path.clone())?;
-    Ok(Some(path.display().to_string()))
+    Ok(Some(PostsLocation {
+        posts_dir: path.display().to_string(),
+        assets_dir: store.assets_base().display().to_string(),
+    }))
 }
 
 #[cfg(target_os = "android")]
@@ -135,9 +167,7 @@ pub fn set_posts_dir_name(
     settings: State<'_, SettingsState>,
     name: String,
 ) -> Result<(), StoreError> {
-    if !crate::store::is_filename(&name) || name.starts_with('.') {
-        return Err(StoreError::InvalidPostsDirName { name });
-    }
+    crate::store::validate_posts_dir_name(&name)?;
     let mut settings = settings.lock();
     let next = Settings {
         posts_dir_name: Some(name),
@@ -145,4 +175,53 @@ pub fn set_posts_dir_name(
     save(&app, &next)?;
     *settings = next;
     Ok(())
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::*;
+
+    use tempfile::TempDir;
+
+    fn file_of(tmp: &TempDir) -> PathBuf {
+        tmp.path().join("settings.json")
+    }
+
+    #[test]
+    fn 保存して読み直すと同じ値() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        let settings = Settings {
+            posts_dir: Some(PathBuf::from("/x/src/content/blog")),
+        };
+        save_to(&file, &settings).unwrap();
+        assert_eq!(read_from(&file).unwrap(), settings);
+    }
+
+    #[test]
+    fn 固定のjsonを読める() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        fs::write(&file, r#"{"postsDir":"/x/src/content/blog"}"#).unwrap();
+        assert_eq!(
+            read_from(&file).unwrap(),
+            Settings {
+                posts_dir: Some(PathBuf::from("/x/src/content/blog")),
+            }
+        );
+    }
+
+    #[test]
+    fn ファイルが無ければ既定値() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(read_from(&file_of(&tmp)).unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn 壊れたjsonは失敗する() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        fs::write(&file, "@").unwrap();
+        assert!(read_from(&file).is_err());
+    }
 }

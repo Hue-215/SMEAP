@@ -19,9 +19,9 @@ Astroそのものはフロントマターの項目を決めていない。項目
 - pubDate・updatedDateは`z.coerce.date()`なので、`'Jul 08 2022'`のような書き方も`2022-07-08`も通る。サンプル記事は前者
 - heroImageは`image()`なので、記事ファイルからの相対パスで`src/`内の画像を指す。サンプルは`'../../assets/blog-placeholder-3.jpg'`。この仕様の出力の形なら`'../../assets/{slug}/01.png'`になる
 - heroImageはOGP画像には使われない。記事ページはBaseHeadにtitleとdescriptionしか渡さないので、OGP画像は常に既定の画像になる
-- 記事のURLはファイル名から決まる(`post.id`)。この仕様の`src/content/posts/{slug}.md`ならslugがそのままURLになる
+- 記事のURLはファイル名から決まる(`post.id`)。この仕様の`{slug}.md`ならslugがそのままURLになる
 - サンプル記事5本は、どれもtitle・description・pubDate・heroImageの4つを書いている。updatedDateを書いた記事は無い
-- テンプレートの記事置き場は`src/content/blog`で、この仕様の`src/content/posts`とは違う。実際のブログで項目を変えている場合は、そちらの`content.config.ts`に合わせる
+- テンプレートの記事置き場は`src/content/blog`。実際のブログで項目を変えている場合は、そちらの`content.config.ts`に合わせる
 
 ## 参照したファイル
 

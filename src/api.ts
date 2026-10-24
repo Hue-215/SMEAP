@@ -101,20 +101,33 @@ export function importClipboardImage(slug: string): Promise<string | null> {
   return invoke<string | null>('import_clipboard_image', { slug })
 }
 
-// 記事のディレクトリ。デスクトップは選ばせて変えられる(src/Settings.tsx)
-export function getPostsDir(): Promise<string> {
-  return invoke<string>('get_posts_dir')
-}
-
-export function pickPostsDir(): Promise<string | null> {
-  return invoke<string | null>('pick_posts_dir')
+// Rust側のPostsLocation(src-tauri/src/settings.rs)。画像の置き場所は`{slug}`を付ける前の根
+export interface PostsLocation {
+  postsDir: string
+  assetsDir: string
 }
 
 // Androidはzipの中の`src/content/`の下の名前
+export type PostsDir = ({ kind: 'desktop' } & PostsLocation) | { kind: 'android'; name: string }
+
+export class UnsavedArticleError extends Error {}
+
+// デスクトップだけ呼べる
+export function getPostsDir(): Promise<PostsLocation> {
+  return invoke<PostsLocation>('get_posts_dir')
+}
+
+// 選ばせて変える。キャンセルされたらnull。デスクトップだけ呼べる
+export function pickPostsDir(): Promise<PostsLocation | null> {
+  return invoke<PostsLocation | null>('pick_posts_dir')
+}
+
+// Androidだけ呼べる。zipの中の`src/content/`の下の名前
 export function getPostsDirName(): Promise<string> {
   return invoke<string>('get_posts_dir_name')
 }
 
+// Androidだけ呼べる
 export function setPostsDirName(name: string): Promise<void> {
   return invoke('set_posts_dir_name', { name })
 }

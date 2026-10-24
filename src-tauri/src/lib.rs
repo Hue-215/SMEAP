@@ -19,18 +19,27 @@ pub fn run() {
         .setup(|app| {
             let settings = settings::load(app.handle());
             let data_dir = app.path().app_data_dir()?;
+            let backup_root = data_dir.join("backup");
             #[cfg(not(target_os = "android"))]
-            let posts_dir = match settings.posts_dir {
-                Some(dir) => dir,
-                None => {
-                    let exe = std::env::current_exe()?;
-                    let exe_dir = exe.parent().ok_or("実行ファイルの親ディレクトリが無い")?;
-                    exe_dir.join("src/content/posts")
+            let store = {
+                let exe = std::env::current_exe()?;
+                let exe_dir = exe.parent().ok_or("実行ファイルの親ディレクトリが無い")?;
+                let default_dir = exe_dir.join("src/content/posts");
+                // 設定のディレクトリが使えなくても起動は止めない
+                match settings
+                    .posts_dir
+                    .map(|dir| store::Store::new(dir, backup_root.clone()))
+                {
+                    Some(Ok(store)) => store,
+                    Some(Err(error)) => {
+                        eprintln!("設定の記事のディレクトリを使えません: {error}");
+                        store::Store::new(default_dir, backup_root)?
+                    }
+                    None => store::Store::new(default_dir, backup_root)?,
                 }
             };
             #[cfg(target_os = "android")]
-            let posts_dir = data_dir.join("posts/src/content/posts");
-            let store = store::Store::new(posts_dir, data_dir.join("backup"))?;
+            let store = store::Store::new(data_dir.join("posts/src/content/posts"), backup_root)?;
             app.manage(store);
             #[cfg(target_os = "android")]
             app.manage(settings::SettingsState::new(settings));
