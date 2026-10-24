@@ -310,7 +310,7 @@ impl Store {
                     continue;
                 }
             };
-            // 記事はpostsの下の{slug}.md。それ以外の名前とディレクトリは黙って飛ばす
+            // 記事はpostsの下の{slug}.md。読めない名前はunreadableに入り、ほかは黙って飛ばす
             if !file_type.is_file() {
                 continue;
             }
@@ -335,6 +335,10 @@ impl Store {
                     pub_date: article.fields.pub_date,
                     warning: !article.warnings.is_empty(),
                 }),
+                Err(StoreError::NotFound { .. }) => {
+                    // 一覧の途中で消えたmdは、もう記事ではない
+                    continue;
+                }
                 Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
                     slug: stem.to_string(),
                     path,
@@ -360,7 +364,7 @@ impl Store {
     pub fn create_article(&self, slug: &str) -> Result<Article, StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
-        // 並んだ呼び出しでもpersistは上書きで競合が見えないので、先に存在を確かめる
+        // 競合はnoclobberの書き込みで見るが、mkdirを作る前に分からせるため先に確かめる
         let md = self.md_path(slug);
         check_absent(&md, slug)?;
 
@@ -379,13 +383,22 @@ impl Store {
                 warnings: Vec::new(),
                 extra: Vec::new(),
             };
-            self.write_md(&article)?;
+            // 上書きにすると確認の間にできたmdを潰すため、作成はnoclobberで行う
+            let tmp = write_temp(&self.posts_dir(), render_md(&article).as_bytes())?;
+            tmp.persist_noclobber(&md).map_err(|error| {
+                if error.error.kind() == io::ErrorKind::AlreadyExists {
+                    StoreError::AlreadyExists {
+                        slug: slug.to_string(),
+                    }
+                } else {
+                    StoreError::io(&md, error.error)
+                }
+            })?;
             Ok(article)
         })();
         if result.is_err() {
-            // postsの下にはほかの記事もあるので、書いたmdだけ消す。
+            // mdはnoclobberの失敗では増えないので、ここでは触らない。
             // assetsは作ったときだけ消したいので、空の時だけ消えるremove_dirにする
-            let _ = fs::remove_file(&md);
             let _ = fs::remove_dir(self.assets_dir(slug));
         }
         result
@@ -543,6 +556,26 @@ impl Store {
         }
         let dest = self.md_path(new);
         check_absent(&dest, new)?;
+        // 移動先のassetsは、そのままでは空のディレクトリでもrenameが失敗する。
+        // 作り直しと同じにするため、空なら消して、画像が残っていれば消さずに失敗にする
+        let new_assets = self.assets_dir(new);
+        match fs::read_dir(&new_assets) {
+            Ok(mut entries) => {
+                match entries.next() {
+                    Some(Ok(_)) => {
+                        return Err(StoreError::io(
+                            &new_assets,
+                            "画像が残っているため変更できません",
+                        ))
+                    }
+                    Some(Err(error)) => return Err(StoreError::io(&new_assets, error)),
+                    None => {}
+                }
+                fs::remove_dir(&new_assets).map_err(|error| StoreError::io(&new_assets, error))?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::io(&new_assets, error)),
+        }
         // heroImageはファイル名で持つので、書くときに新しいslugで組み立て直される
         article.slug = new.to_string();
         article.fields.body = article
@@ -706,7 +739,7 @@ fn remove_ignoring_not_found(remove: io::Result<()>, path: &Path) -> Result<(), 
     }
 }
 
-// 記事のmdが既にあるとき。新規作成とrenameの両方で弾き文が同じなため
+// 作成とrenameの両方で、mdが既にあるときは同じエラーで断る
 fn check_absent(path: &Path, slug: &str) -> Result<(), StoreError> {
     if path
         .try_exists()
@@ -1122,6 +1155,11 @@ mod tests {
 
         assert!(store.md_path("first-post").exists());
         assert!(store.assets_dir("first-post").is_dir());
+        // レイアウトの定義をそのまま確かめる
+        assert_eq!(
+            store.md_path("first-post"),
+            store.root.join("src/content/posts/first-post.md")
+        );
     }
 
     #[test]
@@ -1183,10 +1221,17 @@ mod tests {
     fn 重複作成は失敗する() {
         let (_tmp, store) = setup();
         store.create_article("dup").unwrap();
+        store
+            .save_article("dup", input("v1", "2026-01-01"))
+            .unwrap();
+        let before = fs::read_to_string(store.md_path("dup")).unwrap();
         assert!(matches!(
             store.create_article("dup"),
-            Err(StoreError::AlreadyExists { .. })
+            Err(StoreError::AlreadyExists { slug }) if slug == "dup"
         ));
+        // 失敗した作成は既存の記事に触れない
+        assert_eq!(fs::read_to_string(store.md_path("dup")).unwrap(), before);
+        assert!(store.backup_path("dup").exists());
     }
 
     #[test]
@@ -1263,11 +1308,15 @@ mod tests {
             store.save_article(slug, input("", date)).unwrap();
         }
 
-        // 記事として扱いたくないもの。assetsの下を除くと記事以外のディレクトリがあってもよい
+        // 一覧に出したいもの以外(root直下のassetsの残骸のディレクトリなど)が置いてあっても、
+        // 壊れた記事にはならず一覧の成功も保たれる
         let posts = store.posts_dir();
         fs::create_dir_all(posts.join("some-dir")).unwrap();
         fs::write(posts.join("Not-a-slug.md"), "").unwrap();
         fs::write(posts.join("loose-file.txt"), "").unwrap();
+        // 書きかけのテンポラリやstemの空の`.md`も記事ではない
+        fs::write(posts.join(".tmpabc"), "").unwrap();
+        fs::write(posts.join(".md"), "").unwrap();
         fs::create_dir_all(store.root.join("src/assets/leftover")).unwrap();
 
         let list = store.list_articles().unwrap();
@@ -1292,6 +1341,32 @@ mod tests {
     fn postsが無くてもassetsの下は一覧に出さない() {
         let (_tmp, store) = setup();
         fs::create_dir_all(store.assets_dir("leftover")).unwrap();
+
+        let list = store.list_articles().unwrap();
+        assert!(list.articles.is_empty());
+        assert!(list.broken.is_empty());
+        assert!(list.unreadable.is_empty());
+    }
+
+    #[test]
+    fn 作成に失敗したらmdを残さない() {
+        let (_tmp, store) = setup();
+        // assetsの場所を普通のファイルにしておいて、ディレクトリの作成を失敗させる
+        fs::create_dir_all(store.root.join("src/assets")).unwrap();
+        fs::write(store.assets_dir("blocked"), b"").unwrap();
+
+        assert!(store.create_article("blocked").is_err());
+        assert!(!store.md_path("blocked").exists());
+        assert!(!store.backup_path("blocked").exists());
+    }
+
+    #[test]
+    fn 旧構造の記事は一覧に出さない() {
+        let (_tmp, store) = setup();
+        // 移行しないため、旧構造(`./{slug}/src/content/posts/{slug}.md`)のデータがあっても空にする
+        let posts = store.root.join("first/src/content/posts");
+        fs::create_dir_all(&posts).unwrap();
+        fs::write(posts.join("first.md"), "---\ntitle: \"t\"\n---\n本文\n").unwrap();
 
         let list = store.list_articles().unwrap();
         assert!(list.articles.is_empty());
@@ -1341,8 +1416,7 @@ mod tests {
         store.create_article("bad-utf8").unwrap();
         fs::write(store.md_path("bad-utf8"), [0xffu8, 0xfe, b'x']).unwrap();
 
-        // slugの形でない名前やファイルの形でないassets(記事以外が置いてある)、
-        // postsの下のmdでないファイルは出さない
+        // slugの形でない名前のassets(記事以外が置いてある)と、postsの下のmdでないファイルは出さない
         fs::create_dir_all(store.root.join("src/assets/Not-a-slug")).unwrap();
         fs::create_dir_all(store.root.join("src/assets/not_a_slug")).unwrap();
         fs::write(store.posts_dir().join("loose.txt"), "").unwrap();
@@ -1550,6 +1624,41 @@ mod tests {
             store.rename_article("first", "second"),
             Err(StoreError::AlreadyExists { slug }) if slug == "second"
         ));
+    }
+
+    #[test]
+    fn rename先のassetsが空なら作り直せる() {
+        let (_tmp, store) = setup();
+        store.create_article("from").unwrap();
+        store
+            .save_article("from", input("F", "2026-01-01"))
+            .unwrap();
+        // mdを外で消して、assetsの空ディレクトリだけ残す
+        store.create_article("to").unwrap();
+        fs::remove_file(store.md_path("to")).unwrap();
+
+        store.rename_article("from", "to").unwrap();
+        assert!(store.md_path("to").exists());
+        assert!(store.assets_dir("to").is_dir());
+        assert!(!store.md_path("from").exists());
+    }
+
+    #[test]
+    fn rename先のassetsに画像が残っていると失敗する() {
+        let (_tmp, store) = setup();
+        store.create_article("from").unwrap();
+        store
+            .save_article("from", input("F", "2026-01-01"))
+            .unwrap();
+        fs::create_dir_all(store.assets_dir("to")).unwrap();
+        fs::write(store.assets_dir("to").join("01.png"), [1u8, 2, 3]).unwrap();
+
+        let error = store.rename_article("from", "to").unwrap_err();
+        assert!(error.to_string().contains("画像が残っている"));
+        // renameの前で失敗するので、どちらも元のまま
+        assert!(store.md_path("from").exists());
+        assert!(!store.md_path("to").exists());
+        assert!(store.assets_dir("to").join("01.png").exists());
     }
 
     #[test]
