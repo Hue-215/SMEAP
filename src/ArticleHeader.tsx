@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
-import type { Article } from './api'
+import type { Article, Warning } from './api'
 import Icon from './Icon'
 
 type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'heroImage'>
@@ -7,7 +7,7 @@ export type FieldsPatch = Partial<Omit<Fields, 'heroImage'>>
 
 interface ArticleHeaderProps {
   fields: Fields
-  warnings: string[]
+  warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
 }
 
@@ -85,10 +85,12 @@ export default function ArticleHeader({ fields, warnings, onChange }: ArticleHea
         <div className="article-warnings">
           <Icon name="warning" />
           <div className="article-warnings-lines">
-            {warnings.map((warning) => (
-              <p key={warning}>{warning}</p>
+            {warnings.map((warning, index) => (
+              <p key={index}>{warning.message}</p>
             ))}
-            <p>読めなかった項目は、入力するまで元の行のまま保存します</p>
+            {warnings.some((warning) => warning.kept) && (
+              <p>読めなかった項目は、入力するまで元の行のまま保存します</p>
+            )}
           </div>
         </div>
       )}

@@ -69,7 +69,16 @@ impl StoreError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+// 読み取りの警告。keyは関係する既知のkey、keptは元の行をextraに残したとき
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Warning {
+    pub(crate) key: Option<String>,
+    pub(crate) message: String,
+    pub(crate) kept: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Article {
     pub slug: String,
@@ -77,13 +86,11 @@ pub struct Article {
     pub fields: ArticleFields,
     // 消費しなかったエントリをそのまま
     #[serde(skip)]
-    pub extra: Vec<Entry>,
-    // 読んだときだけ意味を持つ
-    #[serde(default)]
-    pub warnings: Vec<String>,
+    pub(crate) extra: Vec<Entry>,
+    pub warnings: Vec<Warning>,
 }
 
-// 保存のときは画面からslugを除いた残りを受け取る。Noneの項目は書かない
+// 保存のときは画面からslugを除いた残りを受け取る
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleFields {
@@ -105,7 +112,7 @@ pub struct ArticleSummary {
 }
 
 // 記事に結び付かない失敗
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnreadableEntry {
     pub path: String,
@@ -319,6 +326,10 @@ impl Store {
             // 記事でないフォルダ(正しいslugでない)は黙って飛ばす
             let file_name = entry.file_name();
             let Some(name) = file_name.to_str() else {
+                unreadable.push(UnreadableEntry::new(
+                    &entry.path(),
+                    "フォルダ名がUTF-8ではありません",
+                ));
                 continue;
             };
             if validate_slug(name).is_err() {
@@ -333,7 +344,15 @@ impl Store {
                 }),
                 Err(StoreError::NotFound { .. }) => {
                     // 記事の一部が残っていれば、壊れた記事として開けなかったと出す
-                    if self.posts_dir(name).exists() || self.assets_dir(name).exists() {
+                    let mut remains = false;
+                    for dir in [self.posts_dir(name), self.assets_dir(name)] {
+                        match dir.try_exists() {
+                            Ok(true) => remains = true,
+                            Ok(false) => {}
+                            Err(error) => unreadable.push(UnreadableEntry::new(&dir, error)),
+                        }
+                    }
+                    if remains {
                         broken.push(BrokenArticle::new(
                             name,
                             &self.md_path(name),
@@ -500,20 +519,29 @@ impl Store {
     pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
-        check_fields(&fields)?;
         let md = self.md_path(slug);
         fs::create_dir_all(&self.backup_dir)
             .map_err(|error| StoreError::io(&self.backup_dir, error))?;
         let backup = self.backup_path(slug);
         fs::copy(&md, &backup)
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
-        // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く
-        let extra = self.read_article(slug)?.extra;
+        // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く。
+        // 開いたときに読めなかった項目は保存の時点で消費されていることがあるので、
+        // Noneの項目は読み直して読めた値で補う
+        let original = self.read_article(slug)?;
+        let fields = ArticleFields {
+            title: fields.title.or(original.fields.title),
+            description: fields.description.or(original.fields.description),
+            pub_date: fields.pub_date.or(original.fields.pub_date),
+            hero_image: fields.hero_image.or(original.fields.hero_image),
+            body: fields.body,
+        };
+        check_fields(&fields)?;
         self.write_md(&Article {
             slug: slug.to_string(),
             fields,
             warnings: Vec::new(),
-            extra,
+            extra: original.extra,
         })
     }
 
@@ -708,7 +736,6 @@ fn is_filename(name: &str) -> bool {
 fn json_string(value: &str) -> String {
     serde_json::to_string(value).expect("文字列をJSONにできる")
 }
-
 fn render_md(article: &Article) -> String {
     let fields = &article.fields;
     let mut md = String::from("---\n");
@@ -734,7 +761,6 @@ fn render_md(article: &Article) -> String {
     let extra = article
         .extra
         .iter()
-        // Someで書いたkeyと同じkeyのエントリだけは書かない
         .filter(|entry| {
             !(entry
                 .key_value
@@ -757,7 +783,6 @@ fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
     let rest = content.strip_prefix("---\n")?;
     let mut offset = 0;
     loop {
-        // 閉じの行がファイル末尾で改行が無くても1行として見る
         let line_end = rest[offset..].find('\n').map_or(rest.len(), |i| offset + i);
         if &rest[offset..line_end] == "---" {
             // 閉じの行の直前の改行はfrontmatterに含めない
@@ -774,16 +799,15 @@ fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
 
 // フロントマターのエントリ。続きの行も含めて元の行を覚え、読めなかった分を書き戻すため
 #[derive(Clone, Debug, PartialEq)]
-pub struct Entry {
+pub(crate) struct Entry {
     // `key: value`の行から始まるエントリだけがkeyと値を持つ
     key_value: Option<(String, String)>,
     lines: Vec<String>,
 }
 
-// 既知のkeyの並び。項目の調べ方と警告の順番をこの並びにする
+// 既知のkeyの並び。重複の警告がこの並びで出る
 const KNOWN_KEYS: [&str; 4] = ["title", "description", "pubDate", "heroImage"];
 
-// 必須のkey。KNOWN_KEYSの先頭と同じ並び
 const REQUIRED_KEYS: [&str; 3] = ["title", "description", "pubDate"];
 
 fn frontmatter_entries(frontmatter: &str) -> Vec<Entry> {
@@ -804,7 +828,7 @@ fn frontmatter_entries(frontmatter: &str) -> Vec<Entry> {
                 lines: vec![line.to_string()],
             });
         } else {
-            // 続きの行・空行・コメント。前のエントリが無ければ独立のエントリにする
+            // 空白か`-`で始まる行は前のエントリの続きにする。空行・コメントと、前のエントリが無い続きの行は独立のエントリにする
             let continues = first.is_some_and(|c| c.is_whitespace() || c == '-');
             match (continues, entries.last_mut()) {
                 (true, Some(last)) => last.lines.push(line.to_string()),
@@ -832,26 +856,47 @@ fn read_string(value: &str) -> Option<String> {
     if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
         return Some(value[1..value.len() - 1].replace("''", "'"));
     }
+    // 上の形でないなら、単純な文字列の値だけを読める。コメントの`#`と他のYAMLの形の値は文字列として確定しない
+    if value.is_empty()
+        || value.starts_with(['|', '>', '[', '{', '&', '*', '!', '%', '@', '`'])
+        || value.starts_with('#')
+        || value
+            .split_once('#')
+            .is_some_and(|(before, _)| before.chars().last().is_some_and(char::is_whitespace))
+        || matches!(
+            value.to_ascii_lowercase().as_str(),
+            "null" | "~" | "true" | "false"
+        )
+        || value.parse::<f64>().is_ok()
+    {
+        return None;
+    }
     Some(value.to_string())
 }
 
 // 読める値だけ読み、読めなかった部分はextraに元の行を残す
 fn parse_md(slug: &str, content: &str) -> Article {
-    // CRLFのmdは置き換えて読む。`\r`の無いmdは借用のまま
+    // CRLFのmdは置き換えて読む
     let content = if content.contains('\r') {
         Cow::Owned(content.replace("\r\n", "\n"))
     } else {
         Cow::Borrowed(content)
     };
-    match split_frontmatter(&content) {
+    // BOMはエディタが(fallbackで)付けることがあるので外して読む
+    let content = content.strip_prefix('\u{feff}').unwrap_or(&content);
+    match split_frontmatter(content) {
         Some((frontmatter, body)) => parse_frontmatter(slug, frontmatter, body),
         None => Article {
             slug: slug.to_string(),
             fields: ArticleFields {
-                body: content.into_owned(),
+                body: content.to_owned(),
                 ..Default::default()
             },
-            warnings: vec![NO_FRONTMATTER.to_string()],
+            warnings: vec![Warning {
+                key: None,
+                message: NO_FRONTMATTER.to_string(),
+                kept: false,
+            }],
             extra: Vec::new(),
         },
     }
@@ -874,8 +919,25 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
         }
     }
 
-    // 読めなかった既知のkeyの警告。フロントマターの順で覚える
-    let mut unreadable: Vec<String> = Vec::new();
+    // 重複した既知のkeyの警告。KNOWN_KEYSの並びで出す
+    let mut warnings: Vec<Warning> = KNOWN_KEYS
+        .iter()
+        .zip(counts)
+        .filter(|(_, count)| *count > 1)
+        .map(|(key, _)| Warning {
+            key: Some((*key).to_string()),
+            message: format!("{key}が重複しています"),
+            kept: true,
+        })
+        .collect();
+
+    let warn_unreadable = |key: &str, value: &str| Warning {
+        key: Some(key.to_string()),
+        message: format!("{key}を読めません: {value}"),
+        kept: true,
+    };
+
+    // 読めた値のエントリだけをconsumedにし、読めなかった値は警告にしてextraに残す
     let mut consumed = vec![false; entries.len()];
     for (i, entry) in entries.iter().enumerate() {
         let Some(index) = known_index(entry) else {
@@ -884,23 +946,15 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
         if counts[index] > 1 {
             continue;
         }
+        let Some((key, value)) = entry.key_value.as_ref() else {
+            continue;
+        };
+        let key = key.as_str();
         if entry.lines.len() > 1 {
             // 続きの行がある値は確定しない。警告には1行目の値だけを出す
-            let value = entry
-                .key_value
-                .as_ref()
-                .map(|(_, value)| value.as_str())
-                .unwrap_or("");
-            unreadable.push(format!("{}を読めません: {value}", KNOWN_KEYS[index]));
+            warnings.push(warn_unreadable(key, value));
             continue;
         }
-        let key = KNOWN_KEYS[index];
-        let value = entry
-            .key_value
-            .as_ref()
-            .map(|(_, value)| value.as_str())
-            .unwrap_or("");
-        // keyごとの値の読み方。読めたら項目に入れる値を返す
         let parsed = match key {
             "title" | "description" => read_string(value),
             "pubDate" => read_string(value).filter(|date| is_valid_date(date)),
@@ -908,33 +962,29 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
                 .and_then(|path| image_name_from_ref(slug, &path).map(str::to_string)),
             _ => None,
         };
-        // Someを書いたkeyだけをconsumedにして、読めなかった値は警告にしてextraに残す
         if let Some(parsed) = parsed {
             match key {
                 "title" => fields.title = Some(parsed),
                 "description" => fields.description = Some(parsed),
                 "pubDate" => fields.pub_date = Some(parsed),
                 "heroImage" => fields.hero_image = Some(parsed),
-                // KNOWN_KEYSは上の4つだけ
                 _ => {}
             }
             consumed[i] = true;
         } else {
-            unreadable.push(format!("{key}を読めません: {value}"));
+            warnings.push(warn_unreadable(key, value));
         }
     }
 
-    // warningsは重複、読めない、無いの順
-    let mut warnings: Vec<String> = KNOWN_KEYS
-        .iter()
-        .zip(counts)
-        .filter(|(_, count)| *count > 1)
-        .map(|(key, _)| format!("{key}が重複しています"))
-        .collect();
-    warnings.append(&mut unreadable);
-    for (index, key) in REQUIRED_KEYS.iter().enumerate() {
+    // 必須のkeyが無い警告
+    for key in REQUIRED_KEYS {
+        let index = KNOWN_KEYS.iter().position(|known| *known == key).unwrap();
         if counts[index] == 0 {
-            warnings.push(format!("{key}がありません"));
+            warnings.push(Warning {
+                key: Some(key.to_string()),
+                message: format!("{key}がありません"),
+                kept: false,
+            });
         }
     }
 
@@ -951,7 +1001,6 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
         extra,
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -986,6 +1035,11 @@ mod tests {
     }
 
     // Article.extraのエントリの、元の行を並べたもの
+    // 警告の文言だけをまとめて確かめる
+    fn warn_messages(warnings: &[Warning]) -> Vec<&str> {
+        warnings.iter().map(|w| w.message.as_str()).collect()
+    }
+
     fn extra_md(article: &Article) -> String {
         article
             .extra
@@ -1066,13 +1120,29 @@ mod tests {
             ..original.clone()
         };
         store.save_article("roundtrip", no_hero.clone()).unwrap();
+        // 開いたときに読めていた項目は、画面からnullで来ても読み直した値で書かれる
+        let read = store.read_article("roundtrip").unwrap();
         assert_eq!(
-            store.read_article("roundtrip").unwrap(),
-            article_of("roundtrip", &no_hero)
+            read.fields,
+            ArticleFields {
+                hero_image: Some("hero.png".to_string()),
+                ..original
+            }
         );
         let md = fs::read_to_string(store.md_path("roundtrip")).unwrap();
-        assert!(!md.contains("heroImage"));
+        assert!(md.contains("heroImage: \"../../assets/roundtrip/hero.png\""));
         assert!(md.ends_with(&format!("---\n{}", no_hero.body)));
+
+        // 元々heroImageの無い記事は、nullのまま保存してもヒーローの行は書かれない
+        store.create_article("no-hero").unwrap();
+        let fields = input("t", "2026-01-01");
+        store.save_article("no-hero", fields.clone()).unwrap();
+        assert_eq!(
+            store.read_article("no-hero").unwrap(),
+            article_of("no-hero", &fields)
+        );
+        let md = fs::read_to_string(store.md_path("no-hero")).unwrap();
+        assert!(!md.contains("heroImage"));
     }
 
     #[test]
@@ -1441,7 +1511,7 @@ mod tests {
         assert_eq!(read.fields.body, "本文です\n");
         assert!(read.extra.is_empty());
         assert_eq!(
-            read.warnings,
+            warn_messages(&read.warnings),
             [
                 "titleがありません",
                 "descriptionがありません",
@@ -1459,7 +1529,7 @@ mod tests {
         assert_eq!(article.fields.body, "title: \"t\"\n\n本文です\n2行目\n");
         assert!(article.extra.is_empty());
         assert_eq!(
-            article.warnings,
+            warn_messages(&article.warnings),
             ["フロントマターがありません。全体を本文として読みました"]
         );
 
@@ -1475,7 +1545,7 @@ mod tests {
             "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n"
         );
         assert_eq!(
-            article.warnings,
+            warn_messages(&article.warnings),
             ["フロントマターがありません。全体を本文として読みました"]
         );
 
@@ -1565,7 +1635,7 @@ mod tests {
         );
         assert_fields(&article, None, Some(""), Some("2026-01-01"), None);
         assert_eq!(extra_md(&article), "title: \"t\"\ntitle: \"t2\"");
-        assert_eq!(article.warnings, ["titleが重複しています"]);
+        assert_eq!(warn_messages(&article.warnings), ["titleが重複しています"]);
     }
 
     #[test]
@@ -1579,7 +1649,10 @@ mod tests {
         );
         assert_fields(&article, Some("t"), Some(""), None, None);
         assert_eq!(extra_md(&article), "pubDate: 2026-5-1");
-        assert_eq!(article.warnings, ["pubDateを読めません: 2026-5-1"]);
+        assert_eq!(
+            warn_messages(&article.warnings),
+            ["pubDateを読めません: 2026-5-1"]
+        );
 
         // JSONの文字列になっていない
         let article = md_article(
@@ -1589,7 +1662,10 @@ mod tests {
         );
         assert_fields(&article, Some("t"), Some(""), Some("2026-01-01"), None);
         assert_eq!(extra_md(&article), "heroImage: 01.png");
-        assert_eq!(article.warnings, ["heroImageを読めません: 01.png"]);
+        assert_eq!(
+            warn_messages(&article.warnings),
+            ["heroImageを読めません: 01.png"]
+        );
 
         // 別の記事の下を指している
         let article = md_article(
@@ -1603,7 +1679,7 @@ mod tests {
             "heroImage: \"../../assets/another/x.png\""
         );
         assert_eq!(
-            article.warnings,
+            warn_messages(&article.warnings),
             ["heroImageを読めません: \"../../assets/another/x.png\""]
         );
     }
@@ -1619,7 +1695,7 @@ mod tests {
         );
         assert_fields(&article, None, Some(""), Some("2026-01-01"), None);
         assert_eq!(extra_md(&article), "title:\n  続きの行");
-        assert_eq!(article.warnings, ["titleを読めません: "]);
+        assert_eq!(warn_messages(&article.warnings), ["titleを読めません: "]);
     }
 
     #[test]
@@ -1632,7 +1708,7 @@ mod tests {
         );
         assert_fields(&article, None, None, None, Some("hero.png"));
         assert_eq!(
-            article.warnings,
+            warn_messages(&article.warnings),
             [
                 "titleがありません",
                 "descriptionがありません",
@@ -1986,7 +2062,10 @@ mod tests {
         assert_eq!(fs::read_to_string(store.md_path("keep")).unwrap(), content);
 
         let article = store.read_article("keep").unwrap();
-        assert_eq!(article.warnings, ["pubDateを読めません: 2026-5-1"]);
+        assert_eq!(
+            warn_messages(&article.warnings),
+            ["pubDateを読めません: 2026-5-1"]
+        );
 
         store
             .save_article(
@@ -2207,6 +2286,277 @@ mod tests {
         assert!(
             !names.iter().any(|name| name.contains("backup")),
             "{names:?}"
+        );
+    }
+    #[test]
+    fn 外で直した読めない項目はnullの保存でも残る() {
+        let (_tmp, store) = setup();
+        let article = md_article(
+            &store,
+            "late-fix",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-5-1\n---\n本文\n",
+        );
+        assert_eq!(article.fields.pub_date, None);
+        // 保存までに外のエディタがmdを読める値に直す
+        let fixed = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
+        fs::write(store.md_path("late-fix"), fixed).unwrap();
+        store.save_article("late-fix", article.fields).unwrap();
+        assert_eq!(
+            fs::read_to_string(store.md_path("late-fix")).unwrap(),
+            fixed
+        );
+        assert!(store.read_article("late-fix").unwrap().warnings.is_empty());
+    }
+
+    #[test]
+    fn 重複したtitleの保存() {
+        let (_tmp, store) = setup();
+        let content =
+            "---\ntitle: \"t\"\ntitle: \"t2\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
+        let article = md_article(&store, "dup-title", content);
+        assert_eq!(warn_messages(&article.warnings), ["titleが重複しています"]);
+
+        // Noneのままの保存は2行とも残す。読めなかった項目は書かないので、書かれる順はextraの並びになる
+        store
+            .save_article("dup-title", article.fields.clone())
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(store.md_path("dup-title")).unwrap(),
+            "---\ndescription: \"\"\npubDate: 2026-01-01\ntitle: \"t\"\ntitle: \"t2\"\n---\n本文\n"
+        );
+
+        // Someを入れた保存はtitleの行を1行にまとめる
+        store
+            .save_article(
+                "dup-title",
+                ArticleFields {
+                    title: Some("t3".to_string()),
+                    ..article.fields
+                },
+            )
+            .unwrap();
+        let md = fs::read_to_string(store.md_path("dup-title")).unwrap();
+        assert_eq!(md.matches("title:").count(), 1);
+        assert!(md.contains("title: \"t3\""));
+        assert!(store.read_article("dup-title").unwrap().warnings.is_empty());
+    }
+
+    #[test]
+    fn 読めない値のサムネイルをextraに残す記事の取り込み() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "hero",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: 01.png\n---\n本文\n",
+        );
+        assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
+        let md = fs::read_to_string(store.md_path("hero")).unwrap();
+        assert_eq!(md.matches("heroImage").count(), 1);
+        assert!(md.contains("heroImage: \"../../assets/hero/hero.png\""));
+    }
+
+    #[test]
+    fn renameしてもextraは残る() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "old",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\ntags:\n  - a\nnote: こういう値\n---\n本文\n",
+        );
+        let renamed = store.rename_article("old", "new").unwrap();
+        assert_eq!(extra_md(&renamed), "tags:\n  - a\nnote: こういう値");
+        let read = store.read_article("new").unwrap();
+        assert_eq!(extra_md(&read), "tags:\n  - a\nnote: こういう値");
+
+        // 読めない値も残る
+        md_article(
+            &store,
+            "old2",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: 01.png\n---\n本文\n",
+        );
+        store.rename_article("old2", "new2").unwrap();
+        let read = store.read_article("new2").unwrap();
+        assert_eq!(extra_md(&read), "heroImage: 01.png");
+    }
+
+    #[test]
+    fn split_frontmatterの分け方() {
+        // 空のフロントマター
+        assert_eq!(split_frontmatter("---\n---\n本文\n"), Some(("", "本文\n")));
+        // 本文の中の`---`の行は本文。最初の閉じで分かれる
+        assert_eq!(
+            split_frontmatter("---\ntitle: \"t\"\n---\n---\n本文\n"),
+            Some(("title: \"t\"", "---\n本文\n"))
+        );
+        // `--- `と`----`は閉じにならない
+        assert_eq!(split_frontmatter("---\ntitle: \"t\"\n--- \n本文\n"), None);
+        assert_eq!(split_frontmatter("---\ntitle: \"t\"\n----\n本文\n"), None);
+    }
+
+    #[test]
+    fn frontmatter_entriesのエントリの区切り() {
+        // 前のエントリが無い続きの行は独立のエントリ
+        let entries = frontmatter_entries("  続きの行\nkey: 値\n");
+        assert_eq!(
+            entries,
+            vec![
+                Entry {
+                    key_value: None,
+                    lines: vec!["  続きの行".to_string()],
+                },
+                Entry {
+                    key_value: Some(("key".to_string(), "値".to_string())),
+                    lines: vec!["key: 値".to_string()],
+                },
+                // 末尾の空行も独立のエントリ
+                Entry {
+                    key_value: None,
+                    lines: vec![String::new()],
+                },
+            ]
+        );
+        // コロンの無い行はkeyの無いエントリ
+        let entries = frontmatter_entries("key: 値\nこういう行\n");
+        assert_eq!(
+            entries,
+            vec![
+                Entry {
+                    key_value: Some(("key".to_string(), "値".to_string())),
+                    lines: vec!["key: 値".to_string()],
+                },
+                Entry {
+                    key_value: None,
+                    lines: vec!["こういう行".to_string()],
+                },
+                Entry {
+                    key_value: None,
+                    lines: vec![String::new()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn 引用符の無い色々な値は読めない() {
+        let (_tmp, store) = setup();
+        for value in [
+            "",
+            "# コメント",
+            "値 # コメント",
+            "|",
+            ">",
+            "[",
+            "{",
+            "&",
+            "*",
+            "!",
+            "%",
+            "@",
+            "`",
+            "null",
+            "NULL",
+            "Null",
+            "~",
+            "true",
+            "True",
+            "false",
+            "FALSE",
+            "2026",
+            "1.5",
+            "-5",
+        ] {
+            let content =
+                format!("---\ntitle: {value}\ndescription: \"\"\npubDate: 2026-01-01\n---\n");
+            let article = md_article(&store, "unreadable", &content);
+            assert!(
+                article.fields.title.is_none(),
+                "title: {value} は読めないはず"
+            );
+            assert_eq!(
+                warn_messages(&article.warnings),
+                [format!("titleを読めません: {value}")]
+            );
+            assert_eq!(extra_md(&article), format!("title: {value}"));
+        }
+    }
+
+    #[test]
+    fn bomの付いたmdを読める() {
+        let (_tmp, store) = setup();
+        let article = md_article(
+            &store,
+            "bom",
+            "\u{feff}---\ntitle: \"t\"\ndescription: \"d\"\npubDate: 2026-01-01\n---\n本文\n",
+        );
+        assert_eq!(article.fields.title.as_deref(), Some("t"));
+        assert_eq!(article.fields.body, "本文\n");
+        assert!(article.warnings.is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn utf8でない名前のフォルダはunreadableに入る() {
+        use std::os::unix::ffi::OsStrExt;
+        let (_tmp, store) = setup();
+        let bad_dir = store.root.join(std::ffi::OsStr::from_bytes(b"\xff\xfe"));
+        fs::create_dir_all(&bad_dir).unwrap();
+
+        let list = store.list_articles().unwrap();
+        assert!(list.articles.is_empty());
+        assert!(list.broken.is_empty());
+        assert_eq!(
+            list.unreadable,
+            vec![UnreadableEntry {
+                path: bad_dir.display().to_string(),
+                reason: "フォルダ名がUTF-8ではありません".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn 一覧と警告とnull項目のjsonの形() {
+        let list = ArticleList {
+            articles: vec![ArticleSummary {
+                slug: "a".to_string(),
+                title: String::new(),
+                pub_date: None,
+                warning: true,
+            }],
+            broken: vec![BrokenArticle::new("b", Path::new("/x/y"), "理由")],
+            unreadable: vec![UnreadableEntry::new(Path::new("/x/z"), "理由2")],
+        };
+        assert_eq!(
+            serde_json::to_value(&list).unwrap(),
+            serde_json::json!({
+                "articles": [{"slug": "a", "title": "", "pubDate": null, "warning": true}],
+                "broken": [{"slug": "b", "path": "/x/y", "reason": "理由"}],
+                "unreadable": [{"path": "/x/z", "reason": "理由2"}],
+            })
+        );
+
+        let article = Article {
+            slug: "a".to_string(),
+            fields: ArticleFields::default(),
+            extra: Vec::new(),
+            warnings: vec![Warning {
+                key: Some("title".to_string()),
+                message: "titleを読めません: こういう値".to_string(),
+                kept: true,
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(&article).unwrap(),
+            serde_json::json!({
+                "slug": "a",
+                "title": null,
+                "description": null,
+                "pubDate": null,
+                "heroImage": null,
+                "body": "",
+                "warnings": [
+                    {"key": "title", "message": "titleを読めません: こういう値", "kept": true}
+                ],
+            })
         );
     }
 }

@@ -16,6 +16,7 @@ import {
   type Article,
   type ArticleFields,
   type StoreError,
+  type Warning,
 } from './api'
 import ArticleHeader, { type FieldsPatch } from './ArticleHeader'
 import { AutoSaver, type SaveStatus } from './autoSave'
@@ -45,6 +46,7 @@ interface ArticleEditorProps {
 }
 
 type HeaderFields = Omit<ArticleFields, 'body'>
+type HeaderKey = keyof HeaderFields
 
 // runは本文に入れる参照を返す。クリップボードに画像が無ければnull
 interface ImageImport {
@@ -116,6 +118,8 @@ export default function ArticleEditor({
     pubDate: article.pubDate,
     heroImage: article.heroImage,
   }))
+  // 値を変えた項目。そのkeyの警告は出さない
+  const [edited, setEdited] = useState<Set<HeaderKey>>(() => new Set())
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
   const latest = useRef(fields)
   const view = useRef<EditorView>(null)
@@ -193,14 +197,26 @@ export default function ArticleEditor({
   }))
 
   const updateFields = (patch: FieldsPatch) => {
+    const changes = Object.entries(patch) as Array<[HeaderKey, string | null]>
+    if (changes.some(([key, value]) => value !== article[key])) {
+      setEdited((keys) => {
+        const next = new Set(keys)
+        for (const [key] of changes) next.add(key)
+        return next
+      })
+    }
     latest.current = { ...latest.current, ...patch }
     setFields(latest.current)
     saver.changed()
   }
 
+  const warnings = article.warnings.filter(
+    (warning: Warning) => warning.key === null || !edited.has(warning.key as HeaderKey),
+  )
+
   return (
     <>
-      <ArticleHeader fields={fields} warnings={article.warnings} onChange={updateFields} />
+      <ArticleHeader fields={fields} warnings={warnings} onChange={updateFields} />
       <Editor
         slug={article.slug}
         initialDoc={article.body}

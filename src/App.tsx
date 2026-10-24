@@ -60,8 +60,13 @@ export default function App() {
       .catch((e) => {
         if (request !== listRequest.current) return
         console.error('記事一覧を読めませんでした', e)
-        const error = e as StoreError | undefined
-        setArticles({ status: 'failed', path: error?.path, reason: error?.reason })
+        const error = e as StoreError | string | undefined
+        // Tauriは種類の無いエラーを文字列で渡す
+        setArticles({
+          status: 'failed',
+          path: typeof error === 'string' ? undefined : error?.path,
+          reason: typeof error === 'string' ? error : error?.reason,
+        })
       })
   }
 

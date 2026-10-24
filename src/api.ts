@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isAndroid } from './platform'
 
-// Rust側のエラー。中身は見ないので種類だけを受ける。種類によってpath・reasonを持つ
+// Rust側のエラー。種類によってpath・reasonを持つ
 export interface StoreError {
   kind: string
   path?: string
@@ -22,7 +22,7 @@ export interface BrokenArticle {
   reason: string
 }
 
-// 記事に結び付かない読めない項目
+// 記事に結び付かない失敗
 export interface UnreadableEntry {
   path: string
   reason: string
@@ -34,6 +34,13 @@ export interface ArticleList {
   unreadable: UnreadableEntry[]
 }
 
+// 読み取りの警告。keyは関係する既知の項目、keptは元の行をextraに残したとき
+export interface Warning {
+  key: string | null
+  message: string
+  kept: boolean
+}
+
 export interface Article {
   slug: string
   title: string | null
@@ -42,7 +49,7 @@ export interface Article {
   // ファイル名だけ。本文の画像のような参照ではない
   heroImage: string | null
   body: string
-  warnings: string[]
+  warnings: Warning[]
 }
 
 export type ArticleFields = Omit<Article, 'slug' | 'warnings'>
