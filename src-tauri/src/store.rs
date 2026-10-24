@@ -188,7 +188,7 @@ fn is_valid_date(date: &str) -> bool {
 }
 
 // 本文とheroImageから画像を指すときの、記事ファイルからの相対パス。
-// src/content/postsとsrc/assetsの深さが同じなので、保存先を直結した形にしても同じ
+// src/content/postsとsrc/assetsの深さが同じなので、いつも2つ上でsrc/assetsに届く
 fn assets_ref(slug: &str) -> String {
     format!("../../assets/{slug}/")
 }
@@ -364,14 +364,16 @@ impl Store {
                         continue;
                     }
                 };
-                match entry.file_type() {
-                    Ok(file_type) if file_type.is_file() => continue,
-                    Ok(_) => {}
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
                     Err(error) => {
                         unreadable.push(UnreadableEntry::new(&entry.path(), error));
                         continue;
                     }
                 };
+                if file_type.is_file() {
+                    continue;
+                }
                 let file_name = entry.file_name();
                 let Some(name) = file_name.to_str() else {
                     unreadable.push(UnreadableEntry::new(
@@ -620,7 +622,7 @@ impl Store {
         fs::create_dir_all(&old_assets).map_err(|error| StoreError::io(&old_assets, error))?;
 
         let mut renames = vec![
-            (self.posts_dir().join(format!("{old}.md")), self.md_path(new)),
+            (self.md_path(old), dest),
             (self.assets_dir(old), self.assets_dir(new)),
         ];
         let old_backup = self.backup_path(old);
@@ -645,24 +647,12 @@ impl Store {
         let _guard = self.lock_guard();
         // 保存をしたことのない記事にはバックアップが無い
         let backup = self.backup_path(slug);
-        match fs::remove_file(&backup) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(StoreError::io(&backup, error)),
-        }
+        remove_ignoring_not_found(&backup, || fs::remove_file(&backup))?;
         // mdはファイル、assetsはディレクトリ。いずれかだけ残っている記事もある
         let md = self.md_path(slug);
-        match fs::remove_file(&md) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(StoreError::io(&md, error)),
-        }
+        remove_ignoring_not_found(&md, || fs::remove_file(&md))?;
         let assets = self.assets_dir(slug);
-        match fs::remove_dir_all(&assets) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(StoreError::io(&assets, error)),
-        }
+        remove_ignoring_not_found(&assets, || fs::remove_dir_all(&assets))?;
         Ok(())
     }
 
@@ -772,6 +762,18 @@ fn write_temp(dir: &Path, content: &[u8]) -> Result<tempfile::NamedTempFile, Sto
         .sync_all()
         .map_err(|error| StoreError::io(tmp.path(), error))?;
     Ok(tmp)
+}
+
+// 無いものを消そうとしたエラーは、消すものが無かったということなので無視する
+fn remove_ignoring_not_found(
+    path: &Path,
+    remove: impl FnOnce() -> Result<(), io::Error>,
+) -> Result<(), StoreError> {
+    match remove() {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(StoreError::io(path, error)),
+    }
 }
 
 // 順にrenameする。どれかが失敗したら、済んだものを逆順に戻してから失敗を返す
