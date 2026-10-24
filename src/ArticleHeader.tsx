@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
 import type { Article, Warning } from './api'
 import Icon from './Icon'
+import ImageFileInput from './ImageFileInput'
 
 type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'heroImage'>
 export type FieldsPatch = Partial<Omit<Fields, 'heroImage'>>
@@ -145,17 +146,9 @@ export default function ArticleHeader({
             <Icon name="image" />
             {fields.heroImage == null ? '画像を選ぶ' : '差し替える'}
           </button>
-          <input
+          <ImageFileInput
             ref={fileInput}
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files?.[0]
-              // 同じファイルを続けて選んでもchangeが起きるよう空にする
-              e.target.value = ''
-              if (file) onPickHeroImage(file)
-            }}
+            onFiles={(files) => onPickHeroImage(files[0])}
           />
         </div>
       </div>

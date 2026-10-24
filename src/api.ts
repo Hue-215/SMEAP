@@ -52,7 +52,8 @@ export interface Article {
   warnings: Warning[]
 }
 
-export type ArticleFields = Omit<Article, 'slug' | 'warnings'>
+// heroImageはimportHeroImageが書き換えるので、保存では渡さない
+export type ArticleFields = Omit<Article, 'slug' | 'warnings' | 'heroImage'>
 
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')

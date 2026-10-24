@@ -31,8 +31,6 @@ pub enum StoreError {
     NotFound { slug: String },
     #[error("日付が不正です: {date}")]
     InvalidDate { date: String },
-    #[error("heroImageが不正です: {name}")]
-    InvalidHeroImage { name: String },
     #[error("画像の参照が不正です: {reference}")]
     InvalidImageReference { reference: String },
     #[error("画像がありません: {reference}")]
@@ -90,14 +88,23 @@ pub struct Article {
     pub warnings: Vec<Warning>,
 }
 
-// 保存のときは画面からslugを除いた残りを受け取る
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleFields {
     pub title: Option<String>,
     pub description: Option<String>,
     pub pub_date: Option<String>,
     pub hero_image: Option<String>,
+    pub body: String,
+}
+
+// 保存のときは画面からslugとheroImageを除いた残りを受け取る
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditedFields {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub pub_date: Option<String>,
     pub body: String,
 }
 
@@ -178,21 +185,6 @@ fn today() -> String {
 fn is_valid_date(date: &str) -> bool {
     NaiveDate::parse_from_str(date, DATE_FORMAT)
         .is_ok_and(|parsed| parsed.format(DATE_FORMAT).to_string() == date)
-}
-
-// 保存のときに通す検証。読めていない項目は確かめない
-fn check_fields(fields: &ArticleFields) -> Result<(), StoreError> {
-    if let Some(date) = &fields.pub_date {
-        if !is_valid_date(date) {
-            return Err(StoreError::InvalidDate { date: date.clone() });
-        }
-    }
-    if let Some(name) = &fields.hero_image {
-        if !is_filename(name) {
-            return Err(StoreError::InvalidHeroImage { name: name.clone() });
-        }
-    }
-    Ok(())
 }
 
 // 本文とheroImageから画像を指すときの、記事ファイルからの相対パス
@@ -516,7 +508,7 @@ impl Store {
         Ok((dir, ext))
     }
 
-    pub fn save_article(&self, slug: &str, fields: ArticleFields) -> Result<(), StoreError> {
+    pub fn save_article(&self, slug: &str, fields: EditedFields) -> Result<(), StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
         let md = self.md_path(slug);
@@ -533,11 +525,14 @@ impl Store {
             title: fields.title.or(original.fields.title),
             description: fields.description.or(original.fields.description),
             pub_date: fields.pub_date.or(original.fields.pub_date),
-            // heroImageを書き換えるのはimport_hero_imageだけ。取り込み中の自動保存が前の値で書き戻さないよう、画面の値は使わない
             hero_image: original.fields.hero_image,
             body: fields.body,
         };
-        check_fields(&fields)?;
+        if let Some(date) = &fields.pub_date {
+            if !is_valid_date(date) {
+                return Err(StoreError::InvalidDate { date: date.clone() });
+            }
+        }
         self.write_md(&Article {
             slug: slug.to_string(),
             fields,
@@ -1036,20 +1031,35 @@ mod tests {
         (tmp, store)
     }
 
-    fn input(title: &str, pub_date: &str) -> ArticleFields {
-        ArticleFields {
+    fn input(title: &str, pub_date: &str) -> EditedFields {
+        EditedFields {
             title: Some(title.to_string()),
             description: Some(String::new()),
             pub_date: Some(pub_date.to_string()),
-            hero_image: None,
             body: String::new(),
         }
     }
 
-    fn article_of(slug: &str, fields: &ArticleFields) -> Article {
+    // 読んだ記事を保存の入力にする
+    fn edited(article: &Article) -> EditedFields {
+        EditedFields {
+            title: article.fields.title.clone(),
+            description: article.fields.description.clone(),
+            pub_date: article.fields.pub_date.clone(),
+            body: article.fields.body.clone(),
+        }
+    }
+
+    fn article_of(slug: &str, fields: &EditedFields, hero_image: Option<&str>) -> Article {
         Article {
             slug: slug.to_string(),
-            fields: fields.clone(),
+            fields: ArticleFields {
+                title: fields.title.clone(),
+                description: fields.description.clone(),
+                pub_date: fields.pub_date.clone(),
+                hero_image: hero_image.map(str::to_string),
+                body: fields.body.clone(),
+            },
             warnings: Vec::new(),
             extra: Vec::new(),
         }
@@ -1125,65 +1135,32 @@ mod tests {
             store.import_hero_image("roundtrip", &png()).unwrap(),
             "hero.png"
         );
-        let original = ArticleFields {
+        let original = EditedFields {
             title: Some("改行\nとコロン: と\"引用符\"".to_string()),
             description: Some("説明\n2行目: これも".to_string()),
             pub_date: Some("2026-02-14".to_string()),
-            hero_image: Some("hero.png".to_string()),
             body: "本文1行目\n2行目\n\n最終行".to_string(),
         };
         store.save_article("roundtrip", original.clone()).unwrap();
+        // 取り込んだhero.pngは残る
         assert_eq!(
             store.read_article("roundtrip").unwrap(),
-            article_of("roundtrip", &original)
+            article_of("roundtrip", &original, Some("hero.png"))
         );
         let md = fs::read_to_string(store.md_path("roundtrip")).unwrap();
         assert!(md.contains("heroImage: \"../../assets/roundtrip/hero.png\""));
         assert!(md.contains("pubDate: 2026-02-14"));
 
-        let no_hero = ArticleFields {
-            hero_image: None,
-            ..original.clone()
-        };
-        store.save_article("roundtrip", no_hero.clone()).unwrap();
-        // 開いたときに読めていた項目は、画面からnullで来ても読み直した値で書かれる
-        let read = store.read_article("roundtrip").unwrap();
-        assert_eq!(
-            read.fields,
-            ArticleFields {
-                hero_image: Some("hero.png".to_string()),
-                ..original
-            }
-        );
-        let md = fs::read_to_string(store.md_path("roundtrip")).unwrap();
-        assert!(md.contains("heroImage: \"../../assets/roundtrip/hero.png\""));
-        assert!(md.ends_with(&format!("---\n{}", no_hero.body)));
-
-        // 元々heroImageの無い記事は、nullのまま保存してもヒーローの行は書かれない
+        // 元々heroImageの無い記事は、保存でもヒーローの行は書かれない
         store.create_article("no-hero").unwrap();
         let fields = input("t", "2026-01-01");
         store.save_article("no-hero", fields.clone()).unwrap();
         assert_eq!(
             store.read_article("no-hero").unwrap(),
-            article_of("no-hero", &fields)
+            article_of("no-hero", &fields, None)
         );
         let md = fs::read_to_string(store.md_path("no-hero")).unwrap();
         assert!(!md.contains("heroImage"));
-    }
-
-    #[test]
-    fn 保存は画面のhero_imageでmdを書き換えない() {
-        let (_tmp, store) = setup();
-        store.create_article("keep-hero").unwrap();
-        store.import_hero_image("keep-hero", &png()).unwrap();
-        let mut fields = input("t", "2026-01-01");
-        fields.hero_image = Some("other.png".to_string());
-        store.save_article("keep-hero", fields).unwrap();
-
-        let read = store.read_article("keep-hero").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
-        let md = fs::read_to_string(store.md_path("keep-hero")).unwrap();
-        assert!(md.contains("heroImage: \"../../assets/keep-hero/hero.png\""));
     }
 
     #[test]
@@ -1417,15 +1394,14 @@ mod tests {
         store.create_article("old-slug").unwrap();
         // heroImageは保存では書けないので、先にimport_hero_imageで取り込む
         store.import_hero_image("old-slug", &png()).unwrap();
-        let first = ArticleFields {
+        let first = EditedFields {
             title: Some("タイトル".to_string()),
             description: Some(String::new()),
             pub_date: Some("2026-04-01".to_string()),
-            hero_image: Some("hero.png".to_string()),
             body: "![絵](../../assets/old-slug/pic.png)".to_string(),
         };
         store.save_article("old-slug", first.clone()).unwrap();
-        let revised = ArticleFields {
+        let revised = EditedFields {
             title: Some("改訂".to_string()),
             pub_date: Some("2026-04-02".to_string()),
             ..first
@@ -1621,7 +1597,7 @@ mod tests {
     fn フロントマターの無い記事は本文だけ直して保存しても本文が変わらない() {
         let (_tmp, store) = setup();
         let article = md_article(&store, "no-fm", "本文です\n");
-        store.save_article("no-fm", article.fields.clone()).unwrap();
+        store.save_article("no-fm", edited(&article)).unwrap();
         let read = store.read_article("no-fm").unwrap();
         assert_eq!(read.fields.body, "本文です\n");
         assert!(read.extra.is_empty());
@@ -1857,7 +1833,7 @@ mod tests {
             assert_eq!(serde_json::to_value(error).unwrap()["kind"], kind);
         }
 
-        let article = article_of("a", &input("タイトル", "2026-01-01"));
+        let article = article_of("a", &input("タイトル", "2026-01-01"), None);
         let value = serde_json::to_value(&article).unwrap();
         assert_eq!(
             value,
@@ -1872,21 +1848,19 @@ mod tests {
             })
         );
 
-        let fields: ArticleFields = serde_json::from_value(serde_json::json!({
+        let fields: EditedFields = serde_json::from_value(serde_json::json!({
             "title": "タイトル",
             "description": "説明",
             "pubDate": "2026-01-01",
-            "heroImage": null,
             "body": "本文",
         }))
         .unwrap();
         assert_eq!(
             fields,
-            ArticleFields {
+            EditedFields {
                 title: Some("タイトル".to_string()),
                 description: Some("説明".to_string()),
                 pub_date: Some("2026-01-01".to_string()),
-                hero_image: None,
                 body: "本文".to_string(),
             }
         );
@@ -2110,10 +2084,12 @@ mod tests {
     fn heroは本文が参照している前のhero_imageを消さない() {
         let (_tmp, store) = setup();
         store.create_article("post").unwrap();
-        let mut fields = input("", "2026-01-01");
-        fields.hero_image = Some("01.png".to_string());
-        fields.body = "![表紙](../../assets/post/01.png)".to_string();
-        store.save_article("post", fields).unwrap();
+        // 保存ではheroImageを書けないので、mdに直接書く
+        md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/01.png\"\n---\n![表紙](../../assets/post/01.png)\n",
+        );
         let dir = store.assets_dir("post");
         fs::write(dir.join("01.png"), b"old").unwrap();
 
@@ -2171,9 +2147,9 @@ mod tests {
         store
             .save_article(
                 "keep",
-                ArticleFields {
+                EditedFields {
                     pub_date: None,
-                    ..article.fields.clone()
+                    ..edited(&article)
                 },
             )
             .unwrap();
@@ -2188,9 +2164,9 @@ mod tests {
         store
             .save_article(
                 "keep",
-                ArticleFields {
+                EditedFields {
                     pub_date: Some("2026-05-01".to_string()),
-                    ..article.fields
+                    ..edited(&article)
                 },
             )
             .unwrap();
@@ -2209,7 +2185,7 @@ mod tests {
         let article = md_article(&store, "keep-extras", content);
         assert_eq!(extra_md(&article), "tags:\n  - a\n  - b\nnote: めも");
 
-        store.save_article("keep-extras", article.fields).unwrap();
+        store.save_article("keep-extras", edited(&article)).unwrap();
         assert_eq!(
             fs::read_to_string(store.md_path("keep-extras")).unwrap(),
             content
@@ -2418,7 +2394,7 @@ mod tests {
         // 保存までに外のエディタがmdを読める値に直す
         let fixed = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
         fs::write(store.md_path("late-fix"), fixed).unwrap();
-        store.save_article("late-fix", article.fields).unwrap();
+        store.save_article("late-fix", edited(&article)).unwrap();
         assert_eq!(
             fs::read_to_string(store.md_path("late-fix")).unwrap(),
             fixed
@@ -2435,9 +2411,7 @@ mod tests {
         assert_eq!(warn_messages(&article.warnings), ["titleが重複しています"]);
 
         // Noneのままの保存は2行とも残す。読めなかった項目は書かないので、書かれる順はextraの並びになる
-        store
-            .save_article("dup-title", article.fields.clone())
-            .unwrap();
+        store.save_article("dup-title", edited(&article)).unwrap();
         assert_eq!(
             fs::read_to_string(store.md_path("dup-title")).unwrap(),
             "---\ndescription: \"\"\npubDate: 2026-01-01\ntitle: \"t\"\ntitle: \"t2\"\n---\n本文\n"
@@ -2447,9 +2421,9 @@ mod tests {
         store
             .save_article(
                 "dup-title",
-                ArticleFields {
+                EditedFields {
                     title: Some("t3".to_string()),
-                    ..article.fields
+                    ..edited(&article)
                 },
             )
             .unwrap();

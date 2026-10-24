@@ -67,6 +67,9 @@ const fromPath = (path: string): ImageImport => ({
 
 const fromClipboard: ImageImport = { label: 'クリップボード', run: importClipboardImage }
 
+const isUnsupportedImage = (e: unknown) =>
+  (e as StoreError | undefined)?.kind === 'unsupportedImage'
+
 // 取り込めたものだけを入れる
 async function importImages(
   slug: string,
@@ -83,7 +86,7 @@ async function importImages(
       if (ref !== null) refs.push(ref)
     } catch (e) {
       console.error('画像を取り込めませんでした', image.label, e)
-      if ((e as StoreError | undefined)?.kind === 'unsupportedImage') unsupported++
+      if (isUnsupportedImage(e)) unsupported++
       else failed++
     }
   }
@@ -117,8 +120,9 @@ export default function ArticleEditor({
     title: article.title,
     description: article.description,
     pubDate: article.pubDate,
-    heroImage: article.heroImage,
   }))
+  // サムネイルの表示。保存の入力には含まれないので、fieldsとは別に持つ
+  const [heroImage, setHeroImage] = useState(article.heroImage)
   // 値を変えた項目。そのkeyの警告は出さない
   const [edited, setEdited] = useState<Set<HeaderKey>>(() => new Set())
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
@@ -154,22 +158,15 @@ export default function ArticleEditor({
   const runImports = (imports: ImageImport[]) =>
     void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
 
-  // サムネイルの選び直し。mdのheroImageはRust側が書き換えるので、saver.changed()はしない
   const pickHeroImage = async (file: File) => {
     try {
       const name = await importHeroImage(slug, new Uint8Array(await file.arrayBuffer()))
-      latest.current = { ...latest.current, heroImage: name }
-      setFields(latest.current)
-      // 読めなかったheroImageの警告は、取り込めたので消す
-      setEdited((keys) => {
-        const next = new Set(keys)
-        next.add('heroImage')
-        return next
-      })
+      setHeroImage(name)
     } catch (e) {
       console.error('サムネイルを取り込めませんでした', file.name, e)
-      const unsupported = (e as StoreError | undefined)?.kind === 'unsupportedImage'
-      callbacks.current.onNotice(unsupported ? '使えない形式です' : 'サムネイルを取り込めませんでした')
+      callbacks.current.onNotice(
+        isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした',
+      )
     }
   }
 
@@ -230,14 +227,16 @@ export default function ArticleEditor({
     saver.changed()
   }
 
-  const warnings = article.warnings.filter(
-    (warning: Warning) => warning.key === null || !edited.has(warning.key as HeaderKey),
-  )
+  const warnings = article.warnings.filter((warning: Warning) => {
+    // 読めなかったheroImageの警告は、サムネイルを取り込んだら出さない
+    if (warning.key === 'heroImage' && heroImage !== article.heroImage) return false
+    return warning.key === null || !edited.has(warning.key as HeaderKey)
+  })
 
   return (
     <>
       <ArticleHeader
-        fields={fields}
+        fields={{ ...fields, heroImage }}
         warnings={warnings}
         onChange={updateFields}
         onPickHeroImage={(file) => void pickHeroImage(file)}

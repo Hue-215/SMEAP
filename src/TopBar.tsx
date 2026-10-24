@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { formatSavedTime, type SaveStatus } from './autoSave'
 import Icon from './Icon'
+import ImageFileInput from './ImageFileInput'
 import type { DrawerState } from './useDrawer'
 
 export interface Notice {
@@ -78,18 +79,10 @@ export default function TopBar({
       >
         <Icon name="image" />
       </button>
-      <input
+      <ImageFileInput
         ref={fileInput}
-        type="file"
-        accept="image/*"
         multiple
-        hidden
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? [])
-          // 同じファイルを続けて選んでもchangeが起きるよう空にする
-          e.target.value = ''
-          if (files.length > 0) onInsertImages?.(files)
-        }}
+        onFiles={(files) => onInsertImages?.(files)}
       />
     </div>
   )
