@@ -28,16 +28,16 @@
 :root {
   /* 色。ライトの値。ダークの値は下のprefers-color-schemeで替える。アクセント色は線と印に
      だけ使い、文字の色にはしない(docs/spec.md「見た目」)。 */
-  --color-bg: #FAFAFA;
-  --color-text: #000000;
-  --color-text-secondary: #707070;
-  --color-border: #E0E0E0;
-  --color-hover: #EEEEEE;
-  --color-accent: #D57C00;
-  --color-selection: #F0DFC8;
-  --color-error: #B3261E;
+  --color-bg: #fafafa;
+  --color-text: #0a1526,;
+  --color-text-secondary: #5a6a80;
+  --color-border: #e0e0e0;
+  --color-hover: #eeeeee;
+  --color-accent: #ffa01a;
+  --color-selection: #f3d9c2;
+  --color-error: #cb2929;
   /* 入力欄の枠。地の色と3:1をとるため仕切り線より濃い */
-  --color-field-border: #8A8A8A;
+  --color-field-border: #8a8a8a;
 
   /* 画面の文字。本文は--font-family-prose */
   --font-family: 'Noto Sans JP', sans-serif;
@@ -84,14 +84,14 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --color-bg: #000000;
-    --color-text: #FAFAFA;
-    --color-text-secondary: #8C8C8C;
+    --color-text: #fafafa;
+    --color-text-secondary: #808080;
     --color-border: #262626;
     --color-hover: #262626;
-    --color-accent: #F99D1D;
-    --color-selection: #3E2D16;
-    --color-error: #F08A7E;
-    --color-field-border: #5A5A5A;
+    --color-accent: #ffa01a;
+    --color-selection: #5a4228;
+    --color-error: #cb2929;
+    --color-field-border: #5a5a5a;
   }
 }
 
