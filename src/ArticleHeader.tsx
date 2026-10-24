@@ -1,14 +1,19 @@
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { Article, Warning } from './api'
 import Icon from './Icon'
+import ImageFileInput from './ImageFileInput'
 
-type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'heroImage'>
-export type FieldsPatch = Partial<Omit<Fields, 'heroImage'>>
+type Fields = Pick<Article, 'title' | 'description' | 'pubDate'>
+export type FieldsPatch = Partial<Fields>
 
 interface ArticleHeaderProps {
   fields: Fields
   warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
+  hero: { name: string; url: string } | null
+  heroBusy: boolean
+  onPickHeroImage: (file: File) => void
+  onRemoveHeroImage: () => void
 }
 
 function fitHeight(el: HTMLTextAreaElement) {
@@ -78,7 +83,18 @@ function OneLineField({ className, label, value, onChange }: OneLineFieldProps) 
   )
 }
 
-export default function ArticleHeader({ fields, warnings, onChange }: ArticleHeaderProps) {
+export default function ArticleHeader({
+  fields,
+  warnings,
+  onChange,
+  hero,
+  heroBusy,
+  onPickHeroImage,
+  onRemoveHeroImage,
+}: ArticleHeaderProps) {
+  const fileInput = useRef<HTMLInputElement>(null)
+  // 読めなかった画像のURL。差し替えるとURLが変わるので、読み直す
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
   return (
     <header>
       {warnings.length > 0 && (
@@ -94,18 +110,54 @@ export default function ArticleHeader({ fields, warnings, onChange }: ArticleHea
           </div>
         </div>
       )}
-      <OneLineField
-        className="article-title"
-        label="タイトル"
-        value={fields.title ?? ''}
-        onChange={(title) => onChange({ title })}
-      />
-      <OneLineField
-        className="article-description"
-        label="説明"
-        value={fields.description ?? ''}
-        onChange={(description) => onChange({ description })}
-      />
+      <div className="article-head">
+        <div className="article-head-text">
+          <OneLineField
+            className="article-title"
+            label="タイトル"
+            value={fields.title ?? ''}
+            onChange={(title) => onChange({ title })}
+          />
+          <OneLineField
+            className="article-description"
+            label="説明"
+            value={fields.description ?? ''}
+            onChange={(description) => onChange({ description })}
+          />
+        </div>
+        {/* ボタンの中にボタンは置けないので、入れ物で包んで外すボタンを重ねる */}
+        <div className="article-hero-box">
+          <button
+            type="button"
+            className={hero === null ? 'article-hero empty' : 'article-hero'}
+            disabled={heroBusy}
+            onClick={() => fileInput.current?.click()}
+            aria-label={hero === null ? undefined : 'サムネイルを差し替える'}
+            title={hero?.name ?? 'サムネイルを選ぶ'}
+          >
+            {hero === null ? (
+              'サムネイル未設定'
+            ) : brokenUrl === hero.url ? (
+              'サムネイルを読めません'
+            ) : (
+              <img src={hero.url} alt="" onError={() => setBrokenUrl(hero.url)} />
+            )}
+          </button>
+          {hero !== null && (
+            <button
+              type="button"
+              className="icon-button article-hero-remove"
+              disabled={heroBusy}
+              onClick={onRemoveHeroImage}
+              aria-label="サムネイルを外す"
+              title="サムネイルを外す"
+            >
+              <Icon name="close" />
+            </button>
+          )}
+        </div>
+        <ImageFileInput ref={fileInput} onFiles={(files) => onPickHeroImage(files[0])} />
+      </div>
       <div className="article-meta">
         <label className="article-meta-item">
           公開日
@@ -125,17 +177,6 @@ export default function ArticleHeader({ fields, warnings, onChange }: ArticleHea
             }}
           />
         </label>
-        <div className="article-meta-item">
-          サムネイル
-          {fields.heroImage != null && (
-            <span className="article-meta-value">{fields.heroImage}</span>
-          )}
-          {/* 画像の取り込み(#8)ができたら押せるようにする */}
-          <button type="button" className="article-meta-button" disabled>
-            <Icon name="image" />
-            {fields.heroImage == null ? '画像を選ぶ' : '差し替える'}
-          </button>
-        </div>
       </div>
     </header>
   )

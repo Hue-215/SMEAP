@@ -102,14 +102,27 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   overflow-y: auto;
 }
 
+/* タイトルと説明の文字の大きさと行の高さは、サムネイルの高さ(.article-hero)の計算にも使う。
+   --article-head-spaceは、タイトルの上の空きをタイトルと説明の間の空きに揃える値。公開日の行の上にも
+   同じ値を使い、サムネイルを上下の仕切り線の真ん中に置く */
 .editor-column {
+  --title-font-size: 2rem;
+  --title-line-height: 1.4;
+  --description-font-size: 0.9375rem;
+  --description-line-height: 1.8;
+  --description-gap: var(--space-2);
+  --article-head-space: calc(
+    var(--description-gap) + var(--description-font-size) * (var(--description-line-height) - 1) / 2
+  );
   max-width: var(--content-max-width);
   margin: 0 auto;
-  padding: 3rem 2rem 6rem;
+  padding: var(--article-head-space) 2rem 6rem;
 }
 
 .narrow .editor-column {
-  padding: 2rem 1rem 4rem;
+  --title-font-size: 1.625rem;
+  padding-inline: 1rem;
+  padding-bottom: 4rem;
 }
 
 .editor-message {
@@ -142,7 +155,77 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   line-height: 1.6;
 }
 
-/* 記事のタイトル・説明・公開日・サムネイル(ArticleHeader.tsx)。 */
+/* 記事のタイトル・説明・サムネイル・公開日(ArticleHeader.tsx)。サムネイルはタイトルと説明の右に置く。 */
+.article-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.article-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.article-hero-box {
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* 設定してもヘッダーの高さが変わらないよう、1行のタイトルと説明を合わせた高さにする */
+.article-hero {
+  height: calc(
+    var(--title-font-size) * var(--title-line-height) + var(--description-gap) +
+      var(--description-font-size) * var(--description-line-height)
+  );
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: var(--border-width) solid var(--color-border);
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* 未設定のときは場所を取らないよう、ほかのボタンと同じ高さにする */
+.article-hero.empty {
+  height: var(--control-size-md);
+  aspect-ratio: auto;
+  padding: 0 0.625rem;
+  white-space: nowrap;
+}
+
+.article-hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* サムネイルの右上に重ねる外すボタン。 */
+.icon-button.article-hero-remove {
+  width: 2rem;
+  height: 2rem;
+  position: absolute;
+  top: calc(-1 * var(--border-width));
+  right: calc(-1 * var(--border-width));
+  border: var(--border-width) solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.icon-button.article-hero-remove .icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* ホバーできる端末では、ホバー中か中にフォーカスがあるときだけ出す。出したときは、押せない間の
+   薄さ(button:disabled)を残す */
+@media (hover: hover) {
+  .article-hero-box:not(:hover, :focus-within) .article-hero-remove {
+    opacity: 0;
+  }
+}
+
 .article-title,
 .article-description {
   display: block;
@@ -166,19 +249,15 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 .article-title {
   font-family: var(--font-family);
   font-weight: var(--font-weight-strong);
-  font-size: 2rem;
-  line-height: 1.4;
-}
-
-.narrow .article-title {
-  font-size: 1.625rem;
+  font-size: var(--title-font-size);
+  line-height: var(--title-line-height);
 }
 
 .article-description {
-  margin-top: var(--space-2);
+  margin-top: var(--description-gap);
   font-family: var(--font-family-prose);
-  font-size: 0.9375rem;
-  line-height: 1.8;
+  font-size: var(--description-font-size);
+  line-height: var(--description-line-height);
   color: var(--color-text-secondary);
 }
 
@@ -187,7 +266,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) 1.5rem;
-  margin-top: var(--space-4);
+  margin-top: var(--article-head-space);
   margin-bottom: var(--space-5);
   padding: var(--space-3) 0;
   border-top: var(--border-width) solid var(--color-border);
@@ -208,20 +287,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   background: none;
   border: 0;
   padding: 0;
-}
-
-.article-meta-value {
-  color: var(--color-text);
-}
-
-.article-meta-button {
-  height: var(--control-size-md);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 0.625rem;
-  border: var(--border-width) solid var(--color-border);
-  color: var(--color-text);
 }
 
 /* アイコン1つだけを置くボタンの箱。箱の大きさ(--control-size-md)とアイコンの大きさ
@@ -301,10 +366,9 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   text-align: left;
 }
 
-/* 文字と並べるアイコン(メニューの項目・サイドバー下の設定・サムネイルのボタン)。 */
+/* 文字と並べるアイコン(メニューの項目・サイドバー下の設定)。 */
 .menu-item .icon,
-.sidebar-settings .icon,
-.article-meta-button .icon {
+.sidebar-settings .icon {
   width: 1.25rem;
   height: 1.25rem;
 }

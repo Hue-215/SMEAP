@@ -13,8 +13,11 @@ import {
   importBodyImage,
   importBodyImageFromPath,
   importClipboardImage,
+  heroImageUrl,
+  importHeroImage,
+  removeHeroImage,
   type Article,
-  type ArticleFields,
+  type EditedFields,
   type StoreError,
   type Warning,
 } from './api'
@@ -39,13 +42,13 @@ interface ArticleEditorProps {
   // trueの間は決まった間隔での保存をしない
   paused: boolean
   onSaveStatus: (status: SaveStatus) => void
-  onSaved: (fields: ArticleFields) => void
+  onSaved: (fields: EditedFields) => void
   // エラーとして出す文言
   onNotice: (text: string) => void
   ref: Ref<ArticleEditorHandle>
 }
 
-type HeaderFields = Omit<ArticleFields, 'body'>
+type HeaderFields = Omit<EditedFields, 'body'>
 type HeaderKey = keyof HeaderFields
 
 // runは本文に入れる参照を返す。クリップボードに画像が無ければnull
@@ -66,6 +69,9 @@ const fromPath = (path: string): ImageImport => ({
 
 const fromClipboard: ImageImport = { label: 'クリップボード', run: importClipboardImage }
 
+const isUnsupportedImage = (e: unknown) =>
+  (e as StoreError | undefined)?.kind === 'unsupportedImage'
+
 // 取り込めたものだけを入れる
 async function importImages(
   slug: string,
@@ -82,7 +88,7 @@ async function importImages(
       if (ref !== null) refs.push(ref)
     } catch (e) {
       console.error('画像を取り込めませんでした', image.label, e)
-      if ((e as StoreError | undefined)?.kind === 'unsupportedImage') unsupported++
+      if (isUnsupportedImage(e)) unsupported++
       else failed++
     }
   }
@@ -98,7 +104,7 @@ async function importImages(
 function readFields(
   latest: RefObject<HeaderFields>,
   view: RefObject<EditorView | null>,
-): ArticleFields {
+): EditedFields {
   if (!view.current) throw new Error('本文の編集欄が無い')
   return { ...latest.current, body: view.current.state.doc.toString() }
 }
@@ -116,8 +122,9 @@ export default function ArticleEditor({
     title: article.title,
     description: article.description,
     pubDate: article.pubDate,
-    heroImage: article.heroImage,
   }))
+  // サムネイルの表示。保存の入力には含まれないので、fieldsとは別に持つ
+  const [hero, setHero] = useState({ name: article.heroImage, version: 0 })
   // 値を変えた項目。そのkeyの警告は出さない
   const [edited, setEdited] = useState<Set<HeaderKey>>(() => new Set())
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
@@ -152,6 +159,46 @@ export default function ArticleEditor({
   const slug = article.slug
   const runImports = (imports: ImageImport[]) =>
     void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
+
+  // 取り込みや外す操作が並んで走ると、mdと表示が別の画像を指すことがあるので、終わるまで次を受けない
+  const [heroBusy, setHeroBusy] = useState(false)
+  // runは新しいheroImageを返す。failedはエラーから知らせる文言を作る。subjectはログに残す対象
+  const changeHero = async (
+    run: () => Promise<string | null>,
+    failed: (e: unknown) => string,
+    subject: string,
+  ) => {
+    setHeroBusy(true)
+    try {
+      // 前の画像を消すかはmdの本文が参照しているかで決めるので、本文の変更を先に保存する
+      if (!(await saver.save())) throw new Error('記事を保存できませんでした')
+      const name = await run()
+      setHero((prev) => ({ name, version: prev.version + 1 }))
+    } catch (e) {
+      const text = failed(e)
+      console.error(text, subject, e)
+      callbacks.current.onNotice(text)
+    } finally {
+      setHeroBusy(false)
+    }
+  }
+
+  const pickHeroImage = (file: File) =>
+    void changeHero(
+      async () => importHeroImage(slug, new Uint8Array(await file.arrayBuffer())),
+      (e) => (isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした'),
+      file.name,
+    )
+
+  const removeHero = () =>
+    void changeHero(
+      async () => {
+        await removeHeroImage(slug)
+        return null
+      },
+      () => 'サムネイルを外せませんでした',
+      slug,
+    )
 
   // LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、Tauriが受けたパスで取り込む
   useEffect(() => {
@@ -210,13 +257,27 @@ export default function ArticleEditor({
     saver.changed()
   }
 
-  const warnings = article.warnings.filter(
-    (warning: Warning) => warning.key === null || !edited.has(warning.key as HeaderKey),
-  )
+  const warnings = article.warnings.filter((warning: Warning) => {
+    // heroImageの警告は、サムネイルを取り込むか外したら出さない(どちらもmdの行を書き直す)
+    if (warning.key === 'heroImage' && hero.version > 0) return false
+    return warning.key === null || !edited.has(warning.key as HeaderKey)
+  })
 
   return (
     <>
-      <ArticleHeader fields={fields} warnings={warnings} onChange={updateFields} />
+      <ArticleHeader
+        fields={fields}
+        warnings={warnings}
+        onChange={updateFields}
+        hero={
+          hero.name === null
+            ? null
+            : { name: hero.name, url: heroImageUrl(slug, hero.name, hero.version) }
+        }
+        heroBusy={heroBusy}
+        onPickHeroImage={pickHeroImage}
+        onRemoveHeroImage={removeHero}
+      />
       <Editor
         slug={article.slug}
         initialDoc={article.body}

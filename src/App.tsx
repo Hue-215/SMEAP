@@ -6,7 +6,7 @@ import {
   readArticle,
   exportZip,
   type Article,
-  type ArticleFields,
+  type EditedFields,
   type StoreError,
 } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
@@ -248,7 +248,7 @@ export default function App() {
   )
 
   // 一覧に出るのはタイトルと公開日
-  const onSaved = (fields: ArticleFields) => {
+  const onSaved = (fields: EditedFields) => {
     if (articles.status !== 'loaded' || article.status !== 'loaded') return
     const listed = articles.articles.find((a) => a.slug === article.slug)
     if (listed?.title !== fields.title || listed.pubDate !== fields.pubDate) reloadArticles()

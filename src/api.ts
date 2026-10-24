@@ -52,7 +52,8 @@ export interface Article {
   warnings: Warning[]
 }
 
-export type ArticleFields = Omit<Article, 'slug' | 'warnings'>
+// heroImageはimportHeroImageが書き換えるので、保存では渡さない
+export type EditedFields = Omit<Article, 'slug' | 'warnings' | 'heroImage'>
 
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')
@@ -62,7 +63,7 @@ export function readArticle(slug: string): Promise<Article> {
   return invoke<Article>('read_article', { slug })
 }
 
-export function saveArticle(slug: string, fields: ArticleFields): Promise<void> {
+export function saveArticle(slug: string, fields: EditedFields): Promise<void> {
   return invoke('save_article', { slug, fields })
 }
 
@@ -91,6 +92,10 @@ export function importBodyImageFromPath(slug: string, path: string): Promise<str
   return invoke<string>('import_body_image_from_path', { slug, path })
 }
 
+export function removeHeroImage(slug: string): Promise<void> {
+  return invoke('remove_hero_image', { slug })
+}
+
 // クリップボードに画像が無ければnull。Linuxだけで読める
 export function importClipboardImage(slug: string): Promise<string | null> {
   return invoke<string | null>('import_clipboard_image', { slug })
@@ -116,4 +121,12 @@ export function isValidSlug(slug: string): boolean {
 export function articleImageUrl(slug: string, reference: string): string {
   const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`
   return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
+}
+
+// 記事ファイルから画像を指すときの相対パス。Rust側のassets_ref(src-tauri/src/store.rs)とそろえる
+const assetsRef = (slug: string) => `../../assets/${slug}/`
+
+// 差し替えても同じ名前のことがあるので、versionを変えて読み直させる。独自プロトコルはクエリを見ない
+export function heroImageUrl(slug: string, name: string, version: number): string {
+  return `${articleImageUrl(slug, assetsRef(slug) + name)}?v=${version}`
 }

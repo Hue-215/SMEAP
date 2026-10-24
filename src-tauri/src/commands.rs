@@ -8,7 +8,7 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, State};
 
 use crate::clipboard;
-use crate::store::{self, Article, ArticleFields, ArticleList, Store, StoreError};
+use crate::store::{self, Article, ArticleList, EditedFields, Store, StoreError};
 
 #[tauri::command]
 pub fn validate_slug(slug: String) -> Result<(), StoreError> {
@@ -34,7 +34,7 @@ pub fn read_article(store: State<'_, Store>, slug: String) -> Result<Article, St
 pub fn save_article(
     store: State<'_, Store>,
     slug: String,
-    fields: ArticleFields,
+    fields: EditedFields,
 ) -> Result<(), StoreError> {
     store.save_article(&slug, fields)
 }
@@ -71,6 +71,11 @@ pub fn import_hero_image(
     let slug = slug_of(&request)?;
     let bytes = body_bytes(request.body())?;
     store.import_hero_image(&slug, &bytes)
+}
+
+#[tauri::command(async)]
+pub fn remove_hero_image(store: State<'_, Store>, slug: String) -> Result<(), StoreError> {
+    store.remove_hero_image(&slug)
 }
 
 // ドロップしたファイル。LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、
