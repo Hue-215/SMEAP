@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Astro-Notepad",
-  "mainBinaryName": "astro-notepad",
-  "identifier": "net.niigo.astronotepad",
+  "productName": "SMEAP",
+  "mainBinaryName": "smeap",
+  "identifier": "net.niigo.smeap",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Astro-Notepad",
+        "title": "SMEAP",
         "width": 1000,
         "height": 720,
         "minWidth": 360,

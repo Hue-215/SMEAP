@@ -98,7 +98,7 @@ export default function Settings({
                 <h2 className="settings-h2">このアプリについて</h2>
                 <div className="settings-rows">
                   <div className="settings-row">
-                    <span className="settings-row-name">Astro-Notepad</span>
+                    <span className="settings-row-name">SMEAP</span>
                     <span className="settings-note">MIT License</span>
                   </div>
                   <button type="button" className="settings-row" onClick={() => setPage('list')}>

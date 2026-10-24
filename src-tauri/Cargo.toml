@@ -1,5 +1,5 @@
 [package]
-name = "astro-notepad"
+name = "smeap"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -7,7 +7,7 @@ license = "MIT"
 # 本体はライブラリに置き、デスクトップの実行ファイル(`main.rs`)とAndroidのActivityの両方から
 # 呼ぶ(`lib.rs`の`run`)。Androidは`cdylib`を読み込む。iOSは対象にしないので`staticlib`は足さない
 [lib]
-name = "astro_notepad_lib"
+name = "smeap_lib"
 crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
