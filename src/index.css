@@ -256,7 +256,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   padding-inline: 0.25rem;
 }
 
-/* 保存の状態(TopBar.tsx)。窓の幅によらず、開閉ボタンの後の残りの幅を埋める。 */
+/* 保存の状態(TopBar.tsx)。開閉ボタンとリンクのボタンの間を埋める。 */
 .save-status {
   flex: 1;
   padding-inline: var(--space-2);
@@ -538,7 +538,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 
 /* 左のカラム(記事一覧)の入れ物(Drawer.tsx)。広い窓では隣の内容を押しながら左の外へ滑らせて
    畳む。閉じたら、滑り終えてからvisibilityで隠す(隠れている間にTabで中へ入れないようにするため)。
-   窓を広げたときは、畳んだ位置(.narrow .drawer)からtransformで滑って戻し、狭めて畳むときと
+   サイドバーを開いたまま窓を広げたときは、畳んだ位置(.narrow .drawer)からtransformで滑って戻し、狭めて畳むときと
    出入りの動きを揃える。起動時は前の位置が無いので動かない。 */
 .drawer {
   display: flex;

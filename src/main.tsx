@@ -4,7 +4,7 @@ import './tokens.css'
 import './index.css'
 import App from './App.tsx'
 
-// メニュー・ダイアログを開いてフォーカスを移したときにも、ブラウザはボタンに:focus-visibleを付ける。
+// デスクトップ(WebKitGTK)では、メニュー・ダイアログを開いてフォーカスを移したときにも、ボタンに:focus-visibleが付く。
 // 最後の入力がマウス・タッチならその枠を消す(index.css)。
 const setLastInput = (input: 'pointer' | 'keyboard') => {
   const root = document.documentElement
