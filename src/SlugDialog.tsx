@@ -106,7 +106,7 @@ export default function SlugDialog({ mode, onDone, onCancel }: SlugDialogProps) 
             {error ?? text.hint}
           </p>
           <p className="slug-dialog-destination">
-            書き出し先: ./{shownSlug}/src/content/posts/{shownSlug}.md
+            書き出し先: ./src/content/posts/{shownSlug}.md
           </p>
         </div>
         <div className="dialog-buttons">

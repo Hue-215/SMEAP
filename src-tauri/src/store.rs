@@ -187,7 +187,8 @@ fn is_valid_date(date: &str) -> bool {
         .is_ok_and(|parsed| parsed.format(DATE_FORMAT).to_string() == date)
 }
 
-// 本文とheroImageから画像を指すときの、記事ファイルからの相対パス
+// 本文とheroImageから画像を指すときの、記事ファイルからの相対パス。
+// src/content/postsとsrc/assetsの深さが同じなので、保存先を直結した形にしても同じ
 fn assets_ref(slug: &str) -> String {
     format!("../../assets/{slug}/")
 }
@@ -260,21 +261,16 @@ impl Store {
         }
     }
 
-    fn posts_dir(&self, dir_slug: &str) -> PathBuf {
-        self.root.join(dir_slug).join("src/content/posts")
+    fn posts_dir(&self) -> PathBuf {
+        self.root.join("src/content/posts")
     }
 
     fn md_path(&self, slug: &str) -> PathBuf {
-        self.posts_dir(slug).join(format!("{slug}.md"))
-    }
-
-    // slugの変更の途中ではディレクトリと中身の名前が食い違うので、別々に受け取る
-    fn assets_dir_in(&self, dir_slug: &str, slug: &str) -> PathBuf {
-        self.root.join(dir_slug).join("src/assets").join(slug)
+        self.posts_dir().join(format!("{slug}.md"))
     }
 
     fn assets_dir(&self, slug: &str) -> PathBuf {
-        self.assets_dir_in(slug, slug)
+        self.root.join("src/assets").join(slug)
     }
 
     fn backup_path(&self, slug: &str) -> PathBuf {
@@ -282,8 +278,10 @@ impl Store {
     }
 
     pub fn list_articles(&self) -> Result<ArticleList, StoreError> {
-        let entries = match fs::read_dir(&self.root) {
+        let posts = self.posts_dir();
+        let entries = match fs::read_dir(&posts) {
             Ok(entries) => entries,
+            // 記事が1つも無い(実行していない)ときは空の一覧
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(ArticleList {
                     articles: Vec::new(),
@@ -291,7 +289,7 @@ impl Store {
                     unreadable: Vec::new(),
                 })
             }
-            Err(error) => return Err(StoreError::io(&self.root, error)),
+            Err(error) => return Err(StoreError::io(&posts, error)),
         };
 
         let mut articles = Vec::new();
@@ -301,7 +299,7 @@ impl Store {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
-                    unreadable.push(UnreadableEntry::new(&self.root, error));
+                    unreadable.push(UnreadableEntry::new(&posts, error));
                     continue;
                 }
             };
@@ -312,54 +310,89 @@ impl Store {
                     continue;
                 }
             };
-            if !file_type.is_dir() {
+            // 記事はpostsの下の{slug}.md。それ以外の名前とディレクトリは黙って飛ばす
+            if !file_type.is_file() {
                 continue;
             }
-            // 記事でないフォルダ(正しいslugでない)は黙って飛ばす
             let file_name = entry.file_name();
             let Some(name) = file_name.to_str() else {
                 unreadable.push(UnreadableEntry::new(
                     &entry.path(),
-                    "フォルダ名がUTF-8ではありません",
+                    "ファイル名がUTF-8ではありません",
                 ));
                 continue;
             };
-            if validate_slug(name).is_err() {
+            let Some(stem) = name.strip_suffix(".md") else {
+                continue;
+            };
+            if validate_slug(stem).is_err() {
                 continue;
             }
-            match self.read_article(name) {
+            match self.read_article(stem) {
                 Ok(article) => articles.push(ArticleSummary {
                     slug: article.slug,
                     title: article.fields.title.unwrap_or_default(),
                     pub_date: article.fields.pub_date,
                     warning: !article.warnings.is_empty(),
                 }),
-                Err(StoreError::NotFound { .. }) => {
-                    // 記事の一部が残っていれば、壊れた記事として開けなかったと出す
-                    let mut remains = false;
-                    for dir in [self.posts_dir(name), self.assets_dir(name)] {
-                        match dir.try_exists() {
-                            Ok(true) => remains = true,
-                            Ok(false) => {}
-                            Err(error) => unreadable.push(UnreadableEntry::new(&dir, error)),
-                        }
-                    }
-                    if remains {
-                        broken.push(BrokenArticle::new(
-                            name,
-                            &self.md_path(name),
-                            "mdがありません",
-                        ));
-                    }
-                }
                 Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
-                    slug: name.to_string(),
+                    slug: stem.to_string(),
                     path,
                     reason,
                 }),
-                Err(error) => broken.push(BrokenArticle::new(name, &self.md_path(name), error)),
+                Err(error) => broken.push(BrokenArticle::new(stem, &entry.path(), error)),
             }
         }
+
+        // mdが消えてassetsだけ残っている記事を、壊れた記事として出す
+        let assets = self.root.join("src/assets");
+        let entries = match fs::read_dir(&assets) {
+            Ok(entries) => Some(entries),
+            // assetsの無い記事しか無いとき
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                unreadable.push(UnreadableEntry::new(&assets, error));
+                None
+            }
+        };
+        if let Some(entries) = entries {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        unreadable.push(UnreadableEntry::new(&assets, error));
+                        continue;
+                    }
+                };
+                match entry.file_type() {
+                    Ok(file_type) if file_type.is_file() => continue,
+                    Ok(_) => {}
+                    Err(error) => {
+                        unreadable.push(UnreadableEntry::new(&entry.path(), error));
+                        continue;
+                    }
+                };
+                let file_name = entry.file_name();
+                let Some(name) = file_name.to_str() else {
+                    unreadable.push(UnreadableEntry::new(
+                        &entry.path(),
+                        "ファイル名がUTF-8ではありません",
+                    ));
+                    continue;
+                };
+                if validate_slug(name).is_err() {
+                    continue;
+                }
+                let md = self.md_path(name);
+                match md.try_exists() {
+                    // mdがあればMDの走査で出すので、二重に出さない
+                    Ok(true) => {}
+                    Ok(false) => broken.push(BrokenArticle::new(name, &md, "mdがありません")),
+                    Err(error) => unreadable.push(UnreadableEntry::new(&md, error)),
+                }
+            }
+        }
+
         broken.sort_by(|a, b| a.slug.cmp(&b.slug));
         articles.sort_by(|a, b| {
             b.pub_date
@@ -376,21 +409,20 @@ impl Store {
     pub fn create_article(&self, slug: &str) -> Result<Article, StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
-        fs::create_dir_all(&self.root).map_err(|error| StoreError::io(&self.root, error))?;
-        // 先にexists()で確かめると並んだ呼び出しと競合するので、作ってAlreadyExistsを見る
-        let slug_dir = self.root.join(slug);
-        fs::create_dir(&slug_dir).map_err(|error| {
-            if error.kind() == io::ErrorKind::AlreadyExists {
-                StoreError::AlreadyExists {
+        // 並んだ呼び出しではmdの作成で競合を見るより、先に存在を確かめる
+        let md = self.md_path(slug);
+        match md.try_exists() {
+            Ok(true) => {
+                return Err(StoreError::AlreadyExists {
                     slug: slug.to_string(),
-                }
-            } else {
-                StoreError::io(&slug_dir, error)
+                });
             }
-        })?;
+            Ok(false) => {}
+            Err(error) => return Err(StoreError::io(&md, error)),
+        }
 
         let result = (|| -> Result<Article, StoreError> {
-            for dir in [self.posts_dir(slug), self.assets_dir(slug)] {
+            for dir in [self.posts_dir(), self.assets_dir(slug)] {
                 fs::create_dir_all(&dir).map_err(|error| StoreError::io(&dir, error))?;
             }
             let article = Article {
@@ -408,7 +440,10 @@ impl Store {
             Ok(article)
         })();
         if result.is_err() {
-            let _ = fs::remove_dir_all(&slug_dir);
+            // postsの下にはほかの記事もあるので、書いたmdだけ消す。
+            // assetsは作ったときだけ消したいので、空の時だけ消えるremove_dirにする
+            let _ = fs::remove_file(&md);
+            let _ = fs::remove_dir(self.assets_dir(slug));
         }
         result
     }
@@ -563,7 +598,7 @@ impl Store {
         if old == new {
             return Ok(article);
         }
-        let dest = self.root.join(new);
+        let dest = self.md_path(new);
         match dest.try_exists() {
             Ok(true) => {
                 return Err(StoreError::AlreadyExists {
@@ -585,12 +620,8 @@ impl Store {
         fs::create_dir_all(&old_assets).map_err(|error| StoreError::io(&old_assets, error))?;
 
         let mut renames = vec![
-            (self.root.join(old), self.root.join(new)),
-            (
-                self.posts_dir(new).join(format!("{old}.md")),
-                self.md_path(new),
-            ),
-            (self.assets_dir_in(new, old), self.assets_dir(new)),
+            (self.posts_dir().join(format!("{old}.md")), self.md_path(new)),
+            (self.assets_dir(old), self.assets_dir(new)),
         ];
         let old_backup = self.backup_path(old);
         if old_backup
@@ -619,11 +650,18 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(StoreError::io(&backup, error)),
         }
-        let slug_dir = self.root.join(slug);
-        match fs::remove_dir_all(&slug_dir) {
+        // mdはファイル、assetsはディレクトリ。いずれかだけ残っている記事もある
+        let md = self.md_path(slug);
+        match fs::remove_file(&md) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(StoreError::io(&slug_dir, error)),
+            Err(error) => return Err(StoreError::io(&md, error)),
+        }
+        let assets = self.assets_dir(slug);
+        match fs::remove_dir_all(&assets) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::io(&assets, error)),
         }
         Ok(())
     }
@@ -631,7 +669,7 @@ impl Store {
     // 一時ファイルに書いてから置き換える。途中で落ちても既存のmdは壊れない
     fn write_md(&self, article: &Article) -> Result<(), StoreError> {
         let md = self.md_path(&article.slug);
-        let dir = self.posts_dir(&article.slug);
+        let dir = self.posts_dir();
         let tmp = write_temp(&dir, render_md(article).as_bytes())?;
         tmp.persist(&md)
             .map_err(|error| StoreError::io(&md, error))?;
@@ -697,7 +735,7 @@ fn write_zip_files(
             zip::DateTime::try_from(Local::now().naive_local()).unwrap_or_default(),
         );
     zip.start_file(
-        format!("{slug}/src/content/posts/{slug}.md"),
+        format!("src/content/posts/{slug}.md"),
         stored.compression_method(CompressionMethod::Deflated),
     )
     .map_err(to_dest)?;
@@ -706,7 +744,7 @@ fn write_zip_files(
     for name in names {
         let path = assets_dir.join(name);
         let mut image = File::open(&path).map_err(|error| StoreError::io(&path, error))?;
-        let entry = format!("{slug}/src/assets/{slug}/{}", name.to_string_lossy());
+        let entry = format!("src/assets/{slug}/{}", name.to_string_lossy());
         zip.start_file(entry, stored).map_err(to_dest)?;
         io::copy(&mut image, &mut zip).map_err(|error| StoreError::io(&path, error))?;
     }
@@ -1281,10 +1319,12 @@ mod tests {
         }
 
         // 記事として扱いたくないもの
-        fs::create_dir_all(store.root.join(".backup")).unwrap();
-        fs::create_dir_all(store.root.join("Not-a-slug")).unwrap();
-        fs::create_dir_all(store.root.join("no-md/src/content/posts")).unwrap();
-        fs::write(store.root.join("loose-file.txt"), "").unwrap();
+        let posts = store.posts_dir();
+        fs::create_dir_all(posts.join("some-dir")).unwrap();
+        fs::write(posts.join("Not-a-slug.md"), "").unwrap();
+        fs::write(posts.join("loose-file.txt"), "").unwrap();
+        // assetsだけ残っている記事は壊れた記事として出す
+        fs::create_dir_all(store.root.join("src/assets/leftover")).unwrap();
 
         let list = store.list_articles().unwrap();
         assert_eq!(
@@ -1292,13 +1332,12 @@ mod tests {
             ["c-post", "a-post", "b-post", "d-post"]
         );
         assert!(list.unreadable.is_empty());
-        // postsの下にmdが無いslugのフォルダは、壊れた記事としてbrokenに入る
         assert_eq!(list.broken.len(), 1);
-        assert_eq!(list.broken[0].slug, "no-md");
+        assert_eq!(list.broken[0].slug, "leftover");
         assert_eq!(list.broken[0].reason, "mdがありません");
         assert_eq!(
             list.broken[0].path,
-            store.md_path("no-md").display().to_string()
+            store.md_path("leftover").display().to_string()
         );
     }
 
@@ -1312,13 +1351,14 @@ mod tests {
     }
 
     #[test]
-    fn mdの無い記事フォルダは一覧のbrokenに入る() {
+    fn assetsだけ残った記事は一覧のbrokenに入る() {
         let (_tmp, store) = setup();
         store.create_article("good").unwrap();
         store
             .save_article("good", input("G", "2026-01-01"))
             .unwrap();
         store.create_article("broken").unwrap();
+        // mdを消してもassetsは残る
         fs::remove_file(store.md_path("broken")).unwrap();
 
         let list = store.list_articles().unwrap();
@@ -1339,12 +1379,13 @@ mod tests {
         // UTF-8でないmd
         store.create_article("bad-utf8").unwrap();
         fs::write(store.md_path("bad-utf8"), [0xffu8, 0xfe, b'x']).unwrap();
-        // mdが無い記事フォルダ(assetsだけ)
+        // mdが無い記事(assetsだけ)
         fs::create_dir_all(store.assets_dir("no-md2")).unwrap();
 
-        // slugの形でないフォルダと、記事の一部を持たないフォルダは出さない
-        fs::create_dir_all(store.root.join("unrelated")).unwrap();
-        fs::create_dir_all(store.root.join("Not-a-slug")).unwrap();
+        // slugの形でない名前のassetsと、postsの下のmdでないファイルは出さない
+        fs::create_dir_all(store.root.join("src/assets/Not-a-slug")).unwrap();
+        fs::create_dir_all(store.root.join("src/assets/not_a_slug")).unwrap();
+        fs::write(store.posts_dir().join("loose.txt"), "").unwrap();
 
         let list = store.list_articles().unwrap();
         assert_eq!(slugs(&list.articles), ["good"]);
@@ -1430,7 +1471,8 @@ mod tests {
         assert_eq!(renamed.fields.title.as_deref(), Some("改訂"));
         assert_eq!(renamed.fields.hero_image.as_deref(), Some("hero.png"));
 
-        assert!(!store.root.join("old-slug").exists());
+        assert!(!store.md_path("old-slug").exists());
+        assert!(!store.assets_dir("old-slug").exists());
         assert!(store.md_path("new-slug").exists());
         assert!(store.assets_dir("new-slug").is_dir());
 
@@ -1456,7 +1498,8 @@ mod tests {
         assert!(store.backup_path("del-post").exists());
 
         store.delete_article("del-post").unwrap();
-        assert!(!store.root.join("del-post").exists());
+        assert!(!store.md_path("del-post").exists());
+        assert!(!store.assets_dir("del-post").exists());
         assert!(!store.backup_path("del-post").exists());
     }
 
@@ -1466,20 +1509,24 @@ mod tests {
         store.create_article("bad-utf8").unwrap();
         fs::write(store.md_path("bad-utf8"), [0xffu8, 0xfe]).unwrap();
         store.delete_article("bad-utf8").unwrap();
-        assert!(!store.root.join("bad-utf8").exists());
+        assert!(!store.md_path("bad-utf8").exists());
+        assert!(!store.assets_dir("bad-utf8").exists());
 
         // mdだけが無い記事も消せる
         store.create_article("no-md").unwrap();
         fs::remove_file(store.md_path("no-md")).unwrap();
         store.delete_article("no-md").unwrap();
-        assert!(!store.root.join("no-md").exists());
+        assert!(!store.md_path("no-md").exists());
+        assert!(!store.assets_dir("no-md").exists());
     }
 
     #[test]
     fn 存在しない記事を消しても成功する() {
         let (_tmp, store) = setup();
         store.delete_article("missing").unwrap();
-        assert!(!store.root.join("missing").exists());
+        assert!(!store.md_path("missing").exists());
+        assert!(!store.assets_dir("missing").exists());
+        assert!(!store.backup_path("missing").exists());
     }
 
     #[test]
@@ -1503,7 +1550,8 @@ mod tests {
         }
 
         store.delete_article("a").unwrap();
-        assert!(!store.root.join("a").exists());
+        assert!(!store.md_path("a").exists());
+        assert!(!store.assets_dir("a").exists());
         assert!(store.md_path("a-b").exists());
         assert!(store.assets_dir("a-b").is_dir());
         assert!(store.backup_path("a-b").exists());
@@ -1524,7 +1572,8 @@ mod tests {
             store.save_article("gone", input("t", "2026-01-02")),
             Err(StoreError::NotFound { slug }) if slug == "gone"
         ));
-        assert!(!store.root.join("gone").exists());
+        assert!(!store.md_path("gone").exists());
+        assert!(!store.assets_dir("gone").exists());
         assert!(!store.backup_path("gone").exists());
     }
 
@@ -2366,14 +2415,14 @@ mod tests {
         assert_eq!(
             zip_names(&dest),
             [
-                "post/src/content/posts/post.md".to_string(),
-                "post/src/assets/post/01.jpg".to_string(),
-                "post/src/assets/post/02.png".to_string(),
+                "src/content/posts/post.md".to_string(),
+                "src/assets/post/01.jpg".to_string(),
+                "src/assets/post/02.png".to_string(),
             ]
         );
         let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
         let mut body = String::new();
-        zip.by_name("post/src/content/posts/post.md")
+        zip.by_name("src/content/posts/post.md")
             .unwrap()
             .read_to_string(&mut body)
             .unwrap();
@@ -2390,7 +2439,7 @@ mod tests {
         store.write_zip("fresh", &dest).unwrap();
         assert_eq!(
             zip_names(&dest),
-            ["fresh/src/content/posts/fresh.md".to_string()]
+            ["src/content/posts/fresh.md".to_string()]
         );
     }
 
@@ -2406,8 +2455,8 @@ mod tests {
         assert_eq!(
             zip_names(&dest),
             [
-                "post/src/content/posts/post.md".to_string(),
-                "post/src/assets/post/01.png".to_string(),
+                "src/content/posts/post.md".to_string(),
+                "src/assets/post/01.png".to_string(),
             ]
         );
     }
@@ -2422,7 +2471,7 @@ mod tests {
         store.write_zip("post", &dest).unwrap();
         let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
         let mut image = Vec::new();
-        zip.by_name("post/src/assets/post/01.png")
+        zip.by_name("src/assets/post/01.png")
             .unwrap()
             .read_to_end(&mut image)
             .unwrap();
@@ -2439,7 +2488,7 @@ mod tests {
         store.write_zip("post", &dest).unwrap();
         assert_eq!(
             zip_names(&dest),
-            ["post/src/content/posts/post.md".to_string()]
+            ["src/content/posts/post.md".to_string()]
         );
     }
 
@@ -2692,20 +2741,23 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn utf8でない名前のフォルダはunreadableに入る() {
+    fn utf8でない名前のファイルはunreadableに入る() {
         use std::os::unix::ffi::OsStrExt;
         let (_tmp, store) = setup();
-        let bad_dir = store.root.join(std::ffi::OsStr::from_bytes(b"\xff\xfe"));
-        fs::create_dir_all(&bad_dir).unwrap();
+        store.create_article("normal").unwrap();
+        let bad_file = store
+            .posts_dir()
+            .join(std::ffi::OsStr::from_bytes(b"\xff\xfe.md"));
+        fs::write(&bad_file, "").unwrap();
 
         let list = store.list_articles().unwrap();
-        assert!(list.articles.is_empty());
+        assert_eq!(slugs(&list.articles), ["normal"]);
         assert!(list.broken.is_empty());
         assert_eq!(
             list.unreadable,
             vec![UnreadableEntry {
-                path: bad_dir.display().to_string(),
-                reason: "フォルダ名がUTF-8ではありません".to_string(),
+                path: bad_file.display().to_string(),
+                reason: "ファイル名がUTF-8ではありません".to_string(),
             }]
         );
     }
