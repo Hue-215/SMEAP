@@ -10,6 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
+use crate::settings::{self, SettingsState};
 use crate::store::{Store, StoreError};
 
 #[derive(Serialize)]
@@ -25,6 +26,7 @@ pub enum ExportOutcome {
 pub fn export_zip(
     app: AppHandle,
     store: State<'_, Store>,
+    settings: State<'_, SettingsState>,
     slug: String,
 ) -> Result<ExportOutcome, StoreError> {
     let cache_dir = app
@@ -35,7 +37,7 @@ pub fn export_zip(
     // dropすると消える。強制終了で残ったものは、キャッシュとしてOSが消すことがある
     let staged = tempfile::NamedTempFile::new_in(&cache_dir)
         .map_err(|error| StoreError::io(&cache_dir, error))?;
-    store.write_zip(&slug, staged.path())?;
+    store.write_zip(&slug, &settings::posts_dir_name(&settings), staged.path())?;
 
     let Some(chosen) = app
         .dialog()

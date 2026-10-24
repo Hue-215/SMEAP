@@ -7,7 +7,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -39,6 +39,12 @@ pub enum StoreError {
     UnsupportedImage,
     #[error("呼び出し方が不正です: {reason}")]
     InvalidRequest { reason: String },
+    #[error("記事のディレクトリに使えません: {path}")]
+    InvalidPostsDir { path: String },
+    // 名前の変更はAndroidだけ(src/settings.rs)
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[error("ディレクトリ名に使えません: {name}")]
+    InvalidPostsDirName { name: String },
     // クリップボードはLinuxでだけ読む(src/clipboard.rs)
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     #[error("クリップボードを読めませんでした: {reason}")]
@@ -238,20 +244,55 @@ fn next_image_number(dir: &Path) -> Result<u32, StoreError> {
     Ok(max.saturating_add(1))
 }
 
+// assetsの親を組み立てる。画像の参照`../../assets/`は変わらないので、assetsは常に
+// 記事のディレクトリの親の親の下に置く。`..`はjoinしない
+fn assets_base_of(posts_dir: &Path) -> Result<PathBuf, StoreError> {
+    posts_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(|parent| parent.join("assets"))
+        .ok_or_else(|| StoreError::InvalidPostsDir {
+            path: posts_dir.display().to_string(),
+        })
+}
+
 pub struct Store {
-    root: PathBuf,
+    // 記事のディレクトリとassetsの親の組。デスクトップでは実行中に差し替えられる
+    dirs: RwLock<Dirs>,
     backup_dir: PathBuf,
     // コマンドはasyncで別スレッドから並んで呼ばれるので、書き換えの間は排他する
     lock: Mutex<()>,
 }
 
+#[derive(Clone)]
+struct Dirs {
+    posts_dir: PathBuf,
+    assets_base: PathBuf,
+}
+
 impl Store {
-    pub fn new(root: PathBuf, backup_dir: PathBuf) -> Self {
-        Self {
-            root,
+    pub fn new(posts_dir: PathBuf, backup_dir: PathBuf) -> Result<Self, StoreError> {
+        let assets_base = assets_base_of(&posts_dir)?;
+        Ok(Self {
+            dirs: RwLock::new(Dirs {
+                posts_dir,
+                assets_base,
+            }),
             backup_dir,
             lock: Mutex::new(()),
-        }
+        })
+    }
+
+    // 差し替えはlock_guardを取ってからにし、書き込み中の操作と重ならないようにする
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    pub fn set_posts_dir(&self, posts_dir: PathBuf) -> Result<(), StoreError> {
+        let assets_base = assets_base_of(&posts_dir)?;
+        let _guard = self.lock_guard();
+        *self.dirs.write().unwrap() = Dirs {
+            posts_dir,
+            assets_base,
+        };
+        Ok(())
     }
 
     fn lock_guard(&self) -> MutexGuard<'_, ()> {
@@ -261,8 +302,8 @@ impl Store {
         }
     }
 
-    fn posts_dir(&self) -> PathBuf {
-        self.root.join("src/content/posts")
+    pub(crate) fn posts_dir(&self) -> PathBuf {
+        self.dirs.read().unwrap().posts_dir.clone()
     }
 
     fn md_path(&self, slug: &str) -> PathBuf {
@@ -270,7 +311,7 @@ impl Store {
     }
 
     fn assets_dir(&self, slug: &str) -> PathBuf {
-        self.root.join("src/assets").join(slug)
+        self.dirs.read().unwrap().assets_base.join(slug)
     }
 
     fn backup_path(&self, slug: &str) -> PathBuf {
@@ -632,9 +673,14 @@ impl Store {
         Ok(())
     }
 
-    // 書き出しはAndroidだけ(src/export.rs)
+    // zipの中のmdは`src/content/{posts_dir_name}/`の下。名前はAstroのプロジェクトに合わせて受け取る
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-    pub fn write_zip(&self, slug: &str, dest: &Path) -> Result<(), StoreError> {
+    pub fn write_zip(
+        &self,
+        slug: &str,
+        posts_dir_name: &str,
+        dest: &Path,
+    ) -> Result<(), StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
         let md = self.md_path(slug);
@@ -642,7 +688,14 @@ impl Store {
             fs::read(&md).map_err(|error| StoreError::not_found_or_io(slug, &md, error))?;
         let names = self.asset_names(slug)?;
 
-        write_zip_files(slug, &content, &self.assets_dir(slug), &names, dest)
+        write_zip_files(
+            slug,
+            posts_dir_name,
+            &content,
+            &self.assets_dir(slug),
+            &names,
+            dest,
+        )
     }
 
     // `.`で始まる名前は書きかけの一時ファイル
@@ -677,6 +730,7 @@ impl Store {
 // zipの日時は時差を持たないので、端末の時刻で書く。画像は圧縮済みなので縮めない
 fn write_zip_files(
     slug: &str,
+    posts_dir_name: &str,
     content: &[u8],
     assets_dir: &Path,
     names: &[OsString],
@@ -691,7 +745,7 @@ fn write_zip_files(
             zip::DateTime::try_from(Local::now().naive_local()).unwrap_or_default(),
         );
     zip.start_file(
-        format!("src/content/posts/{slug}.md"),
+        format!("src/content/{posts_dir_name}/{slug}.md"),
         stored.compression_method(CompressionMethod::Deflated),
     )
     .map_err(to_dest)?;
@@ -712,7 +766,10 @@ fn write_zip_files(
 }
 
 // persistをrenameで済ませるため、dirには置き換え先と同じディレクトリを渡す。上書きするかは呼び出し側がpersistかpersist_noclobberかで決める
-fn write_temp(dir: &Path, content: &[u8]) -> Result<tempfile::NamedTempFile, StoreError> {
+pub(crate) fn write_temp(
+    dir: &Path,
+    content: &[u8],
+) -> Result<tempfile::NamedTempFile, StoreError> {
     // NamedTempFileは0600で作るので、0644で作る
     #[cfg(unix)]
     let mut tmp = tempfile::Builder::new()
@@ -1058,7 +1115,12 @@ mod tests {
 
     fn setup() -> (TempDir, Store) {
         let tmp = TempDir::new().unwrap();
-        let store = Store::new(tmp.path().join("posts"), tmp.path().join("backup"));
+        // rootは実行ファイルの親にあたる
+        let store = Store::new(
+            tmp.path().join("root/src/content/posts"),
+            tmp.path().join("backup"),
+        )
+        .unwrap();
         (tmp, store)
     }
 
@@ -1139,7 +1201,7 @@ mod tests {
 
     #[test]
     fn 作成直後の既定値() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         let created = store.create_article("first-post").unwrap();
         assert_eq!(created.slug, "first-post");
         assert_eq!(created.fields.title.as_deref(), Some(""));
@@ -1158,7 +1220,11 @@ mod tests {
         // レイアウトの定義をそのまま確かめる
         assert_eq!(
             store.md_path("first-post"),
-            store.root.join("src/content/posts/first-post.md")
+            tmp.path().join("root/src/content/posts/first-post.md")
+        );
+        assert_eq!(
+            store.assets_dir("first-post"),
+            tmp.path().join("root/src/assets/first-post")
         );
     }
 
@@ -1317,7 +1383,7 @@ mod tests {
         // 書きかけのテンポラリやstemの空の`.md`も記事ではない
         fs::write(posts.join(".tmpabc"), "").unwrap();
         fs::write(posts.join(".md"), "").unwrap();
-        fs::create_dir_all(store.root.join("src/assets/leftover")).unwrap();
+        fs::create_dir_all(store.assets_dir("leftover")).unwrap();
 
         let list = store.list_articles().unwrap();
         assert_eq!(
@@ -1352,7 +1418,7 @@ mod tests {
     fn 作成に失敗したらmdを残さない() {
         let (_tmp, store) = setup();
         // assetsの場所を普通のファイルにしておいて、ディレクトリの作成を失敗させる
-        fs::create_dir_all(store.root.join("src/assets")).unwrap();
+        fs::create_dir_all(store.assets_dir("blocked").parent().unwrap()).unwrap();
         fs::write(store.assets_dir("blocked"), b"").unwrap();
 
         assert!(store.create_article("blocked").is_err());
@@ -1362,9 +1428,9 @@ mod tests {
 
     #[test]
     fn 旧構造の記事は一覧に出さない() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         // 移行しないため、旧構造(`./{slug}/src/content/posts/{slug}.md`)のデータがあっても空にする
-        let posts = store.root.join("first/src/content/posts");
+        let posts = tmp.path().join("root/first/src/content/posts");
         fs::create_dir_all(&posts).unwrap();
         fs::write(posts.join("first.md"), "---\ntitle: \"t\"\n---\n本文\n").unwrap();
 
@@ -1417,8 +1483,8 @@ mod tests {
         fs::write(store.md_path("bad-utf8"), [0xffu8, 0xfe, b'x']).unwrap();
 
         // slugの形でない名前のassets(記事以外が置いてある)と、postsの下のmdでないファイルは出さない
-        fs::create_dir_all(store.root.join("src/assets/Not-a-slug")).unwrap();
-        fs::create_dir_all(store.root.join("src/assets/not_a_slug")).unwrap();
+        fs::create_dir_all(store.assets_dir("Not-a-slug")).unwrap();
+        fs::create_dir_all(store.assets_dir("not_a_slug")).unwrap();
         fs::write(store.posts_dir().join("loose.txt"), "").unwrap();
 
         let list = store.list_articles().unwrap();
@@ -2466,7 +2532,7 @@ mod tests {
 
     #[test]
     fn zipにmdとassetsの画像が名前順で入る() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         store.create_article("post").unwrap();
         store
             .save_article("post", input("タイトル", "2026-01-01"))
@@ -2474,8 +2540,8 @@ mod tests {
         store.import_body_image("post", &jpeg()).unwrap();
         store.import_body_image("post", &png()).unwrap();
 
-        let dest = store.root.parent().unwrap().join("post.zip");
-        store.write_zip("post", &dest).unwrap();
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "posts", &dest).unwrap();
         assert_eq!(
             zip_names(&dest),
             [
@@ -2495,24 +2561,24 @@ mod tests {
 
     #[test]
     fn zipはassetsが無ければmdだけ() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         store.create_article("fresh").unwrap();
         fs::remove_dir_all(store.assets_dir("fresh")).unwrap();
 
-        let dest = store.root.parent().unwrap().join("fresh.zip");
-        store.write_zip("fresh", &dest).unwrap();
+        let dest = tmp.path().join("fresh.zip");
+        store.write_zip("fresh", "posts", &dest).unwrap();
         assert_eq!(zip_names(&dest), ["src/content/posts/fresh.md".to_string()]);
     }
 
     #[test]
     fn zipに書きかけのファイルは入らない() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         store.create_article("post").unwrap();
         fs::write(store.assets_dir("post").join(".tmpabc"), b"tmp").unwrap();
         store.import_body_image("post", &png()).unwrap();
 
-        let dest = store.root.parent().unwrap().join("post.zip");
-        store.write_zip("post", &dest).unwrap();
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "posts", &dest).unwrap();
         assert_eq!(
             zip_names(&dest),
             [
@@ -2524,12 +2590,12 @@ mod tests {
 
     #[test]
     fn zipの画像は元のファイルと同じ中身() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         store.create_article("post").unwrap();
         store.import_body_image("post", &png()).unwrap();
 
-        let dest = store.root.parent().unwrap().join("post.zip");
-        store.write_zip("post", &dest).unwrap();
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "posts", &dest).unwrap();
         let mut zip = zip::ZipArchive::new(fs::File::open(&dest).unwrap()).unwrap();
         let mut image = Vec::new();
         zip.by_name("src/assets/post/01.png")
@@ -2541,22 +2607,22 @@ mod tests {
 
     #[test]
     fn zipにassetsの中のディレクトリは入らない() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         store.create_article("post").unwrap();
         fs::create_dir(store.assets_dir("post").join("sub")).unwrap();
 
-        let dest = store.root.parent().unwrap().join("post.zip");
-        store.write_zip("post", &dest).unwrap();
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "posts", &dest).unwrap();
         assert_eq!(zip_names(&dest), ["src/content/posts/post.md".to_string()]);
     }
 
     #[test]
     fn 不正なslugはzipにできない() {
-        let (_tmp, store) = setup();
-        let dest = store.root.parent().unwrap().join("bad.zip");
+        let (tmp, store) = setup();
+        let dest = tmp.path().join("bad.zip");
         for slug in ["", "../x"] {
             assert!(matches!(
-                store.write_zip(slug, &dest),
+                store.write_zip(slug, "posts", &dest),
                 Err(StoreError::InvalidSlug { .. })
             ));
         }
@@ -2565,10 +2631,10 @@ mod tests {
 
     #[test]
     fn 存在しない記事はzipにできない() {
-        let (_tmp, store) = setup();
-        let dest = store.root.parent().unwrap().join("missing.zip");
+        let (tmp, store) = setup();
+        let dest = tmp.path().join("missing.zip");
         assert!(matches!(
-            store.write_zip("missing", &dest),
+            store.write_zip("missing", "posts", &dest),
             Err(StoreError::NotFound { slug }) if slug == "missing"
         ));
         assert!(!dest.exists());
@@ -2576,7 +2642,7 @@ mod tests {
 
     #[test]
     fn zipにバックアップは入らない() {
-        let (_tmp, store) = setup();
+        let (tmp, store) = setup();
         store.create_article("post").unwrap();
         store
             .save_article("post", input("v2", "2026-01-01"))
@@ -2586,8 +2652,8 @@ mod tests {
             .unwrap();
         assert!(store.backup_path("post").exists());
 
-        let dest = store.root.parent().unwrap().join("post.zip");
-        store.write_zip("post", &dest).unwrap();
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "posts", &dest).unwrap();
         let names = zip_names(&dest);
         assert!(
             !names.iter().any(|name| name.contains("backup")),
@@ -2865,5 +2931,78 @@ mod tests {
                 ],
             })
         );
+    }
+
+    #[test]
+    fn 記事のディレクトリがblogでも画像はsrc_assetsの下に入る() {
+        let tmp = TempDir::new().unwrap();
+        let store = Store::new(
+            tmp.path().join("root/src/content/blog"),
+            tmp.path().join("backup"),
+        )
+        .unwrap();
+        store.create_article("blog-post").unwrap();
+        assert_eq!(
+            store.import_body_image("blog-post", &png()).unwrap(),
+            "![](../../assets/blog-post/01.png)"
+        );
+        assert_eq!(
+            fs::read(tmp.path().join("root/src/assets/blog-post/01.png")).unwrap(),
+            png()
+        );
+    }
+
+    #[test]
+    fn set_posts_dirで差し替えると一覧と書き込みが新しい方に向く() {
+        let tmp = TempDir::new().unwrap();
+        let store = Store::new(
+            tmp.path().join("a/src/content/posts"),
+            tmp.path().join("backup"),
+        )
+        .unwrap();
+
+        store
+            .set_posts_dir(tmp.path().join("b/src/content/blog"))
+            .unwrap();
+        store.create_article("moved").unwrap();
+        assert!(tmp.path().join("b/src/content/blog/moved.md").exists());
+        assert!(tmp.path().join("b/src/assets/moved").is_dir());
+        assert_eq!(slugs(&store.list_articles().unwrap().articles), ["moved"]);
+    }
+
+    #[test]
+    fn 親の親の無いパスは記事のディレクトリに使えない() {
+        let tmp = TempDir::new().unwrap();
+        for bad in [PathBuf::from("/"), PathBuf::from("/a"), PathBuf::from("a")] {
+            assert!(
+                matches!(
+                    Store::new(bad.clone(), tmp.path().join("backup")),
+                    Err(StoreError::InvalidPostsDir { path }) if path == bad.display().to_string()
+                ),
+                "{} は使えないはず",
+                bad.display()
+            );
+        }
+        let store = Store::new(
+            tmp.path().join("root/src/content/posts"),
+            tmp.path().join("backup"),
+        )
+        .unwrap();
+        assert!(matches!(
+            store.set_posts_dir(PathBuf::from("/a")),
+            Err(StoreError::InvalidPostsDir { .. })
+        ));
+        // 失敗しても差し替わらない
+        store.create_article("kept").unwrap();
+        assert_eq!(slugs(&store.list_articles().unwrap().articles), ["kept"]);
+    }
+
+    #[test]
+    fn zipのmdのディレクトリ名は渡した名前になる() {
+        let (tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "blog", &dest).unwrap();
+        assert_eq!(zip_names(&dest), ["src/content/blog/post.md".to_string()]);
     }
 }

@@ -2,7 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   deleteArticle,
+  getPostsDir,
+  getPostsDirName,
   listArticles,
+  pickPostsDir,
   readArticle,
   exportZip,
   type Article,
@@ -39,6 +42,8 @@ interface SaveConfirm {
 export default function App() {
   const drawer = useDrawer()
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
+  // デスクトップは記事のディレクトリの絶対パス、Androidはzipの中の`src/content/`の下の名前
+  const [postsDir, setPostsDir] = useState<string | null>(null)
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
@@ -80,6 +85,9 @@ export default function App() {
 
   useEffect(() => {
     reloadArticles()
+    ;(isAndroid ? getPostsDirName() : getPostsDir())
+      .then(setPostsDir)
+      .catch((e) => console.error('記事のディレクトリを読めませんでした', e))
   }, [])
 
   useEffect(() => {
@@ -199,6 +207,17 @@ export default function App() {
       })
   }
 
+  // 開いている記事は前のディレクトリのものなので、選び直したら閉じる
+  const pickPostsDirAndReload = async () => {
+    if (!(await saveOpenArticle())) throw new Error('開いている記事を保存できませんでした')
+    await whenSaved()
+    const picked = await pickPostsDir()
+    if (picked === null) return
+    setArticle({ status: 'none' })
+    setPostsDir(picked)
+    reloadArticles()
+  }
+
   const openSettings = () => {
     drawer.close()
     setSettingsOpen(true)
@@ -296,7 +315,18 @@ export default function App() {
         </div>
       </main>
       {slugDialog && (
-        <SlugDialog mode={slugDialog} onDone={onDialogDone} onCancel={() => setSlugDialog(null)} />
+        <SlugDialog
+          mode={slugDialog}
+          destination={
+            postsDir === null
+              ? null
+              : isAndroid
+                ? `./src/content/${postsDir}`
+                : postsDir
+          }
+          onDone={onDialogDone}
+          onCancel={() => setSlugDialog(null)}
+        />
       )}
       {saveConfirm && (
         <SaveConfirmDialog
@@ -325,7 +355,15 @@ export default function App() {
           を削除します。画像とバックアップも消え、元に戻せません。
         </ConfirmDialog>
       )}
-      {settingsOpen && <Settings narrow={drawer.narrow} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <Settings
+          narrow={drawer.narrow}
+          postsDir={postsDir}
+          onPickPostsDir={pickPostsDirAndReload}
+          onPostsDirNameChange={setPostsDir}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   )
 }

@@ -101,6 +101,24 @@ export function importClipboardImage(slug: string): Promise<string | null> {
   return invoke<string | null>('import_clipboard_image', { slug })
 }
 
+// 記事のディレクトリ。デスクトップは選ばせて変えられる(src/Settings.tsx)
+export function getPostsDir(): Promise<string> {
+  return invoke<string>('get_posts_dir')
+}
+
+export function pickPostsDir(): Promise<string | null> {
+  return invoke<string | null>('pick_posts_dir')
+}
+
+// Androidはzipの中の`src/content/`の下の名前
+export function getPostsDirName(): Promise<string> {
+  return invoke<string>('get_posts_dir_name')
+}
+
+export function setPostsDirName(name: string): Promise<void> {
+  return invoke('set_posts_dir_name', { name })
+}
+
 // Rust側のExportOutcome(src-tauri/src/export.rs)とそろえる
 export type ExportOutcome =
   | { kind: 'saved' }
