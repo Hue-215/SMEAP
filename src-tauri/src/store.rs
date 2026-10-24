@@ -362,15 +362,7 @@ impl Store {
         let _guard = self.lock_guard();
         // 並んだ呼び出しでもpersistは上書きで競合が見えないので、先に存在を確かめる
         let md = self.md_path(slug);
-        match md.try_exists() {
-            Ok(true) => {
-                return Err(StoreError::AlreadyExists {
-                    slug: slug.to_string(),
-                });
-            }
-            Ok(false) => {}
-            Err(error) => return Err(StoreError::io(&md, error)),
-        }
+        check_absent(&md, slug)?;
 
         let result = (|| -> Result<Article, StoreError> {
             for dir in [self.posts_dir(), self.assets_dir(slug)] {
@@ -550,15 +542,7 @@ impl Store {
             return Ok(article);
         }
         let dest = self.md_path(new);
-        match dest.try_exists() {
-            Ok(true) => {
-                return Err(StoreError::AlreadyExists {
-                    slug: new.to_string(),
-                })
-            }
-            Ok(false) => {}
-            Err(error) => return Err(StoreError::io(&dest, error)),
-        }
+        check_absent(&dest, new)?;
         // heroImageはファイル名で持つので、書くときに新しいslugで組み立て直される
         article.slug = new.to_string();
         article.fields.body = article
@@ -596,12 +580,12 @@ impl Store {
         let _guard = self.lock_guard();
         // 保存をしたことのない記事にはバックアップが無い
         let backup = self.backup_path(slug);
-        remove_ignoring_not_found(&backup, || fs::remove_file(&backup))?;
+        remove_ignoring_not_found(fs::remove_file(&backup), &backup)?;
         // いずれかだけ残っている記事もある
         let md = self.md_path(slug);
-        remove_ignoring_not_found(&md, || fs::remove_file(&md))?;
+        remove_ignoring_not_found(fs::remove_file(&md), &md)?;
         let assets = self.assets_dir(slug);
-        remove_ignoring_not_found(&assets, || fs::remove_dir_all(&assets))?;
+        remove_ignoring_not_found(fs::remove_dir_all(&assets), &assets)?;
         Ok(())
     }
 
@@ -714,15 +698,25 @@ fn write_temp(dir: &Path, content: &[u8]) -> Result<tempfile::NamedTempFile, Sto
 }
 
 // 無いものを消そうとしたエラーは、消すものが無かったということなので無視する
-fn remove_ignoring_not_found(
-    path: &Path,
-    remove: impl FnOnce() -> Result<(), io::Error>,
-) -> Result<(), StoreError> {
-    match remove() {
+fn remove_ignoring_not_found(remove: io::Result<()>, path: &Path) -> Result<(), StoreError> {
+    match remove {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(StoreError::io(path, error)),
     }
+}
+
+// 記事のmdが既にあるとき。新規作成とrenameの両方で弾き文が同じなため
+fn check_absent(path: &Path, slug: &str) -> Result<(), StoreError> {
+    if path
+        .try_exists()
+        .map_err(|error| StoreError::io(path, error))?
+    {
+        return Err(StoreError::AlreadyExists {
+            slug: slug.to_string(),
+        });
+    }
+    Ok(())
 }
 
 // 順にrenameする。どれかが失敗したら、済んだものを逆順に戻してから失敗を返す
