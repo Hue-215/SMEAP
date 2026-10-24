@@ -18,21 +18,19 @@ pub fn run() {
     builder
         .setup(|app| {
             let settings = settings::load(app.handle());
+            let data_dir = app.path().app_data_dir()?;
             #[cfg(not(target_os = "android"))]
-            let store = {
-                let exe = std::env::current_exe()?;
-                let exe_dir = exe.parent().ok_or("実行ファイルの親ディレクトリが無い")?;
-                let posts_dir = settings
-                    .posts_dir
-                    .clone()
-                    .unwrap_or_else(|| exe_dir.join("src/content/posts"));
-                store::Store::new(posts_dir, exe_dir.join(".backup"))?
+            let posts_dir = match &settings.posts_dir {
+                Some(dir) => dir.clone(),
+                None => {
+                    let exe = std::env::current_exe()?;
+                    let exe_dir = exe.parent().ok_or("実行ファイルの親ディレクトリが無い")?;
+                    exe_dir.join("src/content/posts")
+                }
             };
             #[cfg(target_os = "android")]
-            let store = {
-                let base = app.path().app_data_dir()?;
-                store::Store::new(base.join("posts/src/content/posts"), base.join("backup"))?
-            };
+            let posts_dir = data_dir.join("posts/src/content/posts");
+            let store = store::Store::new(posts_dir, data_dir.join("backup"))?;
             app.manage(store);
             app.manage(settings::SettingsState::new(settings));
             Ok(())
