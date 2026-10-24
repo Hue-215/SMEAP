@@ -10,8 +10,6 @@ export interface Notice {
 
 interface TopBarProps {
   drawer: DrawerState
-  sidebarOpen: boolean
-  onToggleSidebar: () => void
   onInsertLink: (() => void) | null
   onInsertImages: ((files: File[]) => void) | null
   // nullなら出さない
@@ -36,15 +34,13 @@ function StatusText({ shown }: { shown: Notice }) {
 
 export default function TopBar({
   drawer,
-  sidebarOpen,
-  onToggleSidebar,
   onInsertLink,
   onInsertImages,
   saveStatus,
   notice,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
-  const closes = !drawer.narrow && sidebarOpen
+  const closes = !drawer.narrow && drawer.expanded
   const sidebarLabel = closes ? '記事一覧を閉じる' : '記事一覧を開く'
   const shown = statusNotice(saveStatus, notice)
   return (
@@ -52,10 +48,10 @@ export default function TopBar({
       <button
         type="button"
         className="icon-button"
-        id={drawer.narrow ? drawer.toggleId : undefined}
-        onClick={drawer.narrow ? (drawer.shown ? drawer.cancel : drawer.open) : onToggleSidebar}
-        aria-expanded={drawer.narrow ? drawer.shown : sidebarOpen}
-        aria-controls={drawer.narrow ? drawer.id : undefined}
+        id={drawer.toggleId}
+        onClick={drawer.toggle}
+        aria-expanded={drawer.expanded}
+        aria-controls={drawer.id}
         aria-label={sidebarLabel}
         title={sidebarLabel}
       >

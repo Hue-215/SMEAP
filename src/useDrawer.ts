@@ -18,6 +18,10 @@ export interface DrawerState {
   narrow: boolean
   // 畳んだカラムを引き出しているか。広い窓では常にfalse。
   shown: boolean
+  // カラムが見えているか。広い窓ではサイドバーを開いているか。
+  expanded: boolean
+  // 開くボタンから開け閉めする。
+  toggle: () => void
   open: () => void
   // カラムの中で行き先を選んだときに閉じる。行き先の画面に移るので、フォーカスは開くボタンへ
   // 戻さない(ヘッダーごと作り直されることもある)。
@@ -34,6 +38,7 @@ export interface DrawerState {
 export function useDrawer(): DrawerState {
   const narrow = useSyncExternalStore(subscribeNarrow, () => narrowMedia.matches)
   const [opened, setOpened] = useState(false)
+  const [docked, setDocked] = useState(true)
   // 広げたら閉じる。開いたまま残すと、次に狭めたときに引き出された状態で出る。
   if (!narrow && opened) setOpened(false)
   const shown = narrow && opened
@@ -73,6 +78,12 @@ export function useDrawer(): DrawerState {
   return {
     narrow,
     shown,
+    expanded: narrow ? shown : docked,
+    toggle: () => {
+      if (!narrow) setDocked((v) => !v)
+      else if (shown) cancel()
+      else setOpened(true)
+    },
     open: () => setOpened(true),
     close: () => setOpened(false),
     cancel,

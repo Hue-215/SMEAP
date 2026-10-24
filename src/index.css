@@ -42,6 +42,18 @@ button:is(:disabled, [aria-disabled='true']) {
   opacity: 0.4;
 }
 
+/* 主ボタンは地を塗っているので除く */
+button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active {
+  background: var(--color-hover);
+}
+
+/* タッチの端末では、触れた後もホバーの状態が残る */
+@media (hover: hover) {
+  button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):hover {
+    background: var(--color-hover);
+  }
+}
+
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
@@ -356,18 +368,6 @@ button:is(:disabled, [aria-disabled='true']) {
   -webkit-touch-callout: none;
 }
 
-button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-unreadable, .article-meta-button, .settings-row):not(:disabled):active,
-.dialog-buttons button:not([type='submit'], .primary, :disabled):active {
-  background: var(--color-hover);
-}
-
-/* タッチの端末では、触れた後もホバーの状態が残る */
-@media (hover: hover) {
-  button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-unreadable, .article-meta-button, .settings-row):not(:disabled):hover,
-  .dialog-buttons button:not([type='submit'], .primary, :disabled):hover {
-    background: var(--color-hover);
-  }
-}
 
 .narrow .article-row {
   padding-block: 0.75rem;
@@ -545,18 +545,16 @@ button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-un
   flex-shrink: 0;
   margin-inline-start: calc(-1 * var(--sidebar-width));
   visibility: hidden;
-  transition:
-    margin-inline-start var(--motion-duration) ease-out,
-    transform var(--motion-duration) ease-out,
-    visibility 0s linear var(--motion-duration);
+  transition-property: margin-inline-start, transform, visibility;
+  transition-duration: var(--motion-duration), var(--motion-duration), 0s;
+  transition-timing-function: ease-out;
+  transition-delay: 0s, 0s, var(--motion-duration);
 }
 
 .drawer.open {
   margin-inline-start: 0;
   visibility: visible;
-  transition:
-    margin-inline-start var(--motion-duration) ease-out,
-    transform var(--motion-duration) ease-out;
+  transition-delay: 0s;
 }
 
 /* 狭い窓では内容の上に重ね、左の外から滑らせて出し入れする。 */
@@ -567,10 +565,6 @@ button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-un
   width: min(var(--drawer-width), calc(100% - 3.5rem));
   margin-inline-start: 0;
   transform: translateX(-100%);
-  visibility: hidden;
-  transition:
-    transform var(--motion-duration) ease-out,
-    visibility 0s linear var(--motion-duration);
   /* 重ねると下の内容が透けるので、ここだけは背景色で塗る。 */
   background: var(--color-bg);
   border-right: var(--border-width) solid var(--color-border);
@@ -578,8 +572,6 @@ button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-un
 
 .narrow .drawer.open {
   transform: none;
-  visibility: visible;
-  transition: transform var(--motion-duration) ease-out;
 }
 
 /* 暗幕の濃さは.scrimの色のまま、不透明度で引き出した割合に合わせる。 */
@@ -618,9 +610,6 @@ button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-un
 
 @media (prefers-reduced-motion: reduce) {
   .drawer,
-  .drawer.open,
-  .narrow .drawer,
-  .narrow .drawer.open,
   .drawer-backdrop,
   .drawer-backdrop.open {
     transition: none;

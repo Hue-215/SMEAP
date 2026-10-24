@@ -7,7 +7,8 @@ import App from './App.tsx'
 // メニュー・ダイアログを開いてフォーカスを移したときにも、ブラウザはボタンに:focus-visibleを付ける。
 // 最後の入力がマウス・タッチならその枠を消す(index.css)。
 const setLastInput = (input: 'pointer' | 'keyboard') => {
-  document.documentElement.dataset.input = input
+  const root = document.documentElement
+  if (root.dataset.input !== input) root.dataset.input = input
 }
 document.addEventListener('pointerdown', () => setLastInput('pointer'), { capture: true })
 document.addEventListener('keydown', () => setLastInput('keyboard'), { capture: true })

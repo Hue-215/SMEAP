@@ -38,8 +38,6 @@ interface SaveConfirm {
 
 export default function App() {
   const drawer = useDrawer()
-  // 広い窓のサイドバーの開け閉め。狭い窓では引き出し(drawer)が開け閉めを担う。
-  const [sidebarOpen, setSidebarOpen] = useState(true)
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
@@ -270,12 +268,10 @@ export default function App() {
 
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
-      <Drawer drawer={drawer} dockedOpen={sidebarOpen}>{sidebar}</Drawer>
+      <Drawer drawer={drawer}>{sidebar}</Drawer>
       <main inert={drawer.shown} {...swipeToOpen}>
         <TopBar
           drawer={drawer}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onInsertLink={loaded ? () => editor.current?.insertLink() : null}
           onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
           saveStatus={loaded ? saveStatus : null}
