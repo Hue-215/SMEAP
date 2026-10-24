@@ -102,17 +102,26 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   overflow-y: auto;
 }
 
-/* --article-head-spaceは、記事の頭(.article-head)の上下の仕切り線までの余白。タイトルの上の空きが
-   タイトルと説明の間の空きと揃うよう、説明の上の余白(.article-description)と説明の行間の上半分
-   (0.9375rem × (1.8 - 1) / 2)を足した値にする。上下で揃え、サムネイルを仕切り線の真ん中に置く */
+/* タイトルと説明の文字の大きさと行の高さは、サムネイルの高さ(.article-hero)と余白の計算にも使う。
+   --article-head-spaceは、記事の頭(.article-head)から上下の仕切り線までの余白。タイトルの上の空きが
+   タイトルと説明の間の空きと揃うよう、説明の上の余白と説明の行間の上半分を足した値にする。上下で
+   揃え、サムネイルを仕切り線の真ん中に置く */
 .editor-column {
-  --article-head-space: calc(var(--space-2) + 0.375rem);
+  --title-font-size: 2rem;
+  --title-line-height: 1.4;
+  --description-font-size: 0.9375rem;
+  --description-line-height: 1.8;
+  --description-gap: var(--space-2);
+  --article-head-space: calc(
+    var(--description-gap) + var(--description-font-size) * (var(--description-line-height) - 1) / 2
+  );
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: var(--article-head-space) 2rem 6rem;
 }
 
 .narrow .editor-column {
+  --title-font-size: 1.625rem;
   padding-inline: 1rem;
   padding-bottom: 4rem;
 }
@@ -164,10 +173,12 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   flex-shrink: 0;
 }
 
-/* 設定してもヘッダーの高さが変わらないよう、1行のタイトルと説明を合わせた高さ
-   (.article-title・.article-descriptionの行の高さと間の余白)にする */
+/* 設定してもヘッダーの高さが変わらないよう、1行のタイトルと説明を合わせた高さにする */
 .article-hero {
-  height: calc(2rem * 1.4 + var(--space-2) + 0.9375rem * 1.8);
+  height: calc(
+    var(--title-font-size) * var(--title-line-height) + var(--description-gap) +
+      var(--description-font-size) * var(--description-line-height)
+  );
   aspect-ratio: 16 / 9;
   display: flex;
   align-items: center;
@@ -176,10 +187,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   overflow: hidden;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-}
-
-.narrow .article-hero {
-  height: calc(1.625rem * 1.4 + var(--space-2) + 0.9375rem * 1.8);
 }
 
 /* 未設定のときは場所を取らないよう、ほかのボタンと同じ高さにする */
@@ -197,12 +204,9 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 }
 
 /* サムネイルの右上に重ねる外すボタン。 */
-.article-hero-remove {
+.icon-button.article-hero-remove {
   width: 2rem;
   height: 2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   position: absolute;
   top: calc(-1 * var(--border-width));
   right: calc(-1 * var(--border-width));
@@ -210,7 +214,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   background: var(--color-bg);
 }
 
-.article-hero-remove .icon {
+.icon-button.article-hero-remove .icon {
   width: 1.25rem;
   height: 1.25rem;
 }
@@ -250,19 +254,15 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 .article-title {
   font-family: var(--font-family);
   font-weight: var(--font-weight-strong);
-  font-size: 2rem;
-  line-height: 1.4;
-}
-
-.narrow .article-title {
-  font-size: 1.625rem;
+  font-size: var(--title-font-size);
+  line-height: var(--title-line-height);
 }
 
 .article-description {
-  margin-top: var(--space-2);
+  margin-top: var(--description-gap);
   font-family: var(--font-family-prose);
-  font-size: 0.9375rem;
-  line-height: 1.8;
+  font-size: var(--description-font-size);
+  line-height: var(--description-line-height);
   color: var(--color-text-secondary);
 }
 

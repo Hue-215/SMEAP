@@ -3,14 +3,14 @@ import type { Article, Warning } from './api'
 import Icon from './Icon'
 import ImageFileInput from './ImageFileInput'
 
-type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'heroImage'>
-export type FieldsPatch = Partial<Omit<Fields, 'heroImage'>>
+type Fields = Pick<Article, 'title' | 'description' | 'pubDate'>
+export type FieldsPatch = Partial<Fields>
 
 interface ArticleHeaderProps {
   fields: Fields
   warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
-  heroImageUrl: string | null
+  hero: { name: string; url: string } | null
   heroBusy: boolean
   onPickHeroImage: (file: File) => void
   onRemoveHeroImage: () => void
@@ -87,7 +87,7 @@ export default function ArticleHeader({
   fields,
   warnings,
   onChange,
-  heroImageUrl,
+  hero,
   heroBusy,
   onPickHeroImage,
   onRemoveHeroImage,
@@ -127,18 +127,18 @@ export default function ArticleHeader({
         <div className="article-hero-box">
           <button
             type="button"
-            className={heroImageUrl === null ? 'article-hero empty' : 'article-hero'}
+            className={hero === null ? 'article-hero empty' : 'article-hero'}
             disabled={heroBusy}
             onClick={() => fileInput.current?.click()}
-            aria-label={heroImageUrl === null ? undefined : 'サムネイルを差し替える'}
-            title={fields.heroImage ?? 'サムネイルを選ぶ'}
+            aria-label={hero === null ? undefined : 'サムネイルを差し替える'}
+            title={hero?.name ?? 'サムネイルを選ぶ'}
           >
-            {heroImageUrl === null ? 'サムネイル未設定' : <img src={heroImageUrl} alt="" />}
+            {hero === null ? 'サムネイル未設定' : <img src={hero.url} alt="" />}
           </button>
-          {heroImageUrl !== null && (
+          {hero !== null && (
             <button
               type="button"
-              className="article-hero-remove"
+              className="icon-button article-hero-remove"
               disabled={heroBusy}
               onClick={onRemoveHeroImage}
               aria-label="サムネイルを外す"

@@ -125,7 +125,6 @@ export default function ArticleEditor({
   }))
   // サムネイルの表示。保存の入力には含まれないので、fieldsとは別に持つ
   const [hero, setHero] = useState({ name: article.heroImage, version: 0 })
-  const heroImage = hero.name
   // 値を変えた項目。そのkeyの警告は出さない
   const [edited, setEdited] = useState<Set<HeaderKey>>(() => new Set())
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
@@ -160,36 +159,38 @@ export default function ArticleEditor({
   const slug = article.slug
   const runImports = (imports: ImageImport[]) =>
     void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
+
   // 取り込みや外す操作が並んで走ると、mdと表示が別の画像を指すことがあるので、終わるまで次を受けない
-  // 続けて選ぶと取り込みが並んで走り、mdと表示が別の画像を指すことがあるので、終わるまで選ばせない
   const [heroBusy, setHeroBusy] = useState(false)
-  const pickHeroImage = async (file: File) => {
+  // runは新しいheroImageを返す。failedは失敗したときに知らせる文言
+  const changeHero = async (run: () => Promise<string | null>, failed: (e: unknown) => string) => {
     setHeroBusy(true)
     try {
-      const name = await importHeroImage(slug, new Uint8Array(await file.arrayBuffer()))
+      const name = await run()
       setHero((prev) => ({ name, version: prev.version + 1 }))
     } catch (e) {
-      console.error('サムネイルを取り込めませんでした', file.name, e)
-      callbacks.current.onNotice(
-        isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした',
-      )
+      const text = failed(e)
+      console.error(text, slug, e)
+      callbacks.current.onNotice(text)
     } finally {
       setHeroBusy(false)
     }
   }
 
-  const removeHero = async () => {
-    setHeroBusy(true)
-    try {
-      await removeHeroImage(slug)
-      setHero((prev) => ({ name: null, version: prev.version + 1 }))
-    } catch (e) {
-      console.error('サムネイルを外せませんでした', slug, e)
-      callbacks.current.onNotice('サムネイルを外せませんでした')
-    } finally {
-      setHeroBusy(false)
-    }
-  }
+  const pickHeroImage = (file: File) =>
+    void changeHero(
+      async () => importHeroImage(slug, new Uint8Array(await file.arrayBuffer())),
+      (e) => (isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした'),
+    )
+
+  const removeHero = () =>
+    void changeHero(
+      async () => {
+        await removeHeroImage(slug)
+        return null
+      },
+      () => 'サムネイルを外せませんでした',
+    )
 
   // LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、Tauriが受けたパスで取り込む
   useEffect(() => {
@@ -250,20 +251,24 @@ export default function ArticleEditor({
 
   const warnings = article.warnings.filter((warning: Warning) => {
     // heroImageの警告は、サムネイルを取り込んだら出さない(取り込みでmdの行を書き直す)
-    if (warning.key === 'heroImage' && heroImage !== article.heroImage) return false
+    if (warning.key === 'heroImage' && hero.name !== article.heroImage) return false
     return warning.key === null || !edited.has(warning.key as HeaderKey)
   })
 
   return (
     <>
       <ArticleHeader
-        fields={{ ...fields, heroImage }}
+        fields={fields}
         warnings={warnings}
         onChange={updateFields}
-        heroImageUrl={heroImage === null ? null : heroImageUrl(slug, heroImage, hero.version)}
+        hero={
+          hero.name === null
+            ? null
+            : { name: hero.name, url: heroImageUrl(slug, hero.name, hero.version) }
+        }
         heroBusy={heroBusy}
-        onPickHeroImage={(file) => void pickHeroImage(file)}
-        onRemoveHeroImage={() => void removeHero()}
+        onPickHeroImage={pickHeroImage}
+        onRemoveHeroImage={removeHero}
       />
       <Editor
         slug={article.slug}

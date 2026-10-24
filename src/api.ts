@@ -123,7 +123,10 @@ export function articleImageUrl(slug: string, reference: string): string {
   return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
 }
 
+// 記事ファイルから画像を指すときの相対パス。Rust側のassets_ref(src-tauri/src/store.rs)とそろえる
+const assetsRef = (slug: string) => `../../assets/${slug}/`
+
 // 差し替えても同じ名前のことがあるので、versionを変えて読み直させる。独自プロトコルはクエリを見ない
 export function heroImageUrl(slug: string, name: string, version: number): string {
-  return `${articleImageUrl(slug, `../../assets/${slug}/${name}`)}?v=${version}`
+  return `${articleImageUrl(slug, assetsRef(slug) + name)}?v=${version}`
 }

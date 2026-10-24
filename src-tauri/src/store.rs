@@ -471,20 +471,19 @@ impl Store {
             }
             return Err(error);
         }
-        if old.as_deref() != Some(name.as_str()) {
-            self.remove_hero_file(slug, old, &article.fields.body);
+        if let Some(old) = old.filter(|old| *old != name) {
+            self.remove_hero_file(slug, &old, &article.fields.body);
         }
         Ok(name)
     }
 
     // 使われなくなったheroImageのファイルを消す。本文が参照していれば消さない。
     // 消せなくても失敗にしない
-    fn remove_hero_file(&self, slug: &str, old: Option<String>, body: &str) {
-        let Some(old) = old.filter(|old| !body.contains(&format!("{}{old}", assets_ref(slug))))
-        else {
+    fn remove_hero_file(&self, slug: &str, old: &str, body: &str) {
+        if body.contains(&format!("{}{old}", assets_ref(slug))) {
             return;
-        };
-        let old_path = self.assets_dir(slug).join(&old);
+        }
+        let old_path = self.assets_dir(slug).join(old);
         if let Err(error) = fs::remove_file(&old_path) {
             if error.kind() != io::ErrorKind::NotFound {
                 eprintln!(
@@ -504,7 +503,7 @@ impl Store {
             return Ok(());
         };
         self.write_md(&article)?;
-        self.remove_hero_file(slug, Some(old), &article.fields.body);
+        self.remove_hero_file(slug, &old, &article.fields.body);
         Ok(())
     }
 
