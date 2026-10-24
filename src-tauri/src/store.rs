@@ -601,15 +601,18 @@ impl Store {
     pub fn delete_article(&self, slug: &str) -> Result<(), StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
-        let slug_dir = self.root.join(slug);
-        fs::remove_dir_all(&slug_dir)
-            .map_err(|error| StoreError::not_found_or_io(slug, &slug_dir, error))?;
         // 保存をしたことのない記事にはバックアップが無い
         let backup = self.backup_path(slug);
         match fs::remove_file(&backup) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(StoreError::io(&backup, error)),
+        }
+        let slug_dir = self.root.join(slug);
+        match fs::remove_dir_all(&slug_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::io(&slug_dir, error)),
         }
         Ok(())
     }
@@ -1459,23 +1462,56 @@ mod tests {
     }
 
     #[test]
-    fn 存在しない記事は消せない() {
+    fn 存在しない記事を消しても成功する() {
         let (_tmp, store) = setup();
-        assert!(matches!(
-            store.delete_article("missing"),
-            Err(StoreError::NotFound { slug }) if slug == "missing"
-        ));
+        store.delete_article("missing").unwrap();
+        assert!(!store.root.join("missing").exists());
     }
 
     #[test]
     fn 不正なslugは消せない() {
         let (_tmp, store) = setup();
-        for slug in ["", "../x", "A", "a_b", "a/b"] {
+        for slug in ["", "../x", ".", "..", "A", "a_b", "a/b"] {
             assert!(matches!(
                 store.delete_article(slug),
                 Err(StoreError::InvalidSlug { .. })
             ));
         }
+    }
+
+    #[test]
+    fn 削除してもほかの記事には触らない() {
+        let (_tmp, store) = setup();
+        for slug in ["a", "a-b"] {
+            store.create_article(slug).unwrap();
+            store.save_article(slug, input("t", "2026-01-01")).unwrap();
+            assert!(store.backup_path(slug).exists());
+        }
+
+        store.delete_article("a").unwrap();
+        assert!(!store.root.join("a").exists());
+        assert!(store.md_path("a-b").exists());
+        assert!(store.assets_dir("a-b").is_dir());
+        assert!(store.backup_path("a-b").exists());
+        let list = store.list_articles().unwrap();
+        assert_eq!(slugs(&list.articles), ["a-b"]);
+    }
+
+    #[test]
+    fn 消した記事は保存で作り直されない() {
+        let (_tmp, store) = setup();
+        store.create_article("gone").unwrap();
+        store
+            .save_article("gone", input("t", "2026-01-01"))
+            .unwrap();
+        store.delete_article("gone").unwrap();
+
+        assert!(matches!(
+            store.save_article("gone", input("t", "2026-01-02")),
+            Err(StoreError::NotFound { slug }) if slug == "gone"
+        ));
+        assert!(!store.root.join("gone").exists());
+        assert!(!store.backup_path("gone").exists());
     }
 
     #[test]

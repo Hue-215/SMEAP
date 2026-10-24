@@ -86,7 +86,6 @@ export default function ContextMenu({
   )
 }
 
-// Escで閉じ、上下の矢印で項目の間をフォーカスが移る。
 function onKeyDown(e: KeyboardEvent, list: HTMLElement | null, onClose: () => void) {
   if (e.key === 'Escape') {
     e.preventDefault()

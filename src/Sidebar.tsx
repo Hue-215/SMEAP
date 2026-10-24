@@ -5,6 +5,11 @@ import Dialog from './Dialog'
 import Icon from './Icon'
 import { isAndroid } from './platform'
 
+// 一覧の行。brokenは読めない記事(BrokenArticle)
+export type ArticleRef =
+  | { kind: 'article'; slug: string; title: string }
+  | { kind: 'broken'; slug: string }
+
 export type ArticlesState =
   | { status: 'loading' }
   // 一覧全体が読めなかったときのTauriのエラー(src-tauri/src/store.rs)。path・reasonは種類によって持つ
@@ -24,8 +29,7 @@ interface SidebarProps {
   onSettings: () => void
   onRenameSlug: (slug: string) => void
   onExportZip: (slug: string) => void
-  // titleは記事ならタイトル、壊れた記事ならnull
-  onDelete: (slug: string, title: string | null) => void
+  onDelete: (target: ArticleRef) => void
 }
 
 function DialogDetail({
@@ -55,13 +59,8 @@ function DialogDetail({
   )
 }
 
-// 右クリック(Androidの長押し)で出す、行ごとのメニューの開き方
-interface RowMenu {
-  slug: string
-  title: string | null
-  x: number
-  y: number
-}
+// 右クリック(Androidは長押し)で開いている行のメニュー
+type RowMenu = ArticleRef & { x: number; y: number }
 
 export default function Sidebar({
   articles,
@@ -81,8 +80,8 @@ export default function Sidebar({
       ? (articles.broken.find((b) => b.slug === brokenSlug) ?? null)
       : null
 
-  // キーボードのcontextmenuでは座標が出ないので、行の左下に出す
-  const openRowMenu = (e: MouseEvent<HTMLElement>, slug: string, title: string | null) => {
+  // キーボードから開くと座標が0になる環境があるので、そのときは行の左下に出す
+  const openRowMenu = (e: MouseEvent<HTMLElement>, target: ArticleRef) => {
     e.preventDefault()
     let { clientX: x, clientY: y } = e
     if (x === 0 && y === 0) {
@@ -90,7 +89,7 @@ export default function Sidebar({
       x = rect.left
       y = rect.bottom
     }
-    setRowMenu({ slug, title, x, y })
+    setRowMenu({ ...target, x, y })
   }
 
   const rowMenuItems = (menu: RowMenu): MenuItem[] => {
@@ -98,10 +97,9 @@ export default function Sidebar({
       key: 'delete',
       label: '削除',
       icon: 'delete',
-      onSelect: () => onDelete(menu.slug, menu.title),
+      onSelect: () => onDelete(menu),
     }
-    // 読めない記事は削除だけ
-    if (menu.title === null) return [deleteItem]
+    if (menu.kind === 'broken') return [deleteItem]
     const renameItem: MenuItem = {
       key: 'rename-slug',
       label: 'slugを変更',
@@ -151,7 +149,9 @@ export default function Sidebar({
                   className="article-row"
                   aria-current={article.slug === selectedSlug ? 'true' : undefined}
                   onClick={() => onSelect(article.slug)}
-                  onContextMenu={(e) => openRowMenu(e, article.slug, article.title)}
+                  onContextMenu={(e) =>
+                    openRowMenu(e, { kind: 'article', slug: article.slug, title: article.title })
+                  }
                 >
                   <span className="article-row-title">
                     {article.title || '無題'}
@@ -175,7 +175,7 @@ export default function Sidebar({
                   type="button"
                   className="article-row article-row-broken"
                   onClick={() => setBrokenSlug(broken.slug)}
-                  onContextMenu={(e) => openRowMenu(e, broken.slug, null)}
+                  onContextMenu={(e) => openRowMenu(e, { kind: 'broken', slug: broken.slug })}
                 >
                   <span className="article-row-title">読めない記事</span>
                   <span className="article-row-detail">{broken.slug}</span>

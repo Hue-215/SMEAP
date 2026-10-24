@@ -7,7 +7,7 @@ interface ConfirmDialogProps {
   confirmLabel: string
   failedText: string
   onCancel: () => void
-  // できたらtrue。できたら閉じるのは親が行う
+  // 成功ならtrue。閉じるのは親が行う
   onConfirm: () => Promise<boolean>
   // キャンセルと確定の間に置くボタン
   secondary?: { label: string; onClick: () => void }
@@ -29,9 +29,12 @@ export default function ConfirmDialog({
 
   const confirm = () => {
     setState('running')
-    void onConfirm().then((ok) => {
-      if (!ok) setState('failed')
-    })
+    void onConfirm().then(
+      (ok) => {
+        if (!ok) setState('failed')
+      },
+      () => setState('failed'),
+    )
   }
 
   // 処理中に閉じると、処理の後の操作が残る

@@ -500,7 +500,7 @@ button:is(:disabled, [aria-disabled='true']) {
   color: var(--color-error);
 }
 
-/* 試作(docs/design/SaveConfirm.dc.html)のとおり、ほかの2つと離して左に置き、枠を付けない */
+/* 試作(docs/design/SaveConfirm.dc.html)のとおり、ほかのボタンと離して左に置き、枠を付けない */
 .dialog-buttons .confirm-dialog-cancel {
   margin-right: auto;
   border: 0;
