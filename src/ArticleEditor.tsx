@@ -13,6 +13,7 @@ import {
   importBodyImage,
   importBodyImageFromPath,
   importClipboardImage,
+  importHeroImage,
   type Article,
   type ArticleFields,
   type StoreError,
@@ -153,6 +154,25 @@ export default function ArticleEditor({
   const runImports = (imports: ImageImport[]) =>
     void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
 
+  // サムネイルの選び直し。mdのheroImageはRust側が書き換えるので、saver.changed()はしない
+  const pickHeroImage = async (file: File) => {
+    try {
+      const name = await importHeroImage(slug, new Uint8Array(await file.arrayBuffer()))
+      latest.current = { ...latest.current, heroImage: name }
+      setFields(latest.current)
+      // 読めなかったheroImageの警告は、取り込めたので消す
+      setEdited((keys) => {
+        const next = new Set(keys)
+        next.add('heroImage')
+        return next
+      })
+    } catch (e) {
+      console.error('サムネイルを取り込めませんでした', file.name, e)
+      const unsupported = (e as StoreError | undefined)?.kind === 'unsupportedImage'
+      callbacks.current.onNotice(unsupported ? '使えない形式です' : 'サムネイルを取り込めませんでした')
+    }
+  }
+
   // LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、Tauriが受けたパスで取り込む
   useEffect(() => {
     if (isAndroid) return
@@ -216,7 +236,12 @@ export default function ArticleEditor({
 
   return (
     <>
-      <ArticleHeader fields={fields} warnings={warnings} onChange={updateFields} />
+      <ArticleHeader
+        fields={fields}
+        warnings={warnings}
+        onChange={updateFields}
+        onPickHeroImage={(file) => void pickHeroImage(file)}
+      />
       <Editor
         slug={article.slug}
         initialDoc={article.body}

@@ -533,7 +533,8 @@ impl Store {
             title: fields.title.or(original.fields.title),
             description: fields.description.or(original.fields.description),
             pub_date: fields.pub_date.or(original.fields.pub_date),
-            hero_image: fields.hero_image.or(original.fields.hero_image),
+            // heroImageを書き換えるのはimport_hero_imageだけ。取り込み中の自動保存が前の値で書き戻さないよう、画面の値は使わない
+            hero_image: original.fields.hero_image,
             body: fields.body,
         };
         check_fields(&fields)?;
@@ -1119,6 +1120,11 @@ mod tests {
     fn 保存と読み込みの往復() {
         let (_tmp, store) = setup();
         store.create_article("roundtrip").unwrap();
+        // heroImageは保存では書けないので、先にimport_hero_imageで取り込む
+        assert_eq!(
+            store.import_hero_image("roundtrip", &png()).unwrap(),
+            "hero.png"
+        );
         let original = ArticleFields {
             title: Some("改行\nとコロン: と\"引用符\"".to_string()),
             description: Some("説明\n2行目: これも".to_string()),
@@ -1163,6 +1169,21 @@ mod tests {
         );
         let md = fs::read_to_string(store.md_path("no-hero")).unwrap();
         assert!(!md.contains("heroImage"));
+    }
+
+    #[test]
+    fn 保存は画面のhero_imageでmdを書き換えない() {
+        let (_tmp, store) = setup();
+        store.create_article("keep-hero").unwrap();
+        store.import_hero_image("keep-hero", &png()).unwrap();
+        let mut fields = input("t", "2026-01-01");
+        fields.hero_image = Some("other.png".to_string());
+        store.save_article("keep-hero", fields).unwrap();
+
+        let read = store.read_article("keep-hero").unwrap();
+        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+        let md = fs::read_to_string(store.md_path("keep-hero")).unwrap();
+        assert!(md.contains("heroImage: \"../../assets/keep-hero/hero.png\""));
     }
 
     #[test]
@@ -1394,6 +1415,8 @@ mod tests {
     fn renameで場所と参照とバックアップが移る() {
         let (_tmp, store) = setup();
         store.create_article("old-slug").unwrap();
+        // heroImageは保存では書けないので、先にimport_hero_imageで取り込む
+        store.import_hero_image("old-slug", &png()).unwrap();
         let first = ArticleFields {
             title: Some("タイトル".to_string()),
             description: Some(String::new()),
@@ -1535,7 +1558,7 @@ mod tests {
     }
 
     #[test]
-    fn 不正な日付とヒーロー画像は保存できない() {
+    fn 不正な日付は保存できない() {
         let (_tmp, store) = setup();
         store.create_article("checks").unwrap();
         let base = input("タイトル", "2026-05-01");
@@ -1549,17 +1572,6 @@ mod tests {
                     Err(StoreError::InvalidDate { date }) if date == bad
                 ),
                 "{bad} は不正な日付のはず"
-            );
-        }
-        for bad in ["", "../up.png", "a/b.png", "a\\b.png", "a..b.png"] {
-            let mut bad_input = base.clone();
-            bad_input.hero_image = Some(bad.to_string());
-            assert!(
-                matches!(
-                    store.save_article("checks", bad_input),
-                    Err(StoreError::InvalidHeroImage { name }) if name == bad
-                ),
-                "{bad} は不正なheroImageのはず"
             );
         }
     }
@@ -2069,9 +2081,12 @@ mod tests {
     fn heroは前のhero_imageのファイルを消す() {
         let (_tmp, store) = setup();
         store.create_article("post").unwrap();
-        let mut fields = input("", "2026-01-01");
-        fields.hero_image = Some("cover.png".to_string());
-        store.save_article("post", fields).unwrap();
+        // 保存ではheroImageを書けないので、mdに直接書く
+        md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/cover.png\"\n---\n本文\n",
+        );
         let dir = store.assets_dir("post");
         fs::write(dir.join("cover.png"), b"cover").unwrap();
         fs::write(dir.join("01.png"), b"old").unwrap();

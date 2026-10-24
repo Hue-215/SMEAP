@@ -9,6 +9,7 @@ interface ArticleHeaderProps {
   fields: Fields
   warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
+  onPickHeroImage: (file: File) => void
 }
 
 function fitHeight(el: HTMLTextAreaElement) {
@@ -78,7 +79,13 @@ function OneLineField({ className, label, value, onChange }: OneLineFieldProps) 
   )
 }
 
-export default function ArticleHeader({ fields, warnings, onChange }: ArticleHeaderProps) {
+export default function ArticleHeader({
+  fields,
+  warnings,
+  onChange,
+  onPickHeroImage,
+}: ArticleHeaderProps) {
+  const fileInput = useRef<HTMLInputElement>(null)
   return (
     <header>
       {warnings.length > 0 && (
@@ -130,11 +137,26 @@ export default function ArticleHeader({ fields, warnings, onChange }: ArticleHea
           {fields.heroImage != null && (
             <span className="article-meta-value">{fields.heroImage}</span>
           )}
-          {/* 画像の取り込み(#8)ができたら押せるようにする */}
-          <button type="button" className="article-meta-button" disabled>
+          <button
+            type="button"
+            className="article-meta-button"
+            onClick={() => fileInput.current?.click()}
+          >
             <Icon name="image" />
             {fields.heroImage == null ? '画像を選ぶ' : '差し替える'}
           </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              // 同じファイルを続けて選んでもchangeが起きるよう空にする
+              e.target.value = ''
+              if (file) onPickHeroImage(file)
+            }}
+          />
         </div>
       </div>
     </header>
