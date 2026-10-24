@@ -26,7 +26,7 @@ done
 # shellcheck source=scripts/release-common.sh
 source "$(dirname "$0")/release-common.sh"
 
-binary="$root/src-tauri/target/release/astro-notepad"
+binary="$root/src-tauri/target/release/smeap"
 # 前のビルドの実行ファイルを、今回のものと取り違えないよう先に消す。
 rm -f "$binary"
 

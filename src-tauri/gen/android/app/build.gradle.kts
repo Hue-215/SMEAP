@@ -16,10 +16,10 @@ val tauriProperties = Properties().apply {
 
 android {
     compileSdk = 37
-    namespace = "net.niigo.astronotepad"
+    namespace = "net.niigo.smeap"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "net.niigo.astronotepad"
+        applicationId = "net.niigo.smeap"
         minSdk = 29
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

@@ -112,7 +112,7 @@ async function collectRustLicenses(target: string): Promise<License[]> {
   for (const { id, text, used_by } of about.licenses) {
     for (const { crate } of used_by) {
       // アプリ自身は一覧の先頭に別に載せる
-      if (crate.name === 'astro-notepad') continue
+      if (crate.name === 'smeap') continue
       const key = `${crate.name}@${crate.version}`
       const entry = crates.get(key) ?? { name: crate.name, version: crate.version, ids: [], texts: [] }
       if (!entry.ids.includes(id)) entry.ids.push(id)
@@ -133,7 +133,7 @@ async function collectRustLicenses(target: string): Promise<License[]> {
 // 集める。
 async function collectLicenses(target: string | undefined): Promise<License[]> {
   const app: License = {
-    name: 'Astro-Notepad',
+    name: 'SMEAP',
     version: '',
     license: 'MIT',
     text: readFileSync(join(rootDir, 'LICENSE'), 'utf8'),

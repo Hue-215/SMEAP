@@ -1,4 +1,4 @@
-package net.niigo.astronotepad
+package net.niigo.smeap
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

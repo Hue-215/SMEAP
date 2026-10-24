@@ -10,9 +10,9 @@
 # 署名の鍵は環境変数で渡す。パスワードは、署名する`apksigner`にだけ渡す(npm・cargo・Gradleと、
 # ビルドの後も残るGradleのデーモンには渡さない)。
 #
-#   ASTRO_NOTEPAD_ANDROID_KEYSTORE           キーストア(PKCS12)のファイルの絶対パス
-#   ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD  キーストアのパスワード
-#   ASTRO_NOTEPAD_ANDROID_KEY_ALIAS          鍵の別名
+#   SMEAP_ANDROID_KEYSTORE           キーストア(PKCS12)のファイルの絶対パス
+#   SMEAP_ANDROID_KEYSTORE_PASSWORD  キーストアのパスワード
+#   SMEAP_ANDROID_KEY_ALIAS          鍵の別名
 set -euo pipefail
 
 case "$#:${1:-}:${2:-}" in
@@ -24,20 +24,20 @@ case "$#:${1:-}:${2:-}" in
     ;;
 esac
 
-for name in ASTRO_NOTEPAD_ANDROID_KEYSTORE ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD ASTRO_NOTEPAD_ANDROID_KEY_ALIAS ANDROID_HOME NDK_HOME; do
+for name in SMEAP_ANDROID_KEYSTORE SMEAP_ANDROID_KEYSTORE_PASSWORD SMEAP_ANDROID_KEY_ALIAS ANDROID_HOME NDK_HOME; do
   if [[ -z "${!name:-}" ]]; then
     echo "環境変数 $name を設定してください" >&2
     exit 1
   fi
 done
 # 途中で作業ディレクトリを移るので、取り違えないよう絶対パスだけを受け付ける。
-if [[ "$ASTRO_NOTEPAD_ANDROID_KEYSTORE" != /* || ! -f "$ASTRO_NOTEPAD_ANDROID_KEYSTORE" ]]; then
-  echo "ASTRO_NOTEPAD_ANDROID_KEYSTORE は、キーストアのファイルの絶対パスにしてください: $ASTRO_NOTEPAD_ANDROID_KEYSTORE" >&2
+if [[ "$SMEAP_ANDROID_KEYSTORE" != /* || ! -f "$SMEAP_ANDROID_KEYSTORE" ]]; then
+  echo "SMEAP_ANDROID_KEYSTORE は、キーストアのファイルの絶対パスにしてください: $SMEAP_ANDROID_KEYSTORE" >&2
   exit 1
 fi
 # パスワードは、ここから先で起動するプロセスの環境変数に載せない。
-keystore_password="$ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD"
-unset ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD
+keystore_password="$SMEAP_ANDROID_KEYSTORE_PASSWORD"
+unset SMEAP_ANDROID_KEYSTORE_PASSWORD
 build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1 || true)"
 apksigner="$build_tools/apksigner"
 zipalign="$build_tools/zipalign"
@@ -54,7 +54,7 @@ if [[ -z "$version" ]]; then
   echo "src-tauri/Cargo.toml から版を読めません" >&2
   exit 1
 fi
-dist="$root/dist-release/astro-notepad-$version-android-$cpu.apk"
+dist="$root/dist-release/smeap-$version-android-$cpu.apk"
 built="$root/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 # 前の配布物と前のビルドのAPKを、今回のものと取り違えないよう先に消す。
 rm -f "$dist" "$built"
@@ -87,9 +87,9 @@ echo "絶対パスは残っていません"
 # 署名の前に、中のファイルの位置が揃っていること(署名の後には直せない)を確かめる。
 # 検査していない・署名の無いものが配布物の置き場所に残らないよう、署名と確認を終えてから移す。
 "$zipalign" -c 4 "$built"
-ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD="$keystore_password" "$apksigner" sign \
-  --ks "$ASTRO_NOTEPAD_ANDROID_KEYSTORE" --ks-type PKCS12 --ks-key-alias "$ASTRO_NOTEPAD_ANDROID_KEY_ALIAS" \
-  --ks-pass env:ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD --key-pass env:ASTRO_NOTEPAD_ANDROID_KEYSTORE_PASSWORD \
+SMEAP_ANDROID_KEYSTORE_PASSWORD="$keystore_password" "$apksigner" sign \
+  --ks "$SMEAP_ANDROID_KEYSTORE" --ks-type PKCS12 --ks-key-alias "$SMEAP_ANDROID_KEY_ALIAS" \
+  --ks-pass env:SMEAP_ANDROID_KEYSTORE_PASSWORD --key-pass env:SMEAP_ANDROID_KEYSTORE_PASSWORD \
   --v4-signing-enabled false --out "$work/signed.apk" "$built"
 "$apksigner" verify "$work/signed.apk"
 mkdir -p "$(dirname "$dist")"
