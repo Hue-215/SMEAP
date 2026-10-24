@@ -102,10 +102,9 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   overflow-y: auto;
 }
 
-/* タイトルと説明の文字の大きさと行の高さは、サムネイルの高さ(.article-hero)と余白の計算にも使う。
-   --article-head-spaceは、記事の頭(.article-head)から上下の仕切り線までの余白。タイトルの上の空きが
-   タイトルと説明の間の空きと揃うよう、説明の上の余白と説明の行間の上半分を足した値にする。上下で
-   揃え、サムネイルを仕切り線の真ん中に置く */
+/* タイトルと説明の文字の大きさと行の高さは、サムネイルの高さ(.article-hero)の計算にも使う。
+   --article-head-spaceは、タイトルの上の空きをタイトルと説明の間の空きに揃える値。公開日の行の上にも
+   同じ値を使い、サムネイルを上下の仕切り線の真ん中に置く */
 .editor-column {
   --title-font-size: 2rem;
   --title-line-height: 1.4;
@@ -219,15 +218,11 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   height: 1.25rem;
 }
 
-/* ホバーできる端末では、ホバー中か中にフォーカスがあるときだけ出す */
+/* ホバーできる端末では、ホバー中か中にフォーカスがあるときだけ出す。出したときは、押せない間の
+   薄さ(button:disabled)を残す */
 @media (hover: hover) {
-  .article-hero-remove {
+  .article-hero-box:not(:hover, :focus-within) .article-hero-remove {
     opacity: 0;
-  }
-
-  .article-hero-box:hover .article-hero-remove,
-  .article-hero-box:focus-within .article-hero-remove {
-    opacity: 1;
   }
 }
 

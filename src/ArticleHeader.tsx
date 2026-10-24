@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { Article, Warning } from './api'
 import Icon from './Icon'
 import ImageFileInput from './ImageFileInput'
@@ -93,6 +93,8 @@ export default function ArticleHeader({
   onRemoveHeroImage,
 }: ArticleHeaderProps) {
   const fileInput = useRef<HTMLInputElement>(null)
+  // 読めなかった画像のURL。差し替えるとURLが変わるので、読み直す
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
   return (
     <header>
       {warnings.length > 0 && (
@@ -133,7 +135,13 @@ export default function ArticleHeader({
             aria-label={hero === null ? undefined : 'サムネイルを差し替える'}
             title={hero?.name ?? 'サムネイルを選ぶ'}
           >
-            {hero === null ? 'サムネイル未設定' : <img src={hero.url} alt="" />}
+            {hero === null ? (
+              'サムネイル未設定'
+            ) : brokenUrl === hero.url ? (
+              'サムネイルを読めません'
+            ) : (
+              <img src={hero.url} alt="" onError={() => setBrokenUrl(hero.url)} />
+            )}
           </button>
           {hero !== null && (
             <button

@@ -162,15 +162,21 @@ export default function ArticleEditor({
 
   // 取り込みや外す操作が並んで走ると、mdと表示が別の画像を指すことがあるので、終わるまで次を受けない
   const [heroBusy, setHeroBusy] = useState(false)
-  // runは新しいheroImageを返す。failedは失敗したときに知らせる文言
-  const changeHero = async (run: () => Promise<string | null>, failed: (e: unknown) => string) => {
+  // runは新しいheroImageを返す。failedはエラーから知らせる文言を作る。subjectはログに残す対象
+  const changeHero = async (
+    run: () => Promise<string | null>,
+    failed: (e: unknown) => string,
+    subject: string,
+  ) => {
     setHeroBusy(true)
     try {
+      // 前の画像を消すかはmdの本文が参照しているかで決めるので、本文の変更を先に保存する
+      if (!(await saver.save())) throw new Error('記事を保存できませんでした')
       const name = await run()
       setHero((prev) => ({ name, version: prev.version + 1 }))
     } catch (e) {
       const text = failed(e)
-      console.error(text, slug, e)
+      console.error(text, subject, e)
       callbacks.current.onNotice(text)
     } finally {
       setHeroBusy(false)
@@ -181,6 +187,7 @@ export default function ArticleEditor({
     void changeHero(
       async () => importHeroImage(slug, new Uint8Array(await file.arrayBuffer())),
       (e) => (isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした'),
+      file.name,
     )
 
   const removeHero = () =>
@@ -190,6 +197,7 @@ export default function ArticleEditor({
         return null
       },
       () => 'サムネイルを外せませんでした',
+      slug,
     )
 
   // LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、Tauriが受けたパスで取り込む
@@ -250,8 +258,8 @@ export default function ArticleEditor({
   }
 
   const warnings = article.warnings.filter((warning: Warning) => {
-    // heroImageの警告は、サムネイルを取り込んだら出さない(取り込みでmdの行を書き直す)
-    if (warning.key === 'heroImage' && hero.name !== article.heroImage) return false
+    // heroImageの警告は、サムネイルを取り込むか外したら出さない(どちらもmdの行を書き直す)
+    if (warning.key === 'heroImage' && hero.version > 0) return false
     return warning.key === null || !edited.has(warning.key as HeaderKey)
   })
 

@@ -480,6 +480,7 @@ impl Store {
     // 使われなくなったheroImageのファイルを消す。本文が参照していれば消さない。
     // 消せなくても失敗にしない
     fn remove_hero_file(&self, slug: &str, old: &str, body: &str) {
+        debug_assert!(is_filename(old), "{old} はファイル名のはず");
         if body.contains(&format!("{}{old}", assets_ref(slug))) {
             return;
         }
@@ -494,7 +495,7 @@ impl Store {
         }
     }
 
-    // heroImageを外す。前のファイルも消す(本文が参照していれば残す)
+    // mdの行に加えてファイルも消す
     pub fn remove_hero_image(&self, slug: &str) -> Result<(), StoreError> {
         let _guard = self.lock_guard();
         validate_slug(slug)?;
@@ -533,7 +534,7 @@ impl Store {
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
         // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く。
         // 開いたときに読めなかった項目は保存の時点で消費されていることがあるので、
-        // Noneの項目は読み直して読めた値で補う。heroImageはimport_hero_imageが書き換えるので、いつも読み直した値を使う
+        // Noneの項目は読み直して読めた値で補う。heroImageは取り込みと外す操作で書き換わるので、いつも読み直した値を使う
         let original = self.read_article(slug)?;
         let fields = ArticleFields {
             title: fields.title.or(original.fields.title),
@@ -2146,6 +2147,24 @@ mod tests {
         assert!(!md.contains("heroImage"));
         let read = store.read_article("remove").unwrap();
         assert_eq!(read.fields.hero_image, None);
+    }
+
+    #[test]
+    fn heroを外してもほかの行は残り開いたときの内容の保存で戻らない() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "keep-rest",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/keep-rest/hero.png\"\ntags: [a]\n---\n本文\n",
+        );
+        let opened = store.read_article("keep-rest").unwrap();
+        store.remove_hero_image("keep-rest").unwrap();
+        store.save_article("keep-rest", edited(&opened)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(store.md_path("keep-rest")).unwrap(),
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\ntags: [a]\n---\n本文\n"
+        );
     }
 
     #[test]
