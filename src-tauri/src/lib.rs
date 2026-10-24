@@ -11,8 +11,9 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // WebKitGTKの<input type="date">の書式は端末のロケール(LANG・LC_ALL)に従い、jaでもen_USでも
-    // `2026-07-02`の形にはならない。ISO 8601になるen_CAを、GTKの初期化より前に設定する
-    #[cfg(all(unix, not(target_os = "android")))]
+    // `2026-07-02`の形にはならない。ISO 8601になるen_CAを、GTKの初期化より前に設定する。
+    // LC_ALLはプロセス全体に効くので、GTKのファイルダイアログなどの文言もen_CAになる
+    #[cfg(target_os = "linux")]
     std::env::set_var("LC_ALL", "en_CA.UTF-8");
     // fsとdialogはRust側からだけ使う(src/export.rs・src/settings.rs)。画面に権限は与えない
     let builder =
