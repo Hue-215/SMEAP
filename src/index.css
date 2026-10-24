@@ -492,7 +492,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   gap: 0.625rem;
   padding-inline: 0.75rem;
   font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
   text-align: left;
 }
 
