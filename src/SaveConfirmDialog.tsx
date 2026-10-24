@@ -3,7 +3,6 @@ import ConfirmDialog from './ConfirmDialog'
 import { t } from './i18n'
 
 interface SaveConfirmDialogProps {
-  title: string
   savedAt: Date | null
   onCancel: () => void
   onDiscard: () => void
@@ -12,14 +11,11 @@ interface SaveConfirmDialogProps {
 }
 
 export default function SaveConfirmDialog({
-  title,
   savedAt,
   onCancel,
   onDiscard,
   onSave,
 }: SaveConfirmDialogProps) {
-  const label = title || t('common.untitled')
-
   return (
     <ConfirmDialog
       title={t('save_confirm.title')}
@@ -30,9 +26,8 @@ export default function SaveConfirmDialog({
       secondary={{ label: t('save_confirm.discard'), onClick: onDiscard }}
     >
       {savedAt === null
-        ? t('save_confirm.message_since_opened', { title: label })
+        ? t('save_confirm.message_since_opened')
         : t('save_confirm.message_since_saved', {
-            title: label,
             time: formatSavedTime(savedAt),
           })}
     </ConfirmDialog>

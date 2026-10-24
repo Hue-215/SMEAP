@@ -38,11 +38,6 @@ type ArticleState =
 // 保存していない変更があるときに、確かめてから行う操作
 type PendingAction = { kind: 'switch'; slug: string } | { kind: 'close' }
 
-interface SaveConfirm {
-  action: PendingAction
-  title: string
-}
-
 export default function App() {
   const drawer = useDrawer()
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
@@ -56,7 +51,7 @@ export default function App() {
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
-  const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
+  const [saveConfirm, setSaveConfirm] = useState<PendingAction | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   // 同じ文言が続いても出し直すよう、包んで持つ
@@ -138,7 +133,7 @@ export default function App() {
   const askToSave = (action: PendingAction) => {
     const current = editor.current
     if (!current?.isDirty()) return false
-    setSaveConfirm({ action, title: current.title() })
+    setSaveConfirm(action)
     return true
   }
 
@@ -344,13 +339,12 @@ export default function App() {
       )}
       {saveConfirm && (
         <SaveConfirmDialog
-          title={saveConfirm.title}
           savedAt={saveStatus.savedAt}
           onCancel={() => setSaveConfirm(null)}
-          onDiscard={() => proceed(saveConfirm.action)}
+          onDiscard={() => proceed(saveConfirm)}
           onSave={async () => {
             const ok = await saveOpenArticle()
-            if (ok) proceed(saveConfirm.action)
+            if (ok) proceed(saveConfirm)
             return ok
           }}
         />
