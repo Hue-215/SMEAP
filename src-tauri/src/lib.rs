@@ -10,6 +10,10 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTKの<input type="date">の書式は端末のロケール(LANG・LC_ALL)に従い、jaでもen_USでも
+    // `2026-07-02`の形にはならない。ISO 8601になるen_CAを、GTKの初期化より前に設定する
+    #[cfg(all(unix, not(target_os = "android")))]
+    std::env::set_var("LC_ALL", "en_CA.UTF-8");
     // fsとdialogはRust側からだけ使う(src/export.rs・src/settings.rs)。画面に権限は与えない
     let builder =
         image_protocol::register(tauri::Builder::default()).plugin(tauri_plugin_dialog::init());

@@ -80,7 +80,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 - description: タイトルの下に置く
 - 任意の項目は、MVPではheroImageだけ入れる。項目は[astro-blog-frontmatter.md](astro-blog-frontmatter.md)を参照
 - MVPの後で、残りの任意の項目(updatedDate)を入れる。そのとき、heroImageも含めて任意の項目ごとに設定画面で有効・無効を切り替えられるようにする
-- pubDateは、説明の下に仕切り線で挟んだ行に置く。日付の入力欄にする
+- pubDateは、説明の下に仕切り線で挟んだ行に置く。日付の入力欄にし、`2026-07-02`の形で表示する
 - heroImageはタイトルと説明の右に画像で出し、押すと選び直す。未設定のときは「サムネイル未設定」と出す。右上のボタンで外せる(外すと画像のファイルも消す。本文が参照していれば残す)
 - heroImageのファイル名は`hero.{拡張子}`にし、`src/assets/{slug}/`に置く。差し替えたら上書きする
 
