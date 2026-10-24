@@ -471,26 +471,41 @@ impl Store {
             }
             return Err(error);
         }
-        if let Some(old) = old.filter(|old| {
-            // 本文が参照していれば消さない
-            old.as_str() != name
-                && !article
-                    .fields
-                    .body
-                    .contains(&format!("{}{old}", assets_ref(slug)))
-        }) {
-            // 取り込みは済んでいるので、消せなくても失敗にしない
-            let old_path = dir.join(&old);
-            if let Err(error) = fs::remove_file(&old_path) {
-                if error.kind() != io::ErrorKind::NotFound {
-                    eprintln!(
-                        "前のheroImageを消せませんでした: {}",
-                        StoreError::io(&old_path, error)
-                    );
-                }
-            }
+        if old.as_deref() != Some(name.as_str()) {
+            self.remove_hero_file(slug, old, &article.fields.body);
         }
         Ok(name)
+    }
+
+    // 使われなくなったheroImageのファイルを消す。本文が参照していれば消さない。
+    // 消せなくても失敗にしない
+    fn remove_hero_file(&self, slug: &str, old: Option<String>, body: &str) {
+        let Some(old) = old.filter(|old| !body.contains(&format!("{}{old}", assets_ref(slug))))
+        else {
+            return;
+        };
+        let old_path = self.assets_dir(slug).join(&old);
+        if let Err(error) = fs::remove_file(&old_path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "前のheroImageを消せませんでした: {}",
+                    StoreError::io(&old_path, error)
+                );
+            }
+        }
+    }
+
+    // heroImageを外す。前のファイルも消す(本文が参照していれば残す)
+    pub fn remove_hero_image(&self, slug: &str) -> Result<(), StoreError> {
+        let _guard = self.lock_guard();
+        validate_slug(slug)?;
+        let mut article = self.read_article(slug)?;
+        let Some(old) = article.fields.hero_image.take() else {
+            return Ok(());
+        };
+        self.write_md(&article)?;
+        self.remove_hero_file(slug, Some(old), &article.fields.body);
+        Ok(())
     }
 
     fn prepare_import(
@@ -2116,6 +2131,59 @@ mod tests {
         assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
         let read = store.read_article("post").unwrap();
         assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+    }
+
+    #[test]
+    fn heroを外すとmdとファイルが消える() {
+        let (_tmp, store) = setup();
+        store.create_article("remove").unwrap();
+        store.import_hero_image("remove", &png()).unwrap();
+        let md = fs::read_to_string(store.md_path("remove")).unwrap();
+        assert!(md.contains("heroImage"));
+
+        store.remove_hero_image("remove").unwrap();
+        assert!(!store.assets_dir("remove").join("hero.png").exists());
+        let md = fs::read_to_string(store.md_path("remove")).unwrap();
+        assert!(!md.contains("heroImage"));
+        let read = store.read_article("remove").unwrap();
+        assert_eq!(read.fields.hero_image, None);
+    }
+
+    #[test]
+    fn heroを外しても本文が参照しているファイルは残る() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "referenced",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/referenced/01.png\"\n---\n![表紙](../../assets/referenced/01.png)\n",
+        );
+        let dir = store.assets_dir("referenced");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("01.png"), b"old").unwrap();
+        store.remove_hero_image("referenced").unwrap();
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
+        let md = fs::read_to_string(store.md_path("referenced")).unwrap();
+        assert!(!md.contains("heroImage"));
+        let read = store.read_article("referenced").unwrap();
+        assert_eq!(read.fields.hero_image, None);
+    }
+
+    #[test]
+    fn heroの無い記事を外しても何もしない() {
+        let (_tmp, store) = setup();
+        store.create_article("no-hero").unwrap();
+        store.remove_hero_image("no-hero").unwrap();
+        let article = store.read_article("no-hero").unwrap();
+        assert_eq!(article.fields.hero_image, None);
+        // slugの検証と記事の有無も見る
+        assert!(matches!(
+            store.remove_hero_image("missing"),
+            Err(StoreError::NotFound { .. })
+        ));
+        assert!(matches!(
+            store.remove_hero_image("../x"),
+            Err(StoreError::InvalidSlug { .. })
+        ));
     }
 
     #[test]

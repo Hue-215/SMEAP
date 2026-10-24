@@ -41,6 +41,7 @@ pub fn run() {
             commands::delete_article,
             commands::import_body_image,
             commands::import_hero_image,
+            commands::remove_hero_image,
             commands::import_body_image_from_path,
             commands::import_clipboard_image,
             #[cfg(target_os = "android")]

@@ -92,6 +92,10 @@ export function importBodyImageFromPath(slug: string, path: string): Promise<str
   return invoke<string>('import_body_image_from_path', { slug, path })
 }
 
+export function removeHeroImage(slug: string): Promise<void> {
+  return invoke('remove_hero_image', { slug })
+}
+
 // クリップボードに画像が無ければnull。Linuxだけで読める
 export function importClipboardImage(slug: string): Promise<string | null> {
   return invoke<string | null>('import_clipboard_image', { slug })
@@ -117,4 +121,9 @@ export function isValidSlug(slug: string): boolean {
 export function articleImageUrl(slug: string, reference: string): string {
   const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`
   return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
+}
+
+// 差し替えても同じ名前のことがあるので、versionを変えて読み直させる。独自プロトコルはクエリを見ない
+export function heroImageUrl(slug: string, name: string, version: number): string {
+  return `${articleImageUrl(slug, `../../assets/${slug}/${name}`)}?v=${version}`
 }

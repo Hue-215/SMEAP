@@ -73,6 +73,11 @@ pub fn import_hero_image(
     store.import_hero_image(&slug, &bytes)
 }
 
+#[tauri::command(async)]
+pub fn remove_hero_image(store: State<'_, Store>, slug: String) -> Result<(), StoreError> {
+    store.remove_hero_image(&slug)
+}
+
 // ドロップしたファイル。LinuxのWebKitGTKはファイルマネージャーからのドロップを画面へファイルとして渡さないので、
 // Tauriが受けたパスから読む
 #[tauri::command(async)]

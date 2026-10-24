@@ -10,8 +10,10 @@ interface ArticleHeaderProps {
   fields: Fields
   warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
-  heroImporting: boolean
+  heroImageUrl: string | null
+  heroBusy: boolean
   onPickHeroImage: (file: File) => void
+  onRemoveHeroImage: () => void
 }
 
 function fitHeight(el: HTMLTextAreaElement) {
@@ -85,8 +87,10 @@ export default function ArticleHeader({
   fields,
   warnings,
   onChange,
-  heroImporting,
+  heroImageUrl,
+  heroBusy,
   onPickHeroImage,
+  onRemoveHeroImage,
 }: ArticleHeaderProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   return (
@@ -104,18 +108,48 @@ export default function ArticleHeader({
           </div>
         </div>
       )}
-      <OneLineField
-        className="article-title"
-        label="タイトル"
-        value={fields.title ?? ''}
-        onChange={(title) => onChange({ title })}
-      />
-      <OneLineField
-        className="article-description"
-        label="説明"
-        value={fields.description ?? ''}
-        onChange={(description) => onChange({ description })}
-      />
+      <div className="article-head">
+        <div className="article-head-text">
+          <OneLineField
+            className="article-title"
+            label="タイトル"
+            value={fields.title ?? ''}
+            onChange={(title) => onChange({ title })}
+          />
+          <OneLineField
+            className="article-description"
+            label="説明"
+            value={fields.description ?? ''}
+            onChange={(description) => onChange({ description })}
+          />
+        </div>
+        {/* ボタンの中にボタンは置けないので、入れ物で包んで外すボタンを重ねる */}
+        <div className="article-hero-box">
+          <button
+            type="button"
+            className={heroImageUrl === null ? 'article-hero empty' : 'article-hero'}
+            disabled={heroBusy}
+            onClick={() => fileInput.current?.click()}
+            aria-label={heroImageUrl === null ? undefined : 'サムネイルを差し替える'}
+            title={fields.heroImage ?? 'サムネイルを選ぶ'}
+          >
+            {heroImageUrl === null ? 'サムネイル未設定' : <img src={heroImageUrl} alt="" />}
+          </button>
+          {heroImageUrl !== null && (
+            <button
+              type="button"
+              className="article-hero-remove"
+              disabled={heroBusy}
+              onClick={onRemoveHeroImage}
+              aria-label="サムネイルを外す"
+              title="サムネイルを外す"
+            >
+              <Icon name="close" />
+            </button>
+          )}
+        </div>
+        <ImageFileInput ref={fileInput} onFiles={(files) => onPickHeroImage(files[0])} />
+      </div>
       <div className="article-meta">
         <label className="article-meta-item">
           公開日
@@ -135,25 +169,6 @@ export default function ArticleHeader({
             }}
           />
         </label>
-        <div className="article-meta-item">
-          サムネイル
-          {fields.heroImage != null && (
-            <span className="article-meta-value">{fields.heroImage}</span>
-          )}
-          <button
-            type="button"
-            className="article-meta-button"
-            disabled={heroImporting}
-            onClick={() => fileInput.current?.click()}
-          >
-            <Icon name="image" />
-            {fields.heroImage == null ? '画像を選ぶ' : '差し替える'}
-          </button>
-          <ImageFileInput
-            ref={fileInput}
-            onFiles={(files) => onPickHeroImage(files[0])}
-          />
-        </div>
       </div>
     </header>
   )

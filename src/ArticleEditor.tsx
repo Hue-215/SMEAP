@@ -13,7 +13,9 @@ import {
   importBodyImage,
   importBodyImageFromPath,
   importClipboardImage,
+  heroImageUrl,
   importHeroImage,
+  removeHeroImage,
   type Article,
   type EditedFields,
   type StoreError,
@@ -122,7 +124,8 @@ export default function ArticleEditor({
     pubDate: article.pubDate,
   }))
   // サムネイルの表示。保存の入力には含まれないので、fieldsとは別に持つ
-  const [heroImage, setHeroImage] = useState(article.heroImage)
+  const [hero, setHero] = useState({ name: article.heroImage, version: 0 })
+  const heroImage = hero.name
   // 値を変えた項目。そのkeyの警告は出さない
   const [edited, setEdited] = useState<Set<HeaderKey>>(() => new Set())
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
@@ -157,21 +160,34 @@ export default function ArticleEditor({
   const slug = article.slug
   const runImports = (imports: ImageImport[]) =>
     void importImages(slug, view, (text) => callbacks.current.onNotice(text), imports)
-
+  // 取り込みや外す操作が並んで走ると、mdと表示が別の画像を指すことがあるので、終わるまで次を受けない
   // 続けて選ぶと取り込みが並んで走り、mdと表示が別の画像を指すことがあるので、終わるまで選ばせない
-  const [heroImporting, setHeroImporting] = useState(false)
+  const [heroBusy, setHeroBusy] = useState(false)
   const pickHeroImage = async (file: File) => {
-    setHeroImporting(true)
+    setHeroBusy(true)
     try {
       const name = await importHeroImage(slug, new Uint8Array(await file.arrayBuffer()))
-      setHeroImage(name)
+      setHero((prev) => ({ name, version: prev.version + 1 }))
     } catch (e) {
       console.error('サムネイルを取り込めませんでした', file.name, e)
       callbacks.current.onNotice(
         isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした',
       )
     } finally {
-      setHeroImporting(false)
+      setHeroBusy(false)
+    }
+  }
+
+  const removeHero = async () => {
+    setHeroBusy(true)
+    try {
+      await removeHeroImage(slug)
+      setHero((prev) => ({ name: null, version: prev.version + 1 }))
+    } catch (e) {
+      console.error('サムネイルを外せませんでした', slug, e)
+      callbacks.current.onNotice('サムネイルを外せませんでした')
+    } finally {
+      setHeroBusy(false)
     }
   }
 
@@ -244,8 +260,10 @@ export default function ArticleEditor({
         fields={{ ...fields, heroImage }}
         warnings={warnings}
         onChange={updateFields}
-        heroImporting={heroImporting}
+        heroImageUrl={heroImage === null ? null : heroImageUrl(slug, heroImage, hero.version)}
+        heroBusy={heroBusy}
         onPickHeroImage={(file) => void pickHeroImage(file)}
+        onRemoveHeroImage={() => void removeHero()}
       />
       <Editor
         slug={article.slug}
