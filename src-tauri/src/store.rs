@@ -280,115 +280,67 @@ impl Store {
     pub fn list_articles(&self) -> Result<ArticleList, StoreError> {
         let posts = self.posts_dir();
         let entries = match fs::read_dir(&posts) {
-            Ok(entries) => Some(entries),
-            // まだ記事を作っていなくてpostsが無いときも、assetsの残骸を見るために続ける
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Ok(entries) => entries,
+            // まだ記事を作っていなくてpostsが無いときは空の一覧
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(ArticleList {
+                    articles: Vec::new(),
+                    broken: Vec::new(),
+                    unreadable: Vec::new(),
+                })
+            }
             Err(error) => return Err(StoreError::io(&posts, error)),
         };
 
         let mut articles = Vec::new();
         let mut broken = Vec::new();
         let mut unreadable = Vec::new();
-        if let Some(entries) = entries {
-            for entry in entries {
-                let entry = match entry {
-                    Ok(entry) => entry,
-                    Err(error) => {
-                        unreadable.push(UnreadableEntry::new(&posts, error));
-                        continue;
-                    }
-                };
-                let file_type = match entry.file_type() {
-                    Ok(file_type) => file_type,
-                    Err(error) => {
-                        unreadable.push(UnreadableEntry::new(&entry.path(), error));
-                        continue;
-                    }
-                };
-                // 記事はpostsの下の{slug}.md。それ以外の名前とディレクトリは黙って飛ばす
-                if !file_type.is_file() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    unreadable.push(UnreadableEntry::new(&posts, error));
                     continue;
                 }
-                let file_name = entry.file_name();
-                let Some(name) = file_name.to_str() else {
-                    unreadable.push(UnreadableEntry::new(
-                        &entry.path(),
-                        "ファイル名がUTF-8ではありません",
-                    ));
-                    continue;
-                };
-                let Some(stem) = name.strip_suffix(".md") else {
-                    continue;
-                };
-                if validate_slug(stem).is_err() {
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    unreadable.push(UnreadableEntry::new(&entry.path(), error));
                     continue;
                 }
-                match self.read_article(stem) {
-                    Ok(article) => articles.push(ArticleSummary {
-                        slug: article.slug,
-                        title: article.fields.title.unwrap_or_default(),
-                        pub_date: article.fields.pub_date,
-                        warning: !article.warnings.is_empty(),
-                    }),
-                    Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
-                        slug: stem.to_string(),
-                        path,
-                        reason,
-                    }),
-                    Err(error) => broken.push(BrokenArticle::new(stem, &entry.path(), error)),
-                }
+            };
+            // 記事はpostsの下の{slug}.md。それ以外の名前とディレクトリは黙って飛ばす
+            if !file_type.is_file() {
+                continue;
             }
-        }
-
-        // mdが消えてassetsだけ残っている記事を、壊れた記事として出す
-        let assets = self.root.join("src/assets");
-        let entries = match fs::read_dir(&assets) {
-            Ok(entries) => Some(entries),
-            // まだ画像を取り込んでいなくてassetsが無いとき
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => {
-                unreadable.push(UnreadableEntry::new(&assets, error));
-                None
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                unreadable.push(UnreadableEntry::new(
+                    &entry.path(),
+                    "ファイル名がUTF-8ではありません",
+                ));
+                continue;
+            };
+            let Some(stem) = name.strip_suffix(".md") else {
+                continue;
+            };
+            if validate_slug(stem).is_err() {
+                continue;
             }
-        };
-        if let Some(entries) = entries {
-            for entry in entries {
-                let entry = match entry {
-                    Ok(entry) => entry,
-                    Err(error) => {
-                        unreadable.push(UnreadableEntry::new(&assets, error));
-                        continue;
-                    }
-                };
-                let file_type = match entry.file_type() {
-                    Ok(file_type) => file_type,
-                    Err(error) => {
-                        unreadable.push(UnreadableEntry::new(&entry.path(), error));
-                        continue;
-                    }
-                };
-                // 記事の画像はこの下の{slug}/のディレクトリ。それ以外は黙って飛ばす
-                if file_type.is_file() {
-                    continue;
-                }
-                let file_name = entry.file_name();
-                let Some(name) = file_name.to_str() else {
-                    unreadable.push(UnreadableEntry::new(
-                        &entry.path(),
-                        "ファイル名がUTF-8ではありません",
-                    ));
-                    continue;
-                };
-                if validate_slug(name).is_err() {
-                    continue;
-                }
-                let md = self.md_path(name);
-                match md.try_exists() {
-                    // mdがあればMDの走査で出すので、二重に出さない
-                    Ok(true) => {}
-                    Ok(false) => broken.push(BrokenArticle::new(name, &md, "mdがありません")),
-                    Err(error) => unreadable.push(UnreadableEntry::new(&md, error)),
-                }
+            match self.read_article(stem) {
+                Ok(article) => articles.push(ArticleSummary {
+                    slug: article.slug,
+                    title: article.fields.title.unwrap_or_default(),
+                    pub_date: article.fields.pub_date,
+                    warning: !article.warnings.is_empty(),
+                }),
+                Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
+                    slug: stem.to_string(),
+                    path,
+                    reason,
+                }),
+                Err(error) => broken.push(BrokenArticle::new(stem, &entry.path(), error)),
             }
         }
 
@@ -1317,12 +1269,11 @@ mod tests {
             store.save_article(slug, input("", date)).unwrap();
         }
 
-        // 記事として扱いたくないもの
+        // 記事として扱いたくないもの。assetsの下を除くと記事以外のディレクトリがあってもよい
         let posts = store.posts_dir();
         fs::create_dir_all(posts.join("some-dir")).unwrap();
         fs::write(posts.join("Not-a-slug.md"), "").unwrap();
         fs::write(posts.join("loose-file.txt"), "").unwrap();
-        // assetsだけ残っている記事は壊れた記事として出す
         fs::create_dir_all(store.root.join("src/assets/leftover")).unwrap();
 
         let list = store.list_articles().unwrap();
@@ -1331,13 +1282,7 @@ mod tests {
             ["c-post", "a-post", "b-post", "d-post"]
         );
         assert!(list.unreadable.is_empty());
-        assert_eq!(list.broken.len(), 1);
-        assert_eq!(list.broken[0].slug, "leftover");
-        assert_eq!(list.broken[0].reason, "mdがありません");
-        assert_eq!(
-            list.broken[0].path,
-            store.md_path("leftover").display().to_string()
-        );
+        assert!(list.broken.is_empty());
     }
 
     #[test]
@@ -1350,18 +1295,18 @@ mod tests {
     }
 
     #[test]
-    fn postsが無くてもassetsだけの残骸はbrokenに入る() {
+    fn postsが無くてもassetsの下は一覧に出さない() {
         let (_tmp, store) = setup();
         fs::create_dir_all(store.assets_dir("leftover")).unwrap();
 
         let list = store.list_articles().unwrap();
         assert!(list.articles.is_empty());
-        assert_eq!(list.broken.len(), 1);
-        assert_eq!(list.broken[0].slug, "leftover");
+        assert!(list.broken.is_empty());
+        assert!(list.unreadable.is_empty());
     }
 
     #[test]
-    fn assetsだけ残っている記事は作り直せる() {
+    fn assetsだけ残っているslugへの作り直し() {
         let (_tmp, store) = setup();
         fs::create_dir_all(store.assets_dir("leftover")).unwrap();
         fs::write(store.assets_dir("leftover").join("01.png"), [1u8, 2, 3]).unwrap();
@@ -1375,21 +1320,19 @@ mod tests {
     }
 
     #[test]
-    fn assetsだけ残った記事は一覧のbrokenに入る() {
+    fn mdの無い記事は一覧に入らない() {
         let (_tmp, store) = setup();
         store.create_article("good").unwrap();
         store
             .save_article("good", input("G", "2026-01-01"))
             .unwrap();
-        store.create_article("broken").unwrap();
+        store.create_article("unlisted").unwrap();
         // mdを消してもassetsは残る
-        fs::remove_file(store.md_path("broken")).unwrap();
+        fs::remove_file(store.md_path("unlisted")).unwrap();
 
         let list = store.list_articles().unwrap();
         assert_eq!(slugs(&list.articles), ["good"]);
-        assert_eq!(list.broken.len(), 1);
-        assert_eq!(list.broken[0].slug, "broken");
-        assert_eq!(list.broken[0].reason, "mdがありません");
+        assert!(list.broken.is_empty());
     }
 
     #[test]
@@ -1403,10 +1346,9 @@ mod tests {
         // UTF-8でないmd
         store.create_article("bad-utf8").unwrap();
         fs::write(store.md_path("bad-utf8"), [0xffu8, 0xfe, b'x']).unwrap();
-        // mdが無い記事(assetsだけ)
-        fs::create_dir_all(store.assets_dir("no-md2")).unwrap();
 
-        // slugの形でない名前のassetsと、postsの下のmdでないファイルは出さない
+        // slugの形でない名前やファイルの形でないassets(記事以外が置いてある)、
+        // postsの下のmdでないファイルは出さない
         fs::create_dir_all(store.root.join("src/assets/Not-a-slug")).unwrap();
         fs::create_dir_all(store.root.join("src/assets/not_a_slug")).unwrap();
         fs::write(store.posts_dir().join("loose.txt"), "").unwrap();
@@ -1415,7 +1357,7 @@ mod tests {
         assert_eq!(slugs(&list.articles), ["good"]);
         assert!(list.unreadable.is_empty());
         let broken: Vec<&str> = list.broken.iter().map(|b| b.slug.as_str()).collect();
-        assert_eq!(broken, ["bad-utf8", "no-md2"]);
+        assert_eq!(broken, ["bad-utf8"]);
         // UTF-8の失敗はmdのパスとエラーの文字列で返る
         assert_eq!(
             list.broken[0].path,
@@ -1426,11 +1368,6 @@ mod tests {
             "{}",
             list.broken[0].reason
         );
-        assert_eq!(
-            list.broken[1].path,
-            store.md_path("no-md2").display().to_string()
-        );
-        assert_eq!(list.broken[1].reason, "mdがありません");
     }
 
     #[test]
