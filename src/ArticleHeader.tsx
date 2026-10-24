@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, type KeyboardEvent } from 'react'
-import type { Article } from './api'
+import type { Article, Warning } from './api'
 import Icon from './Icon'
 
 type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'heroImage'>
@@ -7,6 +7,7 @@ export type FieldsPatch = Partial<Omit<Fields, 'heroImage'>>
 
 interface ArticleHeaderProps {
   fields: Fields
+  warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
 }
 
@@ -77,19 +78,32 @@ function OneLineField({ className, label, value, onChange }: OneLineFieldProps) 
   )
 }
 
-export default function ArticleHeader({ fields, onChange }: ArticleHeaderProps) {
+export default function ArticleHeader({ fields, warnings, onChange }: ArticleHeaderProps) {
   return (
     <header>
+      {warnings.length > 0 && (
+        <div className="article-warnings">
+          <Icon name="warning" />
+          <div className="article-warnings-lines">
+            {warnings.map((warning, index) => (
+              <p key={index}>{warning.message}</p>
+            ))}
+            {warnings.some((warning) => warning.kept) && (
+              <p>読めなかった項目は、入力するまで元の行のまま保存します</p>
+            )}
+          </div>
+        </div>
+      )}
       <OneLineField
         className="article-title"
         label="タイトル"
-        value={fields.title}
+        value={fields.title ?? ''}
         onChange={(title) => onChange({ title })}
       />
       <OneLineField
         className="article-description"
         label="説明"
-        value={fields.description}
+        value={fields.description ?? ''}
         onChange={(description) => onChange({ description })}
       />
       <div className="article-meta">
@@ -100,13 +114,14 @@ export default function ArticleHeader({ fields, onChange }: ArticleHeaderProps) 
             type="date"
             required
             max="9999-12-31"
-            defaultValue={fields.pubDate}
+            defaultValue={fields.pubDate ?? ''}
             onChange={(e) => {
               const pubDate = e.target.value
               if (pubDate && e.target.validity.valid) onChange({ pubDate })
             }}
             onBlur={(e) => {
-              if (!e.target.value || !e.target.validity.valid) e.target.value = fields.pubDate
+              if (!e.target.value || !e.target.validity.valid)
+                e.target.value = fields.pubDate ?? ''
             }}
           />
         </label>

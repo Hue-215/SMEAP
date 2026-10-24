@@ -43,7 +43,7 @@ export default function SaveConfirmDialog({
         <h2 id={headingId} className="dialog-title">
           保存していない変更があります
         </h2>
-        <div className="save-confirm-body">
+        <div className="dialog-body">
           <p id={bodyId}>
             「{title || '無題'}」の、{since}。保存しない場合、この分の変更は消えます。
           </p>

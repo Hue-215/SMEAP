@@ -100,6 +100,31 @@ button:is(:disabled, [aria-disabled='true']) {
   color: var(--color-text-secondary);
 }
 
+/* 読めなかったフロントマターの警告(ArticleHeader.tsx)。 */
+.article-warnings {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.article-warnings .icon {
+  margin-top: 0.2em;
+}
+
+.article-warnings-lines {
+  min-width: 0;
+}
+
+.article-warnings-lines p {
+  margin: 0;
+  line-height: 1.6;
+}
+
 /* 記事のタイトル・説明・公開日・サムネイル(ArticleHeader.tsx)。 */
 .article-title,
 .article-description {
@@ -323,6 +348,7 @@ button:is(:disabled, [aria-disabled='true']) {
   padding: 0.5rem 1.25rem;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
 }
 
 /* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。 */
@@ -352,6 +378,32 @@ button:is(:disabled, [aria-disabled='true']) {
   display: block;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+.article-row-warning .icon {
+  margin-inline-start: var(--space-1);
+  vertical-align: -0.2em;
+}
+
+.article-row-broken {
+  color: var(--color-text-secondary);
+}
+
+.sidebar-unreadable {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .sidebar-footer {
@@ -421,16 +473,19 @@ button:is(:disabled, [aria-disabled='true']) {
   color: var(--color-bg);
 }
 
-.save-confirm-body {
+/* ダイアログの本文(Sidebar.tsx・SaveConfirmDialog.tsx)。slugのような区切りの無い
+   英数字の行もダイアログの幅を押し広げずに折り返す。 */
+.dialog-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   font-size: var(--font-size-sm);
   line-height: 1.7;
   color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
 }
 
-.save-confirm-body p {
+.dialog-body p {
   margin: 0;
 }
 

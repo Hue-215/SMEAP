@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listArticles, readArticle, exportZip, type Article, type ArticleFields } from './api'
+import { listArticles, readArticle, exportZip, type Article, type ArticleFields, type StoreError } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import { Drawer } from './Drawer'
@@ -50,13 +50,23 @@ export default function App() {
     listArticles()
       .then((list) => {
         if (request !== listRequest.current) return
-        if (list.broken.length > 0) console.warn('読めない記事があります', list.broken)
-        setArticles({ status: 'loaded', articles: list.articles })
+        setArticles({
+          status: 'loaded',
+          articles: list.articles,
+          broken: list.broken,
+          unreadable: list.unreadable,
+        })
       })
       .catch((e) => {
         if (request !== listRequest.current) return
         console.error('記事一覧を読めませんでした', e)
-        setArticles({ status: 'failed' })
+        const error = e as StoreError | string | undefined
+        // Tauriは種類の無いエラーを文字列で渡す
+        setArticles({
+          status: 'failed',
+          path: typeof error === 'string' ? undefined : error?.path,
+          reason: typeof error === 'string' ? error : error?.reason,
+        })
       })
   }
 
