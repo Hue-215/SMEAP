@@ -1,6 +1,6 @@
 # SMEAP 仕様メモ
 
-Astro製ブログ向けのシンプルなエディタ。MITライセンスで公開する。
+SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシンプルなエディタ。MITライセンスで公開する。
 
 ## 決まったこと
 
