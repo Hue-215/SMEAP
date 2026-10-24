@@ -597,6 +597,23 @@ impl Store {
         Ok(article)
     }
 
+    // 読めないmdの記事も消せるよう、read_articleはしない
+    pub fn delete_article(&self, slug: &str) -> Result<(), StoreError> {
+        validate_slug(slug)?;
+        let _guard = self.lock_guard();
+        let slug_dir = self.root.join(slug);
+        fs::remove_dir_all(&slug_dir)
+            .map_err(|error| StoreError::not_found_or_io(slug, &slug_dir, error))?;
+        // 保存をしたことのない記事にはバックアップが無い
+        let backup = self.backup_path(slug);
+        match fs::remove_file(&backup) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::io(&backup, error)),
+        }
+        Ok(())
+    }
+
     // 一時ファイルに書いてから置き換える。途中で落ちても既存のmdは壊れない
     fn write_md(&self, article: &Article) -> Result<(), StoreError> {
         let md = self.md_path(&article.slug);
@@ -1409,6 +1426,56 @@ mod tests {
 
         assert!(store.backup_path("new-slug").exists());
         assert!(!store.backup_path("old-slug").exists());
+    }
+
+    #[test]
+    fn 削除するとフォルダとバックアップが消える() {
+        let (_tmp, store) = setup();
+        store.create_article("del-post").unwrap();
+        store
+            .save_article("del-post", input("v2", "2026-07-01"))
+            .unwrap();
+        fs::write(store.assets_dir("del-post").join("01.png"), [1u8, 2, 3]).unwrap();
+        assert!(store.backup_path("del-post").exists());
+
+        store.delete_article("del-post").unwrap();
+        assert!(!store.root.join("del-post").exists());
+        assert!(!store.backup_path("del-post").exists());
+    }
+
+    #[test]
+    fn 読めないmdの記事も消せる() {
+        let (_tmp, store) = setup();
+        store.create_article("bad-utf8").unwrap();
+        fs::write(store.md_path("bad-utf8"), [0xffu8, 0xfe]).unwrap();
+        store.delete_article("bad-utf8").unwrap();
+        assert!(!store.root.join("bad-utf8").exists());
+
+        // mdだけが無い記事も消せる
+        store.create_article("no-md").unwrap();
+        fs::remove_file(store.md_path("no-md")).unwrap();
+        store.delete_article("no-md").unwrap();
+        assert!(!store.root.join("no-md").exists());
+    }
+
+    #[test]
+    fn 存在しない記事は消せない() {
+        let (_tmp, store) = setup();
+        assert!(matches!(
+            store.delete_article("missing"),
+            Err(StoreError::NotFound { slug }) if slug == "missing"
+        ));
+    }
+
+    #[test]
+    fn 不正なslugは消せない() {
+        let (_tmp, store) = setup();
+        for slug in ["", "../x", "A", "a_b", "a/b"] {
+            assert!(matches!(
+                store.delete_article(slug),
+                Err(StoreError::InvalidSlug { .. })
+            ));
+        }
     }
 
     #[test]

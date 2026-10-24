@@ -1,9 +1,6 @@
 import { useRef } from 'react'
 import { formatSavedTime, type SaveStatus } from './autoSave'
 import Icon from './Icon'
-import MenuButton from './MenuButton'
-import type { MenuItem } from './MenuButton'
-import { isAndroid } from './platform'
 import type { DrawerState } from './useDrawer'
 
 export interface Notice {
@@ -15,16 +12,12 @@ interface TopBarProps {
   drawer: DrawerState
   sidebarOpen: boolean
   onToggleSidebar: () => void
-  // nullなら押せない
-  onRenameSlug: (() => void) | null
-  onExportZip: (() => void) | null
   onInsertLink: (() => void) | null
   onInsertImages: ((files: File[]) => void) | null
   // nullなら出さない
   saveStatus: SaveStatus | null
   // あれば保存の状態の代わりに出す
   notice: Notice | null
-  onOpenSettings: () => void
 }
 
 function StatusText({ status, notice }: { status: SaveStatus | null; notice: Notice | null }) {
@@ -45,40 +38,13 @@ export default function TopBar({
   drawer,
   sidebarOpen,
   onToggleSidebar,
-  onRenameSlug,
-  onExportZip,
   onInsertLink,
   onInsertImages,
   saveStatus,
   notice,
-  onOpenSettings,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
-  const renameItem: MenuItem = {
-    key: 'rename-slug',
-    label: 'slugを変更',
-    icon: 'edit',
-    disabled: onRenameSlug === null,
-    onSelect: () => onRenameSlug?.(),
-  }
-  const exportZipItem: MenuItem = {
-    key: 'export-zip',
-    label: 'zipで書き出す',
-    icon: 'folder_zip',
-    disabled: onExportZip === null,
-    onSelect: () => onExportZip?.(),
-  }
-  const menuItems: MenuItem[] = [
-    renameItem,
-    ...(isAndroid ? [exportZipItem] : []),
-    {
-      key: 'settings',
-      label: '設定',
-      icon: 'settings',
-      onSelect: onOpenSettings,
-    },
-  ]
   return (
     <div role="toolbar" aria-label="編集" className="topbar">
       {drawer.narrow ? (
@@ -150,7 +116,6 @@ export default function TopBar({
           <StatusText status={saveStatus} notice={notice} />
         </>
       )}
-      <MenuButton label="その他" items={menuItems} />
     </div>
   )
 }

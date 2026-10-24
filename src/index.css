@@ -250,6 +250,11 @@ button:is(:disabled, [aria-disabled='true']) {
   background: var(--color-border);
 }
 
+/* 記事を開いていない間は、右に並ぶものが無い */
+.topbar-divider:has(+ .save-status:empty) {
+  display: none;
+}
+
 /* 保存の状態(TopBar.tsx)。狭い窓では、広い窓の.topbar-spacerの代わりに残りの幅を埋める。 */
 .save-status {
   padding-inline: var(--space-2);
@@ -267,15 +272,9 @@ button:is(:disabled, [aria-disabled='true']) {
   color: var(--color-error);
 }
 
-/* メニュー(MenuButton.tsx)。 */
-.menu {
-  position: relative;
-}
-
+/* メニュー(ContextMenu.tsx)。 */
 .menu-list {
-  position: absolute;
-  top: calc(100% + var(--space-1));
-  right: 0;
+  position: fixed;
   z-index: 1;
   width: 12.5rem;
   margin: 0;
@@ -351,7 +350,7 @@ button:is(:disabled, [aria-disabled='true']) {
   overflow-wrap: anywhere;
 }
 
-/* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。 */
+/* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。長押しでメニューを出すので文字は選ばせない。 */
 .article-row {
   display: block;
   width: 100%;
@@ -359,6 +358,19 @@ button:is(:disabled, [aria-disabled='true']) {
   padding: 0.625rem 1.25rem 0.625rem 1.0625rem;
   border-left: 3px solid transparent;
   overflow-wrap: anywhere;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.article-row:active {
+  background: var(--color-hover);
+}
+
+/* タッチの端末では、触れた後もホバーの状態が残る */
+@media (hover: hover) {
+  .article-row:hover {
+    background: var(--color-hover);
+  }
 }
 
 .narrow .article-row {

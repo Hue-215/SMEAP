@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listArticles, readArticle, exportZip, type Article, type ArticleFields, type StoreError } from './api'
+import {
+  deleteArticle,
+  listArticles,
+  readArticle,
+  exportZip,
+  type Article,
+  type ArticleFields,
+  type StoreError,
+} from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
+import DeleteConfirmDialog from './DeleteConfirmDialog'
 import { Drawer } from './Drawer'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
@@ -37,6 +46,10 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 削除を確認している記事。titleは壊れた記事ではnull
+  const [deleteTarget, setDeleteTarget] = useState<{ slug: string; title: string | null } | null>(
+    null,
+  )
   // 同じ文言が続いても出し直すよう、包んで持つ
   const [notice, setNotice] = useState<Notice | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
@@ -190,6 +203,27 @@ export default function App() {
     setSettingsOpen(true)
   }
 
+  // 消すのが開いている記事なら、未保存の変更を伴わないよう先に閉じる。未保存の変更は捨てる
+  const deleteConfirm = async () => {
+    const target = deleteTarget
+    if (!target) return false
+    if (article.status !== 'none' && article.slug === target.slug) {
+      setArticle({ status: 'none' })
+    }
+    try {
+      // 自動保存と消す処理が重ならないよう、終わってからにする
+      await whenSaved()
+      await deleteArticle(target.slug)
+      setDeleteTarget(null)
+      reloadArticles()
+      return true
+    } catch (e) {
+      console.error('記事を削除できませんでした', e)
+      reloadArticles()
+      return false
+    }
+  }
+
   const sidebar = (
     <Sidebar
       articles={articles}
@@ -200,6 +234,18 @@ export default function App() {
         openSlugDialog({ kind: 'create' })
       }}
       onSettings={openSettings}
+      onRenameSlug={(slug) => {
+        drawer.close()
+        openSlugDialog({ kind: 'rename', slug })
+      }}
+      onExportZip={(slug) => {
+        drawer.close()
+        openExportZip(slug)
+      }}
+      onDelete={(slug, title) => {
+        drawer.close()
+        setDeleteTarget({ slug, title })
+      }}
     />
   )
 
@@ -211,10 +257,17 @@ export default function App() {
   }
 
   const swipeToOpen = useSwipeToOpen(drawer)
+  // 新しい記事と、開いている記事のslugの変更は、今の記事を入れ替える。開いていない記事の
+  // slugの変更は今の記事をそのままにし、一覧の読み直しだけにする
   const onDialogDone = (a: Article) => {
     setSlugDialog(null)
     reloadArticles()
-    setArticle({ status: 'loaded', slug: a.slug, article: a })
+    const replaces =
+      slugDialog?.kind === 'create' ||
+      (slugDialog?.kind === 'rename' &&
+        article.status !== 'none' &&
+        article.slug === slugDialog.slug)
+    if (replaces) setArticle({ status: 'loaded', slug: a.slug, article: a })
   }
 
   return (
@@ -225,15 +278,10 @@ export default function App() {
           drawer={drawer}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          onRenameSlug={
-            loaded ? () => openSlugDialog({ kind: 'rename', slug: loaded.slug }) : null
-          }
-          onExportZip={loaded ? () => openExportZip(loaded.slug) : null}
           onInsertLink={loaded ? () => editor.current?.insertLink() : null}
           onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
           saveStatus={loaded ? saveStatus : null}
           notice={notice}
-          onOpenSettings={openSettings}
         />
         <div className="editor-scroll">
           <div className="editor-column">
@@ -267,6 +315,14 @@ export default function App() {
             if (ok) proceed(saveConfirm.action)
             return ok
           }}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          slug={deleteTarget.slug}
+          title={deleteTarget.title}
+          onCancel={() => setDeleteTarget(null)}
+          onDelete={deleteConfirm}
         />
       )}
       {settingsOpen && <Settings narrow={drawer.narrow} onClose={() => setSettingsOpen(false)} />}
