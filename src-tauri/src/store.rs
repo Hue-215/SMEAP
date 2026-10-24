@@ -188,7 +188,7 @@ fn is_valid_date(date: &str) -> bool {
 }
 
 // 本文とheroImageから画像を指すときの、記事ファイルからの相対パス。
-// src/content/postsとsrc/assetsの深さが同じなので、いつも2つ上でsrc/assetsに届く
+// mdがsrc/content/postsにあるので2つ上でsrcに届き、そこからassets/{slug}/を指す
 fn assets_ref(slug: &str) -> String {
     format!("../../assets/{slug}/")
 }
@@ -280,67 +280,63 @@ impl Store {
     pub fn list_articles(&self) -> Result<ArticleList, StoreError> {
         let posts = self.posts_dir();
         let entries = match fs::read_dir(&posts) {
-            Ok(entries) => entries,
-            // 記事が1つも無い(実行していない)ときは空の一覧
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(ArticleList {
-                    articles: Vec::new(),
-                    broken: Vec::new(),
-                    unreadable: Vec::new(),
-                })
-            }
+            Ok(entries) => Some(entries),
+            // まだ記事を作っていなくてpostsが無いときも、assetsの残骸を見るために続ける
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(StoreError::io(&posts, error)),
         };
 
         let mut articles = Vec::new();
         let mut broken = Vec::new();
         let mut unreadable = Vec::new();
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    unreadable.push(UnreadableEntry::new(&posts, error));
+        if let Some(entries) = entries {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        unreadable.push(UnreadableEntry::new(&posts, error));
+                        continue;
+                    }
+                };
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(error) => {
+                        unreadable.push(UnreadableEntry::new(&entry.path(), error));
+                        continue;
+                    }
+                };
+                // 記事はpostsの下の{slug}.md。それ以外の名前とディレクトリは黙って飛ばす
+                if !file_type.is_file() {
                     continue;
                 }
-            };
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(error) => {
-                    unreadable.push(UnreadableEntry::new(&entry.path(), error));
+                let file_name = entry.file_name();
+                let Some(name) = file_name.to_str() else {
+                    unreadable.push(UnreadableEntry::new(
+                        &entry.path(),
+                        "ファイル名がUTF-8ではありません",
+                    ));
+                    continue;
+                };
+                let Some(stem) = name.strip_suffix(".md") else {
+                    continue;
+                };
+                if validate_slug(stem).is_err() {
                     continue;
                 }
-            };
-            // 記事はpostsの下の{slug}.md。それ以外の名前とディレクトリは黙って飛ばす
-            if !file_type.is_file() {
-                continue;
-            }
-            let file_name = entry.file_name();
-            let Some(name) = file_name.to_str() else {
-                unreadable.push(UnreadableEntry::new(
-                    &entry.path(),
-                    "ファイル名がUTF-8ではありません",
-                ));
-                continue;
-            };
-            let Some(stem) = name.strip_suffix(".md") else {
-                continue;
-            };
-            if validate_slug(stem).is_err() {
-                continue;
-            }
-            match self.read_article(stem) {
-                Ok(article) => articles.push(ArticleSummary {
-                    slug: article.slug,
-                    title: article.fields.title.unwrap_or_default(),
-                    pub_date: article.fields.pub_date,
-                    warning: !article.warnings.is_empty(),
-                }),
-                Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
-                    slug: stem.to_string(),
-                    path,
-                    reason,
-                }),
-                Err(error) => broken.push(BrokenArticle::new(stem, &entry.path(), error)),
+                match self.read_article(stem) {
+                    Ok(article) => articles.push(ArticleSummary {
+                        slug: article.slug,
+                        title: article.fields.title.unwrap_or_default(),
+                        pub_date: article.fields.pub_date,
+                        warning: !article.warnings.is_empty(),
+                    }),
+                    Err(StoreError::Io { path, reason }) => broken.push(BrokenArticle {
+                        slug: stem.to_string(),
+                        path,
+                        reason,
+                    }),
+                    Err(error) => broken.push(BrokenArticle::new(stem, &entry.path(), error)),
+                }
             }
         }
 
@@ -348,7 +344,7 @@ impl Store {
         let assets = self.root.join("src/assets");
         let entries = match fs::read_dir(&assets) {
             Ok(entries) => Some(entries),
-            // assetsの無い記事しか無いとき
+            // まだ画像を取り込んでいなくてassetsが無いとき
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => {
                 unreadable.push(UnreadableEntry::new(&assets, error));
@@ -371,6 +367,7 @@ impl Store {
                         continue;
                     }
                 };
+                // 記事の画像はこの下の{slug}/のディレクトリ。それ以外は黙って飛ばす
                 if file_type.is_file() {
                     continue;
                 }
@@ -411,7 +408,7 @@ impl Store {
     pub fn create_article(&self, slug: &str) -> Result<Article, StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
-        // 並んだ呼び出しではmdの作成で競合を見るより、先に存在を確かめる
+        // 並んだ呼び出しでもpersistは上書きで競合が見えないので、先に存在を確かめる
         let md = self.md_path(slug);
         match md.try_exists() {
             Ok(true) => {
@@ -648,7 +645,7 @@ impl Store {
         // 保存をしたことのない記事にはバックアップが無い
         let backup = self.backup_path(slug);
         remove_ignoring_not_found(&backup, || fs::remove_file(&backup))?;
-        // mdはファイル、assetsはディレクトリ。いずれかだけ残っている記事もある
+        // いずれかだけ残っている記事もある
         let md = self.md_path(slug);
         remove_ignoring_not_found(&md, || fs::remove_file(&md))?;
         let assets = self.assets_dir(slug);
@@ -1308,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn 一覧は新しい順で不正なディレクトリを除く() {
+    fn 一覧は新しい順で記事でないものを除く() {
         let (_tmp, store) = setup();
         for (slug, date) in [
             ("a-post", "2026-01-01"),
@@ -1350,6 +1347,31 @@ mod tests {
         assert!(list.articles.is_empty());
         assert!(list.broken.is_empty());
         assert!(list.unreadable.is_empty());
+    }
+
+    #[test]
+    fn postsが無くてもassetsだけの残骸はbrokenに入る() {
+        let (_tmp, store) = setup();
+        fs::create_dir_all(store.assets_dir("leftover")).unwrap();
+
+        let list = store.list_articles().unwrap();
+        assert!(list.articles.is_empty());
+        assert_eq!(list.broken.len(), 1);
+        assert_eq!(list.broken[0].slug, "leftover");
+    }
+
+    #[test]
+    fn assetsだけ残っている記事は作り直せる() {
+        let (_tmp, store) = setup();
+        fs::create_dir_all(store.assets_dir("leftover")).unwrap();
+        fs::write(store.assets_dir("leftover").join("01.png"), [1u8, 2, 3]).unwrap();
+
+        store.create_article("leftover").unwrap();
+        let list = store.list_articles().unwrap();
+        assert_eq!(slugs(&list.articles), ["leftover"]);
+        assert!(list.broken.is_empty());
+        // 残っていた画像は作り直しで消さない
+        assert!(store.assets_dir("leftover").join("01.png").exists());
     }
 
     #[test]
@@ -2439,10 +2461,7 @@ mod tests {
 
         let dest = store.root.parent().unwrap().join("fresh.zip");
         store.write_zip("fresh", &dest).unwrap();
-        assert_eq!(
-            zip_names(&dest),
-            ["src/content/posts/fresh.md".to_string()]
-        );
+        assert_eq!(zip_names(&dest), ["src/content/posts/fresh.md".to_string()]);
     }
 
     #[test]
@@ -2488,10 +2507,7 @@ mod tests {
 
         let dest = store.root.parent().unwrap().join("post.zip");
         store.write_zip("post", &dest).unwrap();
-        assert_eq!(
-            zip_names(&dest),
-            ["src/content/posts/post.md".to_string()]
-        );
+        assert_eq!(zip_names(&dest), ["src/content/posts/post.md".to_string()]);
     }
 
     #[test]
