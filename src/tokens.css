@@ -29,7 +29,7 @@
   /* 色。ライトの値。ダークの値は下のprefers-color-schemeで替える。アクセント色は線と印に
      だけ使い、文字の色にはしない(docs/spec.md「見た目」)。 */
   --color-bg: #fafafa;
-  --color-text: #0a1526,;
+  --color-text: #0a1526;
   --color-text-secondary: #5a6a80;
   --color-border: #e0e0e0;
   --color-hover: #eeeeee;
