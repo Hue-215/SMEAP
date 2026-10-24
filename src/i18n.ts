@@ -1,7 +1,6 @@
 import ja from '../lang/ja.json'
 
-// 画面の文言を言語ファイル(lang/*.json)から引く。キーは`画面.要素`のドット区切りで、入れ子にしない。
-// 差し込む値は`{名前}`で書き、`{`・`}`は文言そのものには使わない。
+// 決まりはdocs/spec.md。文言の中の`{英数字}`は差し込む値として読まれる
 
 export type MessageKey = keyof typeof ja
 

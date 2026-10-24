@@ -37,7 +37,6 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
   const text = texts[mode.kind]
   const currentSlug = mode.kind === 'rename' ? mode.slug : null
   const [value, setValue] = useState(currentSlug ?? '')
-  // 送信の失敗の文言
   const [failure, setFailure] = useState<MessageKey | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -60,7 +59,7 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
     const request = mode.kind === 'create' ? createArticle(value) : renameArticle(mode.slug, value)
     request.then(onDone, (err) => {
       setSubmitting(false)
-      console.error('Failed to set the slug', mode.kind, err)
+      console.error('Failed to set the slug', mode.kind, value, err)
       const kind = (err as StoreError | undefined)?.kind
       setFailure((kind ? failureMessages.get(kind) : undefined) ?? text.failed)
     })

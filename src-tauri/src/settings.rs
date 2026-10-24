@@ -81,7 +81,7 @@ fn save(app: &AppHandle, settings: &Settings) -> Result<(), StoreError> {
 }
 
 fn save_to(file: &Path, settings: &Settings) -> Result<(), StoreError> {
-    let dir = file.parent().expect("settings.json has a parent directory");
+    let dir = file.parent().expect("settings.json should have a parent directory");
     fs::create_dir_all(dir).map_err(|error| StoreError::io(dir, error))?;
     let json = serde_json::to_string(settings).map_err(|error| StoreError::io(file, error))?;
     write_temp(dir, json.as_bytes())?

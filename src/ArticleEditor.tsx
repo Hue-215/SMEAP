@@ -176,9 +176,8 @@ export default function ArticleEditor({
       const name = await run()
       setHero((prev) => ({ name, version: prev.version + 1 }))
     } catch (e) {
-      const text = failed(e)
-      console.error(text, subject, e)
-      callbacks.current.onNotice(text)
+      console.error('Failed to change the hero image', subject, e)
+      callbacks.current.onNotice(failed(e))
     } finally {
       setHeroBusy(false)
     }

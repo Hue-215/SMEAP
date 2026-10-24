@@ -29,7 +29,7 @@ fn response_for<R: Runtime>(app: &tauri::AppHandle<R>, path: &str) -> Response<V
             .header("Content-Type", content_type)
             .header("Cache-Control", "no-store")
             .body(data)
-            .expect("a response can be built with the fixed headers"),
+            .expect("a response with the fixed headers should build"),
         Err(
             StoreError::ImageNotFound { .. }
             | StoreError::InvalidSlug { .. }
@@ -70,7 +70,7 @@ fn empty(status: StatusCode) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)
         .body(Vec::new())
-        .expect("a response without a body can be built")
+        .expect("a response without a body should build")
 }
 
 #[cfg(test)]
