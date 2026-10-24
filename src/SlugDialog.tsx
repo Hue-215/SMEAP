@@ -12,9 +12,7 @@ interface SlugDialogProps {
   onCancel: () => void
 }
 
-const invalidSlugKey: MessageKey = 'slug_dialog.invalid'
-
-const texts: Record<SlugDialogMode['kind'], Record<'title' | 'submit' | 'hint' | 'failed', MessageKey>> = {
+const texts = {
   create: {
     title: 'slug_dialog.create_title',
     submit: 'slug_dialog.create_submit',
@@ -27,11 +25,11 @@ const texts: Record<SlugDialogMode['kind'], Record<'title' | 'submit' | 'hint' |
     hint: 'slug_dialog.rename_hint',
     failed: 'common.change_failed',
   },
-}
+} satisfies Record<SlugDialogMode['kind'], Record<string, MessageKey>>
 
 const failureMessages = new Map<string, MessageKey>([
   ['alreadyExists', 'slug_dialog.already_exists'],
-  ['invalidSlug', invalidSlugKey],
+  ['invalidSlug', 'slug_dialog.invalid'],
   ['notFound', 'slug_dialog.not_found'],
 ])
 
@@ -51,7 +49,7 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
     inputRef.current?.select()
   }, [])
 
-  const error = failure ?? (value !== '' && !isValidSlug(value) ? invalidSlugKey : null)
+  const error = failure ?? (value !== '' && !isValidSlug(value) ? 'slug_dialog.invalid' : null)
   const submitDisabled = submitting || !isValidSlug(value) || value === currentSlug
   const shownSlug = value || '{slug}'
 
@@ -105,7 +103,7 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
             aria-live="polite"
             className={error !== null ? 'slug-dialog-hint error' : 'slug-dialog-hint'}
           >
-            {error === null ? t(text.hint) : t(error)}
+            {t(error ?? text.hint)}
           </p>
           {destination !== null && (
             <p className="slug-dialog-destination">

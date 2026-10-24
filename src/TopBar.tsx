@@ -46,7 +46,7 @@ export default function TopBar({
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const closes = !drawer.narrow && drawer.expanded
-  const sidebarLabel = closes ? t('topbar.close_sidebar') : t('topbar.open_sidebar')
+  const sidebarLabel = t(closes ? 'topbar.close_sidebar' : 'topbar.open_sidebar')
   const shown = statusNotice(saveStatus, notice)
   return (
     <div role="toolbar" aria-label={t('topbar.toolbar_label')} className="topbar">

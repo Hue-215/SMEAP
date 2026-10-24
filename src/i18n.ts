@@ -11,7 +11,6 @@ const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g
 
 export function t(key: MessageKey, params: Record<string, string | number> = {}): string {
   const text = messages[key] ?? key
-  if (!text.includes('{')) return text
   // 1回の走査で置き換えるので、差し込んだ値の中の`{名前}`は置き換えない
   return text.replace(PLACEHOLDER, (match, name: string) => {
     const value = params[name]
