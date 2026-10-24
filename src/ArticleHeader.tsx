@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { Article, Warning } from './api'
 import Icon from './Icon'
+import { t } from './i18n'
 import ImageFileInput from './ImageFileInput'
 
 type Fields = Pick<Article, 'title' | 'description' | 'pubDate'>
@@ -105,7 +106,7 @@ export default function ArticleHeader({
               <p key={index}>{warning.message}</p>
             ))}
             {warnings.some((warning) => warning.kept) && (
-              <p>読めなかった項目は、入力するまで元の行のまま保存します</p>
+              <p>{t('article_header.kept_note')}</p>
             )}
           </div>
         </div>
@@ -114,13 +115,13 @@ export default function ArticleHeader({
         <div className="article-head-text">
           <OneLineField
             className="article-title"
-            label="タイトル"
+            label={t('article_header.title')}
             value={fields.title ?? ''}
             onChange={(title) => onChange({ title })}
           />
           <OneLineField
             className="article-description"
-            label="説明"
+            label={t('article_header.description')}
             value={fields.description ?? ''}
             onChange={(description) => onChange({ description })}
           />
@@ -132,13 +133,13 @@ export default function ArticleHeader({
             className={hero === null ? 'article-hero empty' : 'article-hero'}
             disabled={heroBusy}
             onClick={() => fileInput.current?.click()}
-            aria-label={hero === null ? undefined : 'サムネイルを差し替える'}
-            title={hero?.name ?? 'サムネイルを選ぶ'}
+            aria-label={hero === null ? undefined : t('article_header.hero_replace')}
+            title={hero?.name ?? t('article_header.hero_pick')}
           >
             {hero === null ? (
-              'サムネイル未設定'
+              t('article_header.hero_none')
             ) : brokenUrl === hero.url ? (
-              'サムネイルを読めません'
+              t('article_header.hero_unreadable')
             ) : (
               <img src={hero.url} alt="" onError={() => setBrokenUrl(hero.url)} />
             )}
@@ -149,8 +150,8 @@ export default function ArticleHeader({
               className="icon-button article-hero-remove"
               disabled={heroBusy}
               onClick={onRemoveHeroImage}
-              aria-label="サムネイルを外す"
-              title="サムネイルを外す"
+              aria-label={t('article_header.hero_remove')}
+              title={t('article_header.hero_remove')}
             >
               <Icon name="close" />
             </button>
@@ -160,7 +161,7 @@ export default function ArticleHeader({
       </div>
       <div className="article-meta">
         <label className="article-meta-item">
-          公開日
+          {t('article_header.pub_date')}
           {/* 入力途中の日付は値が空になるので制御しない。記事を切り替えたらApp.tsxのkeyで作り直す */}
           <input
             type="date"

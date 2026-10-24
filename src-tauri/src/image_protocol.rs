@@ -29,14 +29,14 @@ fn response_for<R: Runtime>(app: &tauri::AppHandle<R>, path: &str) -> Response<V
             .header("Content-Type", content_type)
             .header("Cache-Control", "no-store")
             .body(data)
-            .expect("固定のヘッダーでレスポンスを作れる"),
+            .expect("a response with the fixed headers should build"),
         Err(
             StoreError::ImageNotFound { .. }
             | StoreError::InvalidSlug { .. }
             | StoreError::InvalidImageReference { .. },
         ) => empty(StatusCode::NOT_FOUND),
         Err(error) => {
-            eprintln!("画像を読めませんでした: {error}");
+            eprintln!("Failed to read an image: {error}");
             empty(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -70,7 +70,7 @@ fn empty(status: StatusCode) -> Response<Vec<u8>> {
     Response::builder()
         .status(status)
         .body(Vec::new())
-        .expect("本文の無いレスポンスを作れる")
+        .expect("a response without a body should build")
 }
 
 #[cfg(test)]

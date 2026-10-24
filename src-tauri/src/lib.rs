@@ -23,7 +23,7 @@ pub fn run() {
             #[cfg(not(target_os = "android"))]
             let store = {
                 let exe = std::env::current_exe()?;
-                let exe_dir = exe.parent().ok_or("実行ファイルの親ディレクトリが無い")?;
+                let exe_dir = exe.parent().ok_or("the executable has no parent directory")?;
                 let default_dir = exe_dir.join("src/content/posts");
                 // 設定のディレクトリが使えなくても起動は止めない
                 match settings
@@ -32,7 +32,7 @@ pub fn run() {
                 {
                     Some(Ok(store)) => store,
                     Some(Err(error)) => {
-                        eprintln!("設定の記事のディレクトリを使えません: {error}");
+                        eprintln!("Failed to use the configured article directory: {error}");
                         store::Store::new(default_dir, backup_root)?
                     }
                     None => store::Store::new(default_dir, backup_root)?,

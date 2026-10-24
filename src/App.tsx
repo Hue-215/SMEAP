@@ -19,6 +19,7 @@ import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
+import { t } from './i18n'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
 import Settings from './Settings'
@@ -80,7 +81,7 @@ export default function App() {
       })
       .catch((e) => {
         if (request !== listRequest.current) return
-        console.error('記事一覧を読めませんでした', e)
+        console.error('Failed to load the article list', e)
         const error = e as StoreError | string | undefined
         // Tauriは種類の無いエラーを文字列で渡す
         setArticles({
@@ -96,11 +97,11 @@ export default function App() {
     if (isAndroid) {
       getPostsDirName()
         .then((name) => setPostsDir({ kind: 'android', name }))
-        .catch((e) => console.error('記事のディレクトリを読めませんでした', e))
+        .catch((e) => console.error('Failed to read the article directory', e))
     } else {
       getPostsDir()
         .then((location) => setPostsDir({ kind: 'desktop', ...location }))
-        .catch((e) => console.error('記事のディレクトリを読めませんでした', e))
+        .catch((e) => console.error('Failed to read the article directory', e))
     }
   }, [])
 
@@ -121,7 +122,7 @@ export default function App() {
       .then(() => readArticle(slug))
       .then((loaded) => settle({ status: 'loaded', slug, article: loaded }))
       .catch((e) => {
-        console.error('記事を読めませんでした', e)
+        console.error('Failed to read the article', e)
         settle({ status: 'failed', slug })
       })
   }
@@ -147,7 +148,7 @@ export default function App() {
   const proceed = (action: PendingAction) => {
     setSaveConfirm(null)
     if (action.kind === 'switch') openArticle(action.slug)
-    else getCurrentWindow().destroy().catch((e) => console.error('ウィンドウを閉じられませんでした', e))
+    else getCurrentWindow().destroy().catch((e) => console.error('Failed to close the window', e))
   }
 
   useEffect(() => {
@@ -163,7 +164,7 @@ export default function App() {
         if (disposed) fn()
         else unlisten = fn
       })
-      .catch((e) => console.error('ウィンドウを閉じる操作を受けられません', e))
+      .catch((e) => console.error('Failed to handle the window close request', e))
     return () => {
       disposed = true
       unlisten?.()
@@ -195,26 +196,26 @@ export default function App() {
         const outcome = await exportZip(slug)
         switch (outcome.kind) {
           case 'saved':
-            setNotice({ text: 'zipを書き出しました', error: false })
+            setNotice({ text: t('app.export_done'), error: false })
             break
           case 'cancelled':
             break
           case 'leftIncomplete':
-            console.error('zipを書き写せませんでした', outcome.reason)
+            console.error('Failed to copy the zip file', outcome.reason)
             setNotice({
-              text: '書き出しが途中で止まりました。保存先のファイルを消してください',
+              text: t('app.export_incomplete'),
               error: true,
             })
             break
           default: {
             const unknown: never = outcome
-            console.error('書き出しの結果が分かりません', unknown)
+            console.error('Unknown export result', unknown)
           }
         }
       })
       .catch((e) => {
-        console.error('zipを書き出せませんでした', e)
-        setNotice({ text: 'zipを書き出せませんでした', error: true })
+        console.error('Failed to export the zip file', e)
+        setNotice({ text: t('app.export_failed'), error: true })
       })
       .finally(() => {
         exporting.current = false
@@ -253,7 +254,7 @@ export default function App() {
       setDeleteTarget(null)
       return true
     } catch (e) {
-      console.error('記事を削除できませんでした', slug, e)
+      console.error('Failed to delete the article', slug, e)
       return false
     } finally {
       reloadArticles()
@@ -328,7 +329,7 @@ export default function App() {
                 onNotice={(text) => setNotice({ text, error: true })}
               />
             ) : article.status === 'failed' ? (
-              <p className="editor-message">記事を読めませんでした</p>
+              <p className="editor-message">{t('app.article_load_failed')}</p>
             ) : null}
           </div>
         </div>
@@ -356,16 +357,18 @@ export default function App() {
       )}
       {deleteTarget && (
         <ConfirmDialog
-          title="記事を削除しますか"
-          confirmLabel="削除する"
-          failedText="削除できませんでした"
+          title={t('app.delete_title')}
+          confirmLabel={t('app.delete_confirm')}
+          failedText={t('app.delete_failed')}
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => deleteConfirmed(deleteTarget)}
         >
           {deleteTarget.kind === 'broken'
-            ? deleteTarget.slug
-            : `「${deleteTarget.title || '無題'}」(${deleteTarget.slug})`}
-          を削除します。画像とバックアップも消え、元に戻せません。
+            ? t('app.delete_message_broken', { slug: deleteTarget.slug })
+            : t('app.delete_message', {
+                title: deleteTarget.title || t('common.untitled'),
+                slug: deleteTarget.slug,
+              })}
         </ConfirmDialog>
       )}
       {settingsOpen && (

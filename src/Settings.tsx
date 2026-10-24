@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 import { UnsavedArticleError, type PostsDir, type StoreError } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
+import { t } from './i18n'
 import { isAndroid } from './platform'
 import type { License } from 'virtual:licenses'
 
@@ -61,10 +62,10 @@ export default function Settings({
   }
 
   const [heading, backLabel] = shown
-    ? [shown.title, '一覧に戻る']
+    ? [shown.title, t('settings.back_to_licenses')]
     : page === 'list'
-      ? ['オープンソースライセンス', '設定に戻る']
-      : ['設定', '編集画面に戻る']
+      ? [t('settings.licenses'), t('settings.back_to_settings')]
+      : [t('settings.title'), t('settings.back_to_editor')]
 
   return (
     <Dialog labelledBy={headingId} onCancel={back} className="settings-dialog">
@@ -87,7 +88,7 @@ export default function Settings({
           <div className="settings-content">
             {page === 'top' ? (
               <>
-                <h2 className="settings-h2">記事の保存先</h2>
+                <h2 className="settings-h2">{t('settings.posts_location')}</h2>
                 {isAndroid ? (
                   postsDir?.kind === 'android' && (
                     <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
@@ -95,7 +96,7 @@ export default function Settings({
                 ) : (
                   <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
                 )}
-                <h2 className="settings-h2">このアプリについて</h2>
+                <h2 className="settings-h2">{t('settings.about')}</h2>
                 <div className="settings-rows">
                   <div className="settings-row">
                     <span className="settings-row-name">SMEAP</span>
@@ -103,8 +104,8 @@ export default function Settings({
                   </div>
                   <button type="button" className="settings-row" onClick={() => setPage('list')}>
                     <span className="settings-row-main">
-                      オープンソースライセンス
-                      <span className="settings-note">使っているライブラリ・フォントとライセンス文</span>
+                      {t('settings.licenses')}
+                      <span className="settings-note">{t('settings.licenses_note')}</span>
                     </span>
                     <Icon name="chevron_right" />
                   </button>
@@ -143,13 +144,13 @@ function PostsDirRow({
     try {
       await onPick()
     } catch (e) {
-      console.error('記事のディレクトリを変えられませんでした', e)
+      console.error('Failed to change the article directory', e)
       setFailure(
         (e as StoreError | undefined)?.kind === 'invalidPostsDir'
-          ? 'このディレクトリは記事の保存先に使えません'
+          ? t('settings.invalid_posts_dir')
           : e instanceof UnsavedArticleError
-            ? '開いている記事を保存できませんでした'
-            : '変更できませんでした',
+            ? t('settings.unsaved_article')
+            : t('common.change_failed'),
       )
     } finally {
       setBusy(false)
@@ -161,12 +162,14 @@ function PostsDirRow({
       <div className="settings-rows">
         <button type="button" className="settings-row" onClick={pick} disabled={busy}>
           <span className="settings-row-main">
-            記事のディレクトリ
+            {t('settings.posts_dir')}
             <span className="settings-note posts-dir-note">
               {dirs && (
                 <>
-                  <span>記事: {dirs.postsDir}</span>
-                  <span>画像: {dirs.assetsDir}/{'{slug}'}/</span>
+                  <span>{t('settings.posts_dir_posts', { path: dirs.postsDir })}</span>
+                  <span>
+                    {t('settings.posts_dir_assets', { path: `${dirs.assetsDir}/{slug}/` })}
+                  </span>
                 </>
               )}
             </span>
@@ -200,11 +203,11 @@ function PostsDirNameRow({
       await onChange(name)
       setValue(name)
     } catch (e) {
-      console.error('記事のディレクトリ名を変えられませんでした', e)
+      console.error('Failed to change the article directory name', e)
       setFailure(
         (e as StoreError | undefined)?.kind === 'invalidPostsDirName'
-          ? 'ディレクトリ名に使えません'
-          : '変更できませんでした',
+          ? t('settings.invalid_posts_dir_name')
+          : t('common.change_failed'),
       )
     } finally {
       setBusy(false)
@@ -216,7 +219,7 @@ function PostsDirNameRow({
       <div className="settings-rows">
         <div className="settings-row">
           <span className="settings-row-main">
-            <label htmlFor={inputId}>記事のディレクトリ名</label>
+            <label htmlFor={inputId}>{t('settings.posts_dir_name')}</label>
             <span className="settings-note posts-dir-name">
               <span>src/content/</span>
               <input
@@ -255,7 +258,7 @@ function LicenseList({ narrow, onShow }: { narrow: boolean; onShow: (shown: Show
     import('virtual:licenses')
       .then((mod) => setLicenses(mod.default))
       .catch((e) => {
-        console.error('ライセンスの一覧を読めませんでした', e)
+        console.error('Failed to load the license list', e)
         setLicenses('failed')
       })
   }, [])
@@ -270,7 +273,7 @@ function LicenseList({ narrow, onShow }: { narrow: boolean; onShow: (shown: Show
     return duplicated
   }, [licenses])
 
-  if (licenses === 'failed') return <p className="editor-message">ライセンスの一覧を読めませんでした</p>
+  if (licenses === 'failed') return <p className="editor-message">{t('settings.licenses_load_failed')}</p>
   if (licenses === null) return null
 
   const query = filter.toLowerCase()
@@ -289,12 +292,12 @@ function LicenseList({ narrow, onShow }: { narrow: boolean; onShow: (shown: Show
         <Icon name="search" />
         <input
           value={filter}
-          aria-label="パッケージ名で絞り込む"
-          placeholder="パッケージ名で絞り込む"
+          aria-label={t('settings.licenses_filter')}
+          placeholder={t('settings.licenses_filter')}
           onChange={(e) => setFilter(e.target.value)}
         />
       </label>
-      <p className="settings-count settings-note">{rows.length}件</p>
+      <p className="settings-count settings-note">{t('settings.licenses_count', { count: rows.length })}</p>
       <div className="settings-rows">
         {rows.map((license) => {
           const key = `${license.name}@${license.version}`

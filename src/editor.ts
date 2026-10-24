@@ -38,6 +38,7 @@ import {
   type Range,
 } from '@codemirror/state'
 import { articleImageUrl } from './api'
+import { t } from './i18n'
 
 // ベースの"Link/... Image/...": tags.linkは記号とURLにも下線を引き継ぐ。リンクは文字の部分にだけ
 // 下線を付け(リンク内の太字などには付かない)、画像は記法全体を灰色にする。
@@ -177,7 +178,7 @@ class ImageWidget extends WidgetType {
       img.remove()
       const message = document.createElement('span')
       message.className = 'cm-image-error'
-      message.textContent = `画像を読めません: ${this.reference}`
+      message.textContent = t('editor.image_unreadable', { reference: this.reference })
       wrap.appendChild(message)
     })
     wrap.appendChild(img)
@@ -298,7 +299,7 @@ export function editorExtensions(
     keymap.of([...defaultKeymap, ...historyKeymap]),
     drawSelection(),
     EditorView.lineWrapping,
-    EditorView.contentAttributes.of({ 'aria-label': '本文' }),
+    EditorView.contentAttributes.of({ 'aria-label': t('editor.body_label') }),
     markdown({ base: commonmarkLanguage, extensions: [GFM, urlTags] }),
     syntaxHighlighting(highlight),
     headingLine,

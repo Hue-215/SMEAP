@@ -25,6 +25,7 @@ import ArticleHeader, { type FieldsPatch } from './ArticleHeader'
 import { AutoSaver, type SaveStatus } from './autoSave'
 import Editor from './Editor'
 import { insertImageRefs, insertLink } from './editor'
+import { t } from './i18n'
 import { isAndroid } from './platform'
 
 export interface ArticleEditorHandle {
@@ -67,7 +68,7 @@ const fromPath = (path: string): ImageImport => ({
   run: (slug) => importBodyImageFromPath(slug, path),
 })
 
-const fromClipboard: ImageImport = { label: 'クリップボード', run: importClipboardImage }
+const fromClipboard: ImageImport = { label: 'clipboard', run: importClipboardImage }
 
 const isUnsupportedImage = (e: unknown) =>
   (e as StoreError | undefined)?.kind === 'unsupportedImage'
@@ -87,7 +88,7 @@ async function importImages(
       const ref = await image.run(slug)
       if (ref !== null) refs.push(ref)
     } catch (e) {
-      console.error('画像を取り込めませんでした', image.label, e)
+      console.error('Failed to import the image', image.label, e)
       if (isUnsupportedImage(e)) unsupported++
       else failed++
     }
@@ -95,17 +96,17 @@ async function importImages(
   if (refs.length > 0) {
     // 取り込みの間に記事を切り替えると、編集欄はもう無い。取り込んだ画像は参照されないまま残る
     if (view.current) insertImageRefs(view.current, refs)
-    else console.error('取り込んだ画像を本文に入れられませんでした', slug, refs)
+    else console.error('Failed to insert the imported images into the body', slug, refs)
   }
-  if (failed > 0) onNotice(`${failed + unsupported}枚の画像を取り込めませんでした`)
-  else if (unsupported > 0) onNotice(`${unsupported}枚は使えない形式です`)
+  if (failed > 0) onNotice(t('article_editor.images_failed', { count: failed + unsupported }))
+  else if (unsupported > 0) onNotice(t('article_editor.images_unsupported', { count: unsupported }))
 }
 
 function readFields(
   latest: RefObject<HeaderFields>,
   view: RefObject<EditorView | null>,
 ): EditedFields {
-  if (!view.current) throw new Error('本文の編集欄が無い')
+  if (!view.current) throw new Error('The body editor is missing')
   return { ...latest.current, body: view.current.state.doc.toString() }
 }
 
@@ -171,13 +172,12 @@ export default function ArticleEditor({
     setHeroBusy(true)
     try {
       // 前の画像を消すかはmdの本文が参照しているかで決めるので、本文の変更を先に保存する
-      if (!(await saver.save())) throw new Error('記事を保存できませんでした')
+      if (!(await saver.save())) throw new Error('Failed to save the article')
       const name = await run()
       setHero((prev) => ({ name, version: prev.version + 1 }))
     } catch (e) {
-      const text = failed(e)
-      console.error(text, subject, e)
-      callbacks.current.onNotice(text)
+      console.error('Failed to change the hero image', subject, e)
+      callbacks.current.onNotice(failed(e))
     } finally {
       setHeroBusy(false)
     }
@@ -186,7 +186,7 @@ export default function ArticleEditor({
   const pickHeroImage = (file: File) =>
     void changeHero(
       async () => importHeroImage(slug, new Uint8Array(await file.arrayBuffer())),
-      (e) => (isUnsupportedImage(e) ? '使えない形式です' : 'サムネイルを取り込めませんでした'),
+      (e) => t(isUnsupportedImage(e) ? 'article_editor.hero_unsupported' : 'article_editor.hero_import_failed'),
       file.name,
     )
 
@@ -196,7 +196,7 @@ export default function ArticleEditor({
         await removeHeroImage(slug)
         return null
       },
-      () => 'サムネイルを外せませんでした',
+      () => t('article_editor.hero_remove_failed'),
       slug,
     )
 
@@ -226,7 +226,7 @@ export default function ArticleEditor({
         if (disposed) fn()
         else unlisten = fn
       })
-      .catch((e) => console.error('ドロップを受けられません', e))
+      .catch((e) => console.error('Failed to handle the drop', e))
     return () => {
       disposed = true
       unlisten?.()

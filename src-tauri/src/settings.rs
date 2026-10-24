@@ -48,14 +48,14 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, StoreError> {
 // 読めなくても起動は止めず、既定の設定で始める
 pub fn load(app: &AppHandle) -> Settings {
     let settings = read(app).unwrap_or_else(|error| {
-        eprintln!("設定を読めませんでした: {error}");
+        eprintln!("Failed to read settings: {error}");
         Settings::default()
     });
     // 検証を通らない名前が残っていたら、無かったものとして扱う
     #[cfg(target_os = "android")]
     let settings = match &settings.posts_dir_name {
         Some(name) if crate::store::validate_posts_dir_name(name).is_err() => {
-            eprintln!("設定のディレクトリ名が不正です: {name}");
+            eprintln!("Invalid directory name in settings: {name}");
             Settings::default()
         }
         _ => settings,
@@ -81,7 +81,7 @@ fn save(app: &AppHandle, settings: &Settings) -> Result<(), StoreError> {
 }
 
 fn save_to(file: &Path, settings: &Settings) -> Result<(), StoreError> {
-    let dir = file.parent().expect("settings.jsonの親がある");
+    let dir = file.parent().expect("settings.json should have a parent directory");
     fs::create_dir_all(dir).map_err(|error| StoreError::io(dir, error))?;
     let json = serde_json::to_string(settings).map_err(|error| StoreError::io(file, error))?;
     write_temp(dir, json.as_bytes())?

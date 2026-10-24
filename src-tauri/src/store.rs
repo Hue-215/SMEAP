@@ -558,7 +558,7 @@ impl Store {
     // 使われなくなったheroImageのファイルを消す。本文が参照していれば消さない。
     // 消せなくても失敗にしない
     fn remove_hero_file(&self, slug: &str, old: &str, body: &str) {
-        debug_assert!(is_filename(old), "{old} はファイル名のはず");
+        debug_assert!(is_filename(old), "{old} should be a filename");
         if body.contains(&format!("{}{old}", assets_ref(slug))) {
             return;
         }
@@ -566,7 +566,7 @@ impl Store {
         if let Err(error) = fs::remove_file(&old_path) {
             if error.kind() != io::ErrorKind::NotFound {
                 eprintln!(
-                    "前のheroImageを消せませんでした: {}",
+                    "Failed to remove the previous heroImage: {}",
                     StoreError::io(&old_path, error)
                 );
             }
@@ -608,7 +608,7 @@ impl Store {
         let backup = self.backup_path(slug);
         let backup_dir = backup
             .parent()
-            .expect("backup_pathはバックアップのファイル");
+            .expect("backup_path should be a file in the backup directory");
         fs::create_dir_all(backup_dir).map_err(|error| StoreError::io(backup_dir, error))?;
         fs::copy(&md, &backup)
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
@@ -899,7 +899,7 @@ pub(crate) fn validate_posts_dir_name(name: &str) -> Result<(), StoreError> {
 
 // 文字列の値はJSONの文字列にして書く。YAMLのダブルクォート文字列として読める
 fn json_string(value: &str) -> String {
-    serde_json::to_string(value).expect("文字列をJSONにできる")
+    serde_json::to_string(value).expect("a string should serialize to JSON")
 }
 fn render_md(article: &Article) -> String {
     let fields = &article.fields;

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
-    "lint": "oxlint",
+    "lint": "oxlint && node scripts/check-ui-text.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

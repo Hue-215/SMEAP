@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { formatSavedTime, type SaveStatus } from './autoSave'
 import Icon from './Icon'
+import { t } from './i18n'
 import ImageFileInput from './ImageFileInput'
 import type { DrawerState } from './useDrawer'
 
@@ -21,8 +22,11 @@ interface TopBarProps {
 
 function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice {
   if (notice) return notice
-  if (status?.failed) return { text: '保存できませんでした', error: true }
-  return { text: status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : '', error: false }
+  if (status?.failed) return { text: t('common.save_failed'), error: true }
+  return {
+    text: status?.savedAt ? t('topbar.saved_at', { time: formatSavedTime(status.savedAt) }) : '',
+    error: false,
+  }
 }
 
 function StatusText({ shown }: { shown: Notice }) {
@@ -42,10 +46,10 @@ export default function TopBar({
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const closes = !drawer.narrow && drawer.expanded
-  const sidebarLabel = closes ? '記事一覧を閉じる' : '記事一覧を開く'
+  const sidebarLabel = t(closes ? 'topbar.close_sidebar' : 'topbar.open_sidebar')
   const shown = statusNotice(saveStatus, notice)
   return (
-    <div role="toolbar" aria-label="編集" className="topbar">
+    <div role="toolbar" aria-label={t('topbar.toolbar_label')} className="topbar">
       <button
         type="button"
         className="icon-button"
@@ -64,8 +68,8 @@ export default function TopBar({
         className="icon-button"
         disabled={onInsertLink === null}
         onClick={() => onInsertLink?.()}
-        aria-label="リンク"
-        title="リンク"
+        aria-label={t('topbar.insert_link')}
+        title={t('topbar.insert_link')}
       >
         <Icon name="link" />
       </button>
@@ -74,8 +78,8 @@ export default function TopBar({
         className="icon-button"
         disabled={onInsertImages === null}
         onClick={() => fileInput.current?.click()}
-        aria-label="画像を挿入"
-        title="画像を挿入"
+        aria-label={t('topbar.insert_image')}
+        title={t('topbar.insert_image')}
       >
         <Icon name="image" />
       </button>
