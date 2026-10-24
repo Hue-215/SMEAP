@@ -3,13 +3,14 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+#[cfg(target_os = "android")]
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 #[cfg(not(target_os = "android"))]
-use crate::store::Store;
+use crate::store::{self, Store};
 use crate::store::{write_temp, StoreError};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -22,18 +23,18 @@ pub struct Settings {
     posts_dir_name: Option<String>,
 }
 
+// デスクトップの設定はStoreが持つので、Androidだけ
+#[cfg(target_os = "android")]
 pub struct SettingsState(Mutex<Settings>);
 
+#[cfg(target_os = "android")]
 impl SettingsState {
     pub fn new(settings: Settings) -> Self {
         Self(Mutex::new(settings))
     }
 
     fn lock(&self) -> MutexGuard<'_, Settings> {
-        match self.0.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -46,25 +47,20 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, StoreError> {
 
 // 読めなくても起動は止めず、既定の設定で始める
 pub fn load(app: &AppHandle) -> Settings {
-    let file = match file_path(app) {
-        Ok(file) => file,
-        Err(error) => {
-            eprintln!("設定を読めませんでした: {error}");
-            return Settings::default();
-        }
-    };
-    let content = match fs::read_to_string(&file) {
-        Ok(content) => content,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Settings::default(),
-        Err(error) => {
-            eprintln!("設定を読めませんでした: {}", StoreError::io(&file, error));
-            return Settings::default();
-        }
-    };
-    serde_json::from_str(&content).unwrap_or_else(|error| {
-        eprintln!("設定を読めませんでした: {}", StoreError::io(&file, error));
+    read(app).unwrap_or_else(|error| {
+        eprintln!("設定を読めませんでした: {error}");
         Settings::default()
     })
+}
+
+fn read(app: &AppHandle) -> Result<Settings, StoreError> {
+    let file = file_path(app)?;
+    let content = match fs::read_to_string(&file) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
+        Err(error) => return Err(StoreError::io(&file, error)),
+    };
+    serde_json::from_str(&content).map_err(|error| StoreError::io(&file, error))
 }
 
 fn save(app: &AppHandle, settings: &Settings) -> Result<(), StoreError> {
@@ -90,7 +86,6 @@ pub fn get_posts_dir(store: State<'_, Store>) -> String {
 pub fn pick_posts_dir(
     app: AppHandle,
     store: State<'_, Store>,
-    settings: State<'_, SettingsState>,
 ) -> Result<Option<String>, StoreError> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -107,16 +102,14 @@ pub fn pick_posts_dir(
         .map_err(|error| StoreError::InvalidRequest {
             reason: error.to_string(),
         })?;
+    store::check_posts_dir(&path)?;
+    save(
+        &app,
+        &Settings {
+            posts_dir: Some(path.clone()),
+        },
+    )?;
     store.set_posts_dir(path.clone())?;
-    let mut settings = settings.lock();
-    let previous = settings.posts_dir.replace(path.clone());
-    if let Err(error) = save(&app, &settings) {
-        settings.posts_dir = previous;
-        store
-            .set_posts_dir(current)
-            .expect("前のディレクトリには戻せる");
-        return Err(error);
-    }
     Ok(Some(path.display().to_string()))
 }
 
@@ -142,16 +135,14 @@ pub fn set_posts_dir_name(
     settings: State<'_, SettingsState>,
     name: String,
 ) -> Result<(), StoreError> {
-    let valid =
-        !name.is_empty() && !name.contains('/') && !name.contains('\\') && !name.starts_with('.');
-    if !valid {
+    if !crate::store::is_filename(&name) || name.starts_with('.') {
         return Err(StoreError::InvalidPostsDirName { name });
     }
     let mut settings = settings.lock();
-    let previous = settings.posts_dir_name.replace(name);
-    let result = save(&app, &settings);
-    if result.is_err() {
-        settings.posts_dir_name = previous;
-    }
-    result
+    let next = Settings {
+        posts_dir_name: Some(name),
+    };
+    save(&app, &next)?;
+    *settings = next;
+    Ok(())
 }

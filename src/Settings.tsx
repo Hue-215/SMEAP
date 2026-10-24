@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { setPostsDirName, type StoreError } from './api'
+import type { StoreError } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
 import { isAndroid } from './platform'
@@ -12,7 +12,7 @@ interface SettingsProps {
   // デスクトップだけ
   onPickPostsDir: () => Promise<void>
   // Androidだけ
-  onPostsDirNameChange: (name: string) => void
+  onChangePostsDirName: (name: string) => Promise<void>
   onClose: () => void
 }
 
@@ -27,7 +27,7 @@ export default function Settings({
   narrow,
   postsDir,
   onPickPostsDir,
-  onPostsDirNameChange,
+  onChangePostsDirName,
   onClose,
 }: SettingsProps) {
   const [page, setPage] = useState<'top' | 'list'>('top')
@@ -90,7 +90,7 @@ export default function Settings({
                 <h2 className="settings-h2">記事の保存先</h2>
                 {isAndroid ? (
                   postsDir !== null && (
-                    <PostsDirNameRow initial={postsDir} onChange={onPostsDirNameChange} />
+                    <PostsDirNameRow initial={postsDir} onChange={onChangePostsDirName} />
                   )
                 ) : (
                   <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
@@ -134,16 +134,16 @@ function PostsDirRow({
   onPick: () => Promise<void>
 }) {
   const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
 
   const pick = async () => {
     setBusy(true)
-    setFailed(false)
+    setFailure(null)
     try {
       await onPick()
     } catch (e) {
       console.error('記事のディレクトリを変えられませんでした', e)
-      setFailed(true)
+      setFailure('変更できませんでした')
     } finally {
       setBusy(false)
     }
@@ -160,7 +160,7 @@ function PostsDirRow({
           <Icon name="chevron_right" />
         </button>
       </div>
-      {failed && <p className="settings-failure">変更できませんでした</p>}
+      {failure && <p className="settings-failure">{failure}</p>}
     </>
   )
 }
@@ -170,7 +170,7 @@ function PostsDirNameRow({
   onChange,
 }: {
   initial: string
-  onChange: (name: string) => void
+  onChange: (name: string) => Promise<void>
 }) {
   const [value, setValue] = useState(initial)
   const [busy, setBusy] = useState(false)
@@ -183,9 +183,8 @@ function PostsDirNameRow({
     setBusy(true)
     setFailure(null)
     try {
-      await setPostsDirName(name)
+      await onChange(name)
       setValue(name)
-      onChange(name)
     } catch (e) {
       console.error('記事のディレクトリ名を変えられませんでした', e)
       setFailure(

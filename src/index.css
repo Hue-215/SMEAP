@@ -575,13 +575,17 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   font-size: var(--font-size-sm);
 }
 
-.slug-dialog-input {
-  height: var(--control-size-md);
-  padding: 0 var(--space-3);
+.slug-dialog-input,
+.posts-dir-name input {
   border: var(--border-width) solid var(--color-field-border);
   background: none;
   color: var(--color-text);
   font: inherit;
+}
+
+.slug-dialog-input {
+  height: var(--control-size-md);
+  padding: 0 var(--space-3);
 }
 
 .slug-dialog-hint,
@@ -852,10 +856,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 .posts-dir-name input {
   width: 10em;
   padding: var(--space-1) var(--space-2);
-  border: var(--border-width) solid var(--color-field-border);
-  background: none;
-  color: var(--color-text);
-  font: inherit;
   font-size: var(--font-size-sm);
 }
 

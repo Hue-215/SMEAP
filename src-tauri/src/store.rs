@@ -256,6 +256,11 @@ fn assets_base_of(posts_dir: &Path) -> Result<PathBuf, StoreError> {
         })
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub(crate) fn check_posts_dir(posts_dir: &Path) -> Result<(), StoreError> {
+    assets_base_of(posts_dir).map(drop)
+}
+
 pub struct Store {
     // 記事のディレクトリとassetsの親の組。デスクトップでは実行中に差し替えられる
     dirs: RwLock<Dirs>,
@@ -264,7 +269,6 @@ pub struct Store {
     lock: Mutex<()>,
 }
 
-#[derive(Clone)]
 struct Dirs {
     posts_dir: PathBuf,
     assets_base: PathBuf,
@@ -828,7 +832,7 @@ fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
 }
 
 // `..`を含む名前はまとめて弾く。`.`だけの名前も弾く
-fn is_filename(name: &str) -> bool {
+pub(crate) fn is_filename(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && !name.contains('/')

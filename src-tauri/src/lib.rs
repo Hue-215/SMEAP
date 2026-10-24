@@ -20,8 +20,8 @@ pub fn run() {
             let settings = settings::load(app.handle());
             let data_dir = app.path().app_data_dir()?;
             #[cfg(not(target_os = "android"))]
-            let posts_dir = match &settings.posts_dir {
-                Some(dir) => dir.clone(),
+            let posts_dir = match settings.posts_dir {
+                Some(dir) => dir,
                 None => {
                     let exe = std::env::current_exe()?;
                     let exe_dir = exe.parent().ok_or("実行ファイルの親ディレクトリが無い")?;
@@ -32,6 +32,7 @@ pub fn run() {
             let posts_dir = data_dir.join("posts/src/content/posts");
             let store = store::Store::new(posts_dir, data_dir.join("backup"))?;
             app.manage(store);
+            #[cfg(target_os = "android")]
             app.manage(settings::SettingsState::new(settings));
             Ok(())
         })

@@ -6,6 +6,7 @@ import {
   getPostsDirName,
   listArticles,
   pickPostsDir,
+  setPostsDirName,
   readArticle,
   exportZip,
   type Article,
@@ -44,6 +45,7 @@ export default function App() {
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
   // デスクトップは記事のディレクトリの絶対パス、Androidはzipの中の`src/content/`の下の名前
   const [postsDir, setPostsDir] = useState<string | null>(null)
+  const destination = postsDir !== null && isAndroid ? `./src/content/${postsDir}` : postsDir
   const [article, setArticle] = useState<ArticleState>({ status: 'none' })
   const [slugDialog, setSlugDialog] = useState<SlugDialogMode | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
@@ -218,6 +220,11 @@ export default function App() {
     reloadArticles()
   }
 
+  const changePostsDirName = async (name: string) => {
+    await setPostsDirName(name)
+    setPostsDir(name)
+  }
+
   const openSettings = () => {
     drawer.close()
     setSettingsOpen(true)
@@ -317,13 +324,7 @@ export default function App() {
       {slugDialog && (
         <SlugDialog
           mode={slugDialog}
-          destination={
-            postsDir === null
-              ? null
-              : isAndroid
-                ? `./src/content/${postsDir}`
-                : postsDir
-          }
+          destination={destination}
           onDone={onDialogDone}
           onCancel={() => setSlugDialog(null)}
         />
@@ -360,7 +361,7 @@ export default function App() {
           narrow={drawer.narrow}
           postsDir={postsDir}
           onPickPostsDir={pickPostsDirAndReload}
-          onPostsDirNameChange={setPostsDir}
+          onChangePostsDirName={changePostsDirName}
           onClose={() => setSettingsOpen(false)}
         />
       )}
