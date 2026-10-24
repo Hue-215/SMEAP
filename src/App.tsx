@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listArticles, readArticle, exportZip, type Article, type ArticleFields, type StoreError } from './api'
+import {
+  deleteArticle,
+  listArticles,
+  readArticle,
+  exportZip,
+  type Article,
+  type ArticleFields,
+  type StoreError,
+} from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
+import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
 import Settings from './Settings'
 import Sidebar from './Sidebar'
-import type { ArticlesState } from './Sidebar'
+import type { ArticleRef, ArticlesState } from './Sidebar'
 import SlugDialog, { type SlugDialogMode } from './SlugDialog'
 import TopBar, { type Notice } from './TopBar'
 import { useSwipeToOpen } from './useDrawerSwipe'
@@ -37,6 +46,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<SaveConfirm | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   // 同じ文言が続いても出し直すよう、包んで持つ
   const [notice, setNotice] = useState<Notice | null>(null)
   const editor = useRef<ArticleEditorHandle>(null)
@@ -140,8 +150,13 @@ export default function App() {
     }
   }, [])
 
-  // slugの変更はファイルから読んだ内容で行い、新しい記事は開いていた記事と入れ替わるので、先に保存する
+  // 新しい記事と、開いている記事のslugの変更は今の記事と入れ替わるので先に保存する。それ以外の
+  // slugの変更では開いている記事をそのままにする
   const openSlugDialog = (mode: SlugDialogMode) => {
+    if (mode.kind !== 'create' && mode.slug !== selectedSlug) {
+      setSlugDialog(mode)
+      return
+    }
     void saveOpenArticle().then((ok) => {
       if (ok) setSlugDialog(mode)
     })
@@ -149,11 +164,12 @@ export default function App() {
 
   // 保存画面を出す前にzipを作るので、その間にもう一度押されても1つだけにする
   const exporting = useRef(false)
-  // 書き出すのはファイルの内容なので、先に保存する
+  // 書き出すのはファイルの内容なので、開いている記事なら先に保存する
   const openExportZip = (slug: string) => {
     if (exporting.current) return
     exporting.current = true
-    void saveOpenArticle()
+    const saved = slug === selectedSlug ? saveOpenArticle() : Promise.resolve(true)
+    void saved
       .then(async (ok) => {
         if (!ok) return
         const outcome = await exportZip(slug)
@@ -190,6 +206,24 @@ export default function App() {
     setSettingsOpen(true)
   }
 
+  // 消すのが開いている記事なら、消せてから閉じる。未保存の変更は捨てる
+  const deleteConfirmed = async (target: ArticleRef) => {
+    const slug = target.slug
+    try {
+      // 自動保存と消す処理が重ならないよう、終わってからにする
+      await whenSaved()
+      await deleteArticle(slug)
+      if (slug === selectedSlug) setArticle({ status: 'none' })
+      setDeleteTarget(null)
+      return true
+    } catch (e) {
+      console.error('記事を削除できませんでした', slug, e)
+      return false
+    } finally {
+      reloadArticles()
+    }
+  }
+
   const sidebar = (
     <Sidebar
       articles={articles}
@@ -200,6 +234,18 @@ export default function App() {
         openSlugDialog({ kind: 'create' })
       }}
       onSettings={openSettings}
+      onRenameSlug={(slug) => {
+        drawer.close()
+        openSlugDialog({ kind: 'rename', slug })
+      }}
+      onExportZip={(slug) => {
+        drawer.close()
+        openExportZip(slug)
+      }}
+      onDelete={(target) => {
+        drawer.close()
+        setDeleteTarget(target)
+      }}
     />
   )
 
@@ -211,10 +257,15 @@ export default function App() {
   }
 
   const swipeToOpen = useSwipeToOpen(drawer)
+  // 新しい記事と、開いている記事のslugの変更は、今の記事を入れ替える。開いていない記事の
+  // slugの変更は今の記事をそのままにし、一覧の読み直しだけにする
   const onDialogDone = (a: Article) => {
     setSlugDialog(null)
     reloadArticles()
-    setArticle({ status: 'loaded', slug: a.slug, article: a })
+    const replaces =
+      slugDialog?.kind === 'create' ||
+      (slugDialog?.kind === 'rename' && slugDialog.slug === selectedSlug)
+    if (replaces) setArticle({ status: 'loaded', slug: a.slug, article: a })
   }
 
   return (
@@ -225,15 +276,10 @@ export default function App() {
           drawer={drawer}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          onRenameSlug={
-            loaded ? () => openSlugDialog({ kind: 'rename', slug: loaded.slug }) : null
-          }
-          onExportZip={loaded ? () => openExportZip(loaded.slug) : null}
           onInsertLink={loaded ? () => editor.current?.insertLink() : null}
           onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
           saveStatus={loaded ? saveStatus : null}
           notice={notice}
-          onOpenSettings={openSettings}
         />
         <div className="editor-scroll">
           <div className="editor-column">
@@ -242,7 +288,7 @@ export default function App() {
                 key={article.slug}
                 ref={editor}
                 article={article.article}
-                paused={saveConfirm !== null}
+                paused={saveConfirm !== null || deleteTarget !== null}
                 onSaveStatus={setSaveStatus}
                 onSaved={onSaved}
                 onNotice={(text) => setNotice({ text, error: true })}
@@ -268,6 +314,20 @@ export default function App() {
             return ok
           }}
         />
+      )}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="記事を削除しますか"
+          confirmLabel="削除する"
+          failedText="削除できませんでした"
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => deleteConfirmed(deleteTarget)}
+        >
+          {deleteTarget.kind === 'broken'
+            ? deleteTarget.slug
+            : `「${deleteTarget.title || '無題'}」(${deleteTarget.slug})`}
+          を削除します。画像とバックアップも消え、元に戻せません。
+        </ConfirmDialog>
       )}
       {settingsOpen && <Settings narrow={drawer.narrow} onClose={() => setSettingsOpen(false)} />}
     </div>

@@ -49,6 +49,11 @@ pub fn rename_article(
 }
 
 #[tauri::command(async)]
+pub fn delete_article(store: State<'_, Store>, slug: String) -> Result<(), StoreError> {
+    store.delete_article(&slug)
+}
+
+#[tauri::command(async)]
 pub fn import_body_image(
     store: State<'_, Store>,
     request: Request<'_>,

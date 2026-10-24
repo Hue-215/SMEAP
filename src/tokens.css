@@ -32,6 +32,7 @@
   --color-text: #000000;
   --color-text-secondary: #707070;
   --color-border: #E0E0E0;
+  --color-hover: #EEEEEE;
   --color-accent: #D57C00;
   --color-selection: #F0DFC8;
   --color-error: #B3261E;
@@ -86,6 +87,7 @@
     --color-text: #FAFAFA;
     --color-text-secondary: #8C8C8C;
     --color-border: #262626;
+    --color-hover: #262626;
     --color-accent: #F99D1D;
     --color-selection: #3E2D16;
     --color-error: #F08A7E;

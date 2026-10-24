@@ -38,6 +38,7 @@ pub fn run() {
             commands::read_article,
             commands::save_article,
             commands::rename_article,
+            commands::delete_article,
             commands::import_body_image,
             commands::import_hero_image,
             commands::import_body_image_from_path,

@@ -1,9 +1,6 @@
 import { useRef } from 'react'
 import { formatSavedTime, type SaveStatus } from './autoSave'
 import Icon from './Icon'
-import MenuButton from './MenuButton'
-import type { MenuItem } from './MenuButton'
-import { isAndroid } from './platform'
 import type { DrawerState } from './useDrawer'
 
 export interface Notice {
@@ -15,25 +12,21 @@ interface TopBarProps {
   drawer: DrawerState
   sidebarOpen: boolean
   onToggleSidebar: () => void
-  // nullなら押せない
-  onRenameSlug: (() => void) | null
-  onExportZip: (() => void) | null
   onInsertLink: (() => void) | null
   onInsertImages: ((files: File[]) => void) | null
   // nullなら出さない
   saveStatus: SaveStatus | null
   // あれば保存の状態の代わりに出す
   notice: Notice | null
-  onOpenSettings: () => void
 }
 
-function StatusText({ status, notice }: { status: SaveStatus | null; notice: Notice | null }) {
-  const saved = status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : ''
-  const shown: Notice =
-    notice ??
-    (status?.failed
-      ? { text: '保存できませんでした', error: true }
-      : { text: saved, error: false })
+function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice {
+  if (notice) return notice
+  if (status?.failed) return { text: '保存できませんでした', error: true }
+  return { text: status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : '', error: false }
+}
+
+function StatusText({ shown }: { shown: Notice }) {
   return (
     <span role="status" className={shown.error ? 'save-status error' : 'save-status'}>
       {shown.text}
@@ -45,40 +38,14 @@ export default function TopBar({
   drawer,
   sidebarOpen,
   onToggleSidebar,
-  onRenameSlug,
-  onExportZip,
   onInsertLink,
   onInsertImages,
   saveStatus,
   notice,
-  onOpenSettings,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
-  const renameItem: MenuItem = {
-    key: 'rename-slug',
-    label: 'slugを変更',
-    icon: 'edit',
-    disabled: onRenameSlug === null,
-    onSelect: () => onRenameSlug?.(),
-  }
-  const exportZipItem: MenuItem = {
-    key: 'export-zip',
-    label: 'zipで書き出す',
-    icon: 'folder_zip',
-    disabled: onExportZip === null,
-    onSelect: () => onExportZip?.(),
-  }
-  const menuItems: MenuItem[] = [
-    renameItem,
-    ...(isAndroid ? [exportZipItem] : []),
-    {
-      key: 'settings',
-      label: '設定',
-      icon: 'settings',
-      onSelect: onOpenSettings,
-    },
-  ]
+  const shown = statusNotice(saveStatus, notice)
   return (
     <div role="toolbar" aria-label="編集" className="topbar">
       {drawer.narrow ? (
@@ -107,7 +74,7 @@ export default function TopBar({
         </button>
       )}
       {drawer.narrow ? (
-        <StatusText status={saveStatus} notice={notice} />
+        <StatusText shown={shown} />
       ) : (
         <span className="topbar-spacer" aria-hidden="true" />
       )}
@@ -146,11 +113,10 @@ export default function TopBar({
       />
       {!drawer.narrow && (
         <>
-          <span className="topbar-divider" aria-hidden="true" />
-          <StatusText status={saveStatus} notice={notice} />
+          {shown.text && <span className="topbar-divider" aria-hidden="true" />}
+          <StatusText shown={shown} />
         </>
       )}
-      <MenuButton label="その他" items={menuItems} />
     </div>
   )
 }

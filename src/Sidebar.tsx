@@ -1,7 +1,14 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useState, type MouseEvent, type ReactNode } from 'react'
 import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
+import ContextMenu, { type MenuItem } from './ContextMenu'
 import Dialog from './Dialog'
 import Icon from './Icon'
+import { isAndroid } from './platform'
+
+// 一覧の行。brokenは読めない記事(BrokenArticle)
+export type ArticleRef =
+  | { kind: 'article'; slug: string; title: string }
+  | { kind: 'broken'; slug: string }
 
 export type ArticlesState =
   | { status: 'loading' }
@@ -20,6 +27,9 @@ interface SidebarProps {
   onSelect: (slug: string) => void
   onNew: () => void
   onSettings: () => void
+  onRenameSlug: (slug: string) => void
+  onExportZip: (slug: string) => void
+  onDelete: (target: ArticleRef) => void
 }
 
 function DialogDetail({
@@ -49,13 +59,61 @@ function DialogDetail({
   )
 }
 
-export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSettings }: SidebarProps) {
+// 右クリック(Androidは長押し)で開いている行のメニュー
+type RowMenu = ArticleRef & { x: number; y: number }
+
+export default function Sidebar({
+  articles,
+  selectedSlug,
+  onSelect,
+  onNew,
+  onSettings,
+  onRenameSlug,
+  onExportZip,
+  onDelete,
+}: SidebarProps) {
   const [brokenSlug, setBrokenSlug] = useState<string | null>(null)
   const [unreadableOpen, setUnreadableOpen] = useState(false)
+  const [rowMenu, setRowMenu] = useState<RowMenu | null>(null)
   const brokenDialog =
     articles.status === 'loaded' && brokenSlug !== null
       ? (articles.broken.find((b) => b.slug === brokenSlug) ?? null)
       : null
+
+  // キーボードから開くと座標が0になる環境があるので、そのときは行の左下に出す
+  const openRowMenu = (e: MouseEvent<HTMLElement>, target: ArticleRef) => {
+    e.preventDefault()
+    let { clientX: x, clientY: y } = e
+    if (x === 0 && y === 0) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      x = rect.left
+      y = rect.bottom
+    }
+    setRowMenu({ ...target, x, y })
+  }
+
+  const rowMenuItems = (menu: RowMenu): MenuItem[] => {
+    const deleteItem: MenuItem = {
+      key: 'delete',
+      label: '削除',
+      icon: 'delete',
+      onSelect: () => onDelete(menu),
+    }
+    if (menu.kind === 'broken') return [deleteItem]
+    const renameItem: MenuItem = {
+      key: 'rename-slug',
+      label: 'slugを変更',
+      icon: 'edit',
+      onSelect: () => onRenameSlug(menu.slug),
+    }
+    const exportZipItem: MenuItem = {
+      key: 'export-zip',
+      label: 'zipで書き出す',
+      icon: 'folder_zip',
+      onSelect: () => onExportZip(menu.slug),
+    }
+    return isAndroid ? [renameItem, exportZipItem, deleteItem] : [renameItem, deleteItem]
+  }
 
   return (
     <>
@@ -91,6 +149,9 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSet
                   className="article-row"
                   aria-current={article.slug === selectedSlug ? 'true' : undefined}
                   onClick={() => onSelect(article.slug)}
+                  onContextMenu={(e) =>
+                    openRowMenu(e, { kind: 'article', slug: article.slug, title: article.title })
+                  }
                 >
                   <span className="article-row-title">
                     {article.title || '無題'}
@@ -114,6 +175,7 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSet
                   type="button"
                   className="article-row article-row-broken"
                   onClick={() => setBrokenSlug(broken.slug)}
+                  onContextMenu={(e) => openRowMenu(e, { kind: 'broken', slug: broken.slug })}
                 >
                   <span className="article-row-title">読めない記事</span>
                   <span className="article-row-detail">{broken.slug}</span>
@@ -155,6 +217,9 @@ export default function Sidebar({ articles, selectedSlug, onSelect, onNew, onSet
             </p>
           ))}
         </DialogDetail>
+      )}
+      {rowMenu && (
+        <ContextMenu x={rowMenu.x} y={rowMenu.y} items={rowMenuItems(rowMenu)} onClose={() => setRowMenu(null)} />
       )}
     </>
   )

@@ -74,6 +74,10 @@ export function renameArticle(oldSlug: string, newSlug: string): Promise<Article
   return invoke<Article>('rename_article', { old: oldSlug, new: newSlug })
 }
 
+export function deleteArticle(slug: string): Promise<void> {
+  return invoke('delete_article', { slug })
+}
+
 // 画像は生のバイト列で送り、slugはヘッダーで渡す(src-tauri/src/commands.rs)。Androidでは数値の配列のJSONになる
 export function importBodyImage(slug: string, data: Uint8Array): Promise<string> {
   return invoke<string>('import_body_image', data, { headers: { slug } })

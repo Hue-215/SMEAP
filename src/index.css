@@ -263,19 +263,18 @@ button:is(:disabled, [aria-disabled='true']) {
   padding-inline: var(--space-1);
 }
 
+/* 読み上げのために空でも置いておくので、余白だけ消す */
+.save-status:empty {
+  padding-inline: 0;
+}
+
 .save-status.error {
   color: var(--color-error);
 }
 
-/* メニュー(MenuButton.tsx)。 */
-.menu {
-  position: relative;
-}
-
+/* メニュー(ContextMenu.tsx)。 */
 .menu-list {
-  position: absolute;
-  top: calc(100% + var(--space-1));
-  right: 0;
+  position: fixed;
   z-index: 1;
   width: 12.5rem;
   margin: 0;
@@ -351,7 +350,7 @@ button:is(:disabled, [aria-disabled='true']) {
   overflow-wrap: anywhere;
 }
 
-/* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。 */
+/* slugのような区切りの無い英数字でも一覧の幅を押し広げずに折り返す。長押しでメニューを出すので文字は選ばせない。 */
 .article-row {
   display: block;
   width: 100%;
@@ -359,6 +358,19 @@ button:is(:disabled, [aria-disabled='true']) {
   padding: 0.625rem 1.25rem 0.625rem 1.0625rem;
   border-left: 3px solid transparent;
   overflow-wrap: anywhere;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.article-row:active {
+  background: var(--color-hover);
+}
+
+/* タッチの端末では、触れた後もホバーの状態が残る */
+@media (hover: hover) {
+  .article-row:hover {
+    background: var(--color-hover);
+  }
 }
 
 .narrow .article-row {
@@ -489,12 +501,12 @@ button:is(:disabled, [aria-disabled='true']) {
   margin: 0;
 }
 
-.save-confirm-error {
+.confirm-dialog-error {
   color: var(--color-error);
 }
 
-/* 試作(docs/design/SaveConfirm.dc.html)のとおり、ほかの2つと離して左に置き、枠を付けない */
-.dialog-buttons .save-confirm-cancel {
+/* 試作(docs/design/SaveConfirm.dc.html)のとおり、ほかのボタンと離して左に置き、枠を付けない */
+.dialog-buttons .confirm-dialog-cancel {
   margin-right: auto;
   border: 0;
 }
