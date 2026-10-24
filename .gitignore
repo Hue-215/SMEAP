@@ -5,6 +5,16 @@ dist/
 # Tauriがビルドのたびに作る権限のスキーマ
 /src-tauri/gen/schemas/
 
+# `tauri icon`が作るが使わないアイコン
+/src-tauri/icons/*
+!/src-tauri/icons/SMEAP.svg
+!/src-tauri/icons/android-fg.svg
+!/src-tauri/icons/icon.json
+!/src-tauri/icons/32x32.png
+!/src-tauri/icons/128x128.png
+!/src-tauri/icons/128x128@2x.png
+!/src-tauri/icons/icon.png
+
 # Androidの署名の鍵。リポジトリの外に置くが、誤って置いたときのため
 *.p12
 *.jks
