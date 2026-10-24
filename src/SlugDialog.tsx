@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { createArticle, renameArticle, isValidSlug, type Article, type StoreError } from './api'
 import Dialog from './Dialog'
+import { t, type MessageKey } from './i18n'
 
 export type SlugDialogMode = { kind: 'create' } | { kind: 'rename'; slug: string }
 
@@ -11,27 +12,27 @@ interface SlugDialogProps {
   onCancel: () => void
 }
 
-const invalidSlugMessage = '使えない文字があります。英小文字・数字・ハイフンだけにしてください'
+const invalidSlugKey: MessageKey = 'slug_dialog.invalid'
 
-const texts = {
+const texts: Record<SlugDialogMode['kind'], Record<'title' | 'submit' | 'hint' | 'failed', MessageKey>> = {
   create: {
-    title: '新しい記事',
-    submit: '作成',
-    hint: '英小文字・数字・ハイフンが使えます。あとから変更もできます',
-    failed: '作成できませんでした',
+    title: 'slug_dialog.create_title',
+    submit: 'slug_dialog.create_submit',
+    hint: 'slug_dialog.create_hint',
+    failed: 'slug_dialog.create_failed',
   },
   rename: {
-    title: 'slugを変更',
-    submit: '変更',
-    hint: '英小文字・数字・ハイフンが使えます',
-    failed: '変更できませんでした',
+    title: 'slug_dialog.rename_title',
+    submit: 'slug_dialog.rename_submit',
+    hint: 'slug_dialog.rename_hint',
+    failed: 'common.change_failed',
   },
 }
 
-const failureMessages = new Map([
-  ['alreadyExists', '同じslugの記事が既にあります'],
-  ['invalidSlug', invalidSlugMessage],
-  ['notFound', '元の記事が見つかりません'],
+const failureMessages = new Map<string, MessageKey>([
+  ['alreadyExists', 'slug_dialog.already_exists'],
+  ['invalidSlug', invalidSlugKey],
+  ['notFound', 'slug_dialog.not_found'],
 ])
 
 export default function SlugDialog({ mode, destination, onDone, onCancel }: SlugDialogProps) {
@@ -39,7 +40,7 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
   const currentSlug = mode.kind === 'rename' ? mode.slug : null
   const [value, setValue] = useState(currentSlug ?? '')
   // 送信の失敗の文言
-  const [failure, setFailure] = useState<string | null>(null)
+  const [failure, setFailure] = useState<MessageKey | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const headingId = useId()
@@ -50,7 +51,7 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
     inputRef.current?.select()
   }, [])
 
-  const error = failure ?? (value !== '' && !isValidSlug(value) ? invalidSlugMessage : null)
+  const error = failure ?? (value !== '' && !isValidSlug(value) ? invalidSlugKey : null)
   const submitDisabled = submitting || !isValidSlug(value) || value === currentSlug
   const shownSlug = value || '{slug}'
 
@@ -61,9 +62,9 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
     const request = mode.kind === 'create' ? createArticle(value) : renameArticle(mode.slug, value)
     request.then(onDone, (err) => {
       setSubmitting(false)
-      console.error(text.failed, err)
+      console.error('Failed to set the slug', mode.kind, err)
       const kind = (err as StoreError | undefined)?.kind
-      setFailure((kind && failureMessages.get(kind)) ?? text.failed)
+      setFailure((kind ? failureMessages.get(kind) : undefined) ?? text.failed)
     })
   }
 
@@ -76,11 +77,11 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
     <Dialog labelledBy={headingId} onCancel={cancel}>
       <form className="dialog-form" onSubmit={onSubmit}>
         <h2 id={headingId} className="dialog-title">
-          {text.title}
+          {t(text.title)}
         </h2>
         <div className="slug-dialog-fields">
           <label htmlFor={inputId} className="slug-dialog-label">
-            slug(記事のディレクトリ名・URL)
+            {t('slug_dialog.label')}
           </label>
           <input
             ref={inputRef}
@@ -104,20 +105,20 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
             aria-live="polite"
             className={error !== null ? 'slug-dialog-hint error' : 'slug-dialog-hint'}
           >
-            {error ?? text.hint}
+            {error === null ? t(text.hint) : t(error)}
           </p>
           {destination !== null && (
             <p className="slug-dialog-destination">
-              書き出し先: {destination}/{shownSlug}.md
+              {t('slug_dialog.destination', { path: `${destination}/${shownSlug}.md` })}
             </p>
           )}
         </div>
         <div className="dialog-buttons">
           <button type="button" onClick={cancel} disabled={submitting}>
-            キャンセル
+            {t('common.cancel')}
           </button>
           <button type="submit" disabled={submitDisabled}>
-            {text.submit}
+            {t(text.submit)}
           </button>
         </div>
       </form>

@@ -3,6 +3,7 @@ import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Dialog from './Dialog'
 import Icon from './Icon'
+import { t } from './i18n'
 import { isAndroid } from './platform'
 
 // 一覧の行。brokenは読めない記事(BrokenArticle)
@@ -51,7 +52,7 @@ function DialogDetail({
         <div className="dialog-body">{children}</div>
         <div className="dialog-buttons">
           <button type="button" onClick={onClose}>
-            閉じる
+            {t('common.close')}
           </button>
         </div>
       </div>
@@ -95,20 +96,20 @@ export default function Sidebar({
   const rowMenuItems = (menu: RowMenu): MenuItem[] => {
     const deleteItem: MenuItem = {
       key: 'delete',
-      label: '削除',
+      label: t('sidebar.menu_delete'),
       icon: 'delete',
       onSelect: () => onDelete(menu),
     }
     if (menu.kind === 'broken') return [deleteItem]
     const renameItem: MenuItem = {
       key: 'rename-slug',
-      label: 'slugを変更',
+      label: t('sidebar.menu_rename'),
       icon: 'edit',
       onSelect: () => onRenameSlug(menu.slug),
     }
     const exportZipItem: MenuItem = {
       key: 'export-zip',
-      label: 'zipで書き出す',
+      label: t('sidebar.menu_export'),
       icon: 'folder_zip',
       onSelect: () => onExportZip(menu.slug),
     }
@@ -119,28 +120,28 @@ export default function Sidebar({
     <>
       <aside className="sidebar">
         <div className="sidebar-header">
-          <span className="sidebar-title">記事</span>
+          <span className="sidebar-title">{t('sidebar.heading')}</span>
           <button
             type="button"
             className="icon-button"
-            aria-label="新しい記事"
-            title="新しい記事"
+            aria-label={t('sidebar.new_article')}
+            title={t('sidebar.new_article')}
             onClick={onNew}
           >
             <Icon name="add" />
           </button>
         </div>
-        <nav aria-label="記事一覧" className="sidebar-nav">
+        <nav aria-label={t('sidebar.nav_label')} className="sidebar-nav">
           {articles.status === 'loading' ? null : articles.status === 'failed' ? (
             <>
-              <p className="sidebar-message">記事一覧を読めませんでした</p>
+              <p className="sidebar-message">{t('sidebar.load_failed')}</p>
               {articles.path && <p className="sidebar-message">{articles.path}</p>}
               {articles.reason && <p className="sidebar-message">{articles.reason}</p>}
             </>
           ) : (
             <>
               {articles.articles.length === 0 && articles.broken.length === 0 && (
-                <p className="sidebar-message">記事がありません</p>
+                <p className="sidebar-message">{t('sidebar.empty')}</p>
               )}
               {articles.articles.map((article) => (
                 <button
@@ -154,11 +155,11 @@ export default function Sidebar({
                   }
                 >
                   <span className="article-row-title">
-                    {article.title || '無題'}
+                    {article.title || t('common.untitled')}
                     {article.warning && (
                       <span className="article-row-warning">
                         <Icon name="warning" />
-                        <span className="visually-hidden">警告あり</span>
+                        <span className="visually-hidden">{t('sidebar.has_warning')}</span>
                       </span>
                     )}
                   </span>
@@ -177,7 +178,7 @@ export default function Sidebar({
                   onClick={() => setBrokenSlug(broken.slug)}
                   onContextMenu={(e) => openRowMenu(e, { kind: 'broken', slug: broken.slug })}
                 >
-                  <span className="article-row-title">読めない記事</span>
+                  <span className="article-row-title">{t('sidebar.broken_article')}</span>
                   <span className="article-row-detail">{broken.slug}</span>
                 </button>
               ))}
@@ -187,7 +188,7 @@ export default function Sidebar({
                   className="sidebar-message sidebar-unreadable"
                   onClick={() => setUnreadableOpen(true)}
                 >
-                  読めない項目が{articles.unreadable.length}件あります
+                  {t('sidebar.unreadable_count', { count: articles.unreadable.length })}
                 </button>
               )}
             </>
@@ -196,19 +197,19 @@ export default function Sidebar({
         <div className="sidebar-footer">
           <button type="button" className="sidebar-settings" onClick={onSettings}>
             <Icon name="settings" />
-            設定
+            {t('sidebar.settings')}
           </button>
         </div>
       </aside>
       {brokenDialog && (
-        <DialogDetail title="読めない記事" onClose={() => setBrokenSlug(null)}>
+        <DialogDetail title={t('sidebar.broken_article')} onClose={() => setBrokenSlug(null)}>
           <p>slug: {brokenDialog.slug}</p>
-          <p>理由: {brokenDialog.reason}</p>
+          <p>{t('sidebar.broken_reason', { reason: brokenDialog.reason })}</p>
           <p>{brokenDialog.path}</p>
         </DialogDetail>
       )}
       {unreadableOpen && articles.status === 'loaded' && (
-        <DialogDetail title="読めない項目" onClose={() => setUnreadableOpen(false)}>
+        <DialogDetail title={t('sidebar.unreadable_title')} onClose={() => setUnreadableOpen(false)}>
           {articles.unreadable.map((entry, index) => (
             <p key={`${entry.path} ${index}`}>
               {entry.path}

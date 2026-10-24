@@ -1,5 +1,6 @@
 import { formatSavedTime } from './autoSave'
 import ConfirmDialog from './ConfirmDialog'
+import { t } from './i18n'
 
 interface SaveConfirmDialogProps {
   title: string
@@ -17,18 +18,23 @@ export default function SaveConfirmDialog({
   onDiscard,
   onSave,
 }: SaveConfirmDialogProps) {
-  const since = savedAt ? `${formatSavedTime(savedAt)}の自動保存より後の変更です` : '開いてからの変更です'
+  const label = title || t('common.untitled')
 
   return (
     <ConfirmDialog
-      title="保存していない変更があります"
-      confirmLabel="保存する"
-      failedText="保存できませんでした"
+      title={t('save_confirm.title')}
+      confirmLabel={t('save_confirm.save')}
+      failedText={t('common.save_failed')}
       onCancel={onCancel}
       onConfirm={onSave}
-      secondary={{ label: '保存しない', onClick: onDiscard }}
+      secondary={{ label: t('save_confirm.discard'), onClick: onDiscard }}
     >
-      「{title || '無題'}」の、{since}。保存しない場合、この分の変更は消えます。
+      {savedAt === null
+        ? t('save_confirm.message_since_opened', { title: label })
+        : t('save_confirm.message_since_saved', {
+            title: label,
+            time: formatSavedTime(savedAt),
+          })}
     </ConfirmDialog>
   )
 }

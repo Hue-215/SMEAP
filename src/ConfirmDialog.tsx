@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react'
 import Dialog from './Dialog'
+import { t } from './i18n'
 
 interface ConfirmDialogProps {
   title: string
@@ -58,7 +59,7 @@ export default function ConfirmDialog({
         </div>
         <div className="dialog-buttons">
           <button type="button" onClick={cancel} disabled={running}>
-            キャンセル
+            {t('common.cancel')}
           </button>
           {secondary && (
             <button type="button" onClick={secondary.onClick} disabled={running}>

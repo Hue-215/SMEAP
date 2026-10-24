@@ -75,10 +75,10 @@ export class AutoSaver {
     if (!this.isDirty()) return whenSaved().then(() => true)
     let fields: EditedFields
     try {
-      if (!this.host) throw new Error('画面から外した後に保存を頼まれた')
+      if (!this.host) throw new Error('Save was requested after the editor was unmounted')
       fields = this.host.read()
     } catch (e) {
-      console.error('保存する内容を読めませんでした', this.slug, e)
+      console.error('Failed to read the fields to save', this.slug, e)
       return Promise.resolve(false)
     }
     const target = this.revision
@@ -86,7 +86,7 @@ export class AutoSaver {
     const job = queue
       .then(() => this.write(target, fields))
       .catch((e) => {
-        console.error('保存の後の処理に失敗しました', this.slug, e)
+        console.error('Failed to finish saving', this.slug, e)
         return false
       })
     queue = job
@@ -99,7 +99,7 @@ export class AutoSaver {
     try {
       await saveArticle(this.slug, fields)
     } catch (e) {
-      console.error('記事を保存できませんでした', this.slug, e)
+      console.error('Failed to save the article', this.slug, e)
       this.setStatus({ savedAt: this.status.savedAt, failed: true })
       // 入力が無くても、決まった間隔で保存し直す
       if (this.host && !this.paused) {

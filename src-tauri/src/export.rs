@@ -55,7 +55,7 @@ pub fn export_zip(
         io::copy(&mut File::open(staged.path())?, &mut dest)?;
         sync(&dest)
     }))
-    .unwrap_or_else(|_| Err(io::Error::other("保存先のファイルを開く途中でpanicした")));
+    .unwrap_or_else(|_| Err(io::Error::other("a panic occurred while opening the destination file")));
     Ok(match copied {
         Ok(()) => ExportOutcome::Saved,
         Err(error) => ExportOutcome::LeftIncomplete {
