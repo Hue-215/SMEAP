@@ -270,7 +270,7 @@ export default function App() {
 
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
-      {(drawer.narrow || sidebarOpen) && <Drawer drawer={drawer}>{sidebar}</Drawer>}
+      <Drawer drawer={drawer} dockedOpen={sidebarOpen}>{sidebar}</Drawer>
       <main inert={drawer.shown} {...swipeToOpen}>
         <TopBar
           drawer={drawer}

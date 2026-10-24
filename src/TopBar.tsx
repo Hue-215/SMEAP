@@ -44,40 +44,24 @@ export default function TopBar({
   notice,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
-  const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
+  const closes = !drawer.narrow && sidebarOpen
+  const sidebarLabel = closes ? '記事一覧を閉じる' : '記事一覧を開く'
   const shown = statusNotice(saveStatus, notice)
   return (
     <div role="toolbar" aria-label="編集" className="topbar">
-      {drawer.narrow ? (
-        <button
-          id={drawer.toggleId}
-          type="button"
-          className="icon-button"
-          onClick={drawer.shown ? drawer.cancel : drawer.open}
-          aria-expanded={drawer.shown}
-          aria-controls={drawer.id}
-          aria-label="記事一覧を開く"
-          title="記事一覧を開く"
-        >
-          <Icon name="menu" />
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="icon-button"
-          onClick={onToggleSidebar}
-          aria-expanded={sidebarOpen}
-          aria-label={sidebarLabel}
-          title={sidebarLabel}
-        >
-          <Icon name={sidebarOpen ? 'left_panel_close' : 'left_panel_open'} />
-        </button>
-      )}
-      {drawer.narrow ? (
-        <StatusText shown={shown} />
-      ) : (
-        <span className="topbar-spacer" aria-hidden="true" />
-      )}
+      <button
+        type="button"
+        className="icon-button"
+        id={drawer.narrow ? drawer.toggleId : undefined}
+        onClick={drawer.narrow ? (drawer.shown ? drawer.cancel : drawer.open) : onToggleSidebar}
+        aria-expanded={drawer.narrow ? drawer.shown : sidebarOpen}
+        aria-controls={drawer.narrow ? drawer.id : undefined}
+        aria-label={sidebarLabel}
+        title={sidebarLabel}
+      >
+        <Icon name={closes ? 'left_panel_close' : 'menu'} />
+      </button>
+      <StatusText shown={shown} />
       <button
         type="button"
         className="icon-button"
@@ -111,12 +95,6 @@ export default function TopBar({
           if (files.length > 0) onInsertImages?.(files)
         }}
       />
-      {!drawer.narrow && (
-        <>
-          {shown.text && <span className="topbar-divider" aria-hidden="true" />}
-          <StatusText shown={shown} />
-        </>
-      )}
     </div>
   )
 }

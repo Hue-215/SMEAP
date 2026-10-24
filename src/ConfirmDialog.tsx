@@ -57,7 +57,7 @@ export default function ConfirmDialog({
           )}
         </div>
         <div className="dialog-buttons">
-          <button type="button" className="confirm-dialog-cancel" onClick={cancel} disabled={running}>
+          <button type="button" onClick={cancel} disabled={running}>
             キャンセル
           </button>
           {secondary && (

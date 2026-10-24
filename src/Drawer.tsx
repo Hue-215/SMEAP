@@ -2,9 +2,18 @@ import type { ReactNode } from 'react'
 import type { DrawerState } from './useDrawer'
 import { useSwipeToClose } from './useDrawerSwipe'
 
-// 出入りを見せるため、狭い窓では暗幕を閉じている間も置いておく。
-export function Drawer({ drawer, children }: { drawer: DrawerState; children: ReactNode }) {
+// 出入りを見せるため、閉じている間も置いておく。dockedOpenは広い窓での開け閉め。
+export function Drawer({
+  drawer,
+  dockedOpen,
+  children,
+}: {
+  drawer: DrawerState
+  dockedOpen: boolean
+  children: ReactNode
+}) {
   const swipeToClose = useSwipeToClose(drawer)
+  const shown = drawer.narrow ? drawer.shown : dockedOpen
   return (
     <>
       {drawer.narrow && (
@@ -14,7 +23,7 @@ export function Drawer({ drawer, children }: { drawer: DrawerState; children: Re
           {...swipeToClose}
         />
       )}
-      <div id={drawer.id} className={drawer.shown ? 'drawer open' : 'drawer'} {...swipeToClose}>
+      <div id={drawer.id} className={shown ? 'drawer open' : 'drawer'} {...swipeToClose}>
         {children}
       </div>
     </>

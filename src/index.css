@@ -47,6 +47,11 @@ button:is(:disabled, [aria-disabled='true']) {
   outline-offset: -2px;
 }
 
+/* 入力欄の枠は残す */
+:root[data-input='pointer'] button:focus-visible {
+  outline: none;
+}
+
 ::selection {
   background: var(--color-selection);
 }
@@ -239,19 +244,9 @@ button:is(:disabled, [aria-disabled='true']) {
   padding-inline: 0.25rem;
 }
 
-.topbar-spacer {
-  flex: 1;
-}
-
-.topbar-divider {
-  width: var(--border-width);
-  height: 1.25rem;
-  margin-inline: 0.375rem;
-  background: var(--color-border);
-}
-
-/* 保存の状態(TopBar.tsx)。狭い窓では、広い窓の.topbar-spacerの代わりに残りの幅を埋める。 */
+/* 保存の状態(TopBar.tsx)。窓の幅によらず、開閉ボタンの後の残りの幅を埋める。 */
 .save-status {
+  flex: 1;
   padding-inline: var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
@@ -259,7 +254,6 @@ button:is(:disabled, [aria-disabled='true']) {
 }
 
 .narrow .save-status {
-  flex: 1;
   padding-inline: var(--space-1);
 }
 
@@ -362,13 +356,15 @@ button:is(:disabled, [aria-disabled='true']) {
   -webkit-touch-callout: none;
 }
 
-.article-row:active {
+button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-unreadable, .article-meta-button, .settings-row):not(:disabled):active,
+.dialog-buttons button:not([type='submit'], .primary, :disabled):active {
   background: var(--color-hover);
 }
 
 /* タッチの端末では、触れた後もホバーの状態が残る */
 @media (hover: hover) {
-  .article-row:hover {
+  button:is(.article-row, .icon-button, .menu-item, .sidebar-settings, .sidebar-unreadable, .article-meta-button, .settings-row):not(:disabled):hover,
+  .dialog-buttons button:not([type='submit'], .primary, :disabled):hover {
     background: var(--color-hover);
   }
 }
@@ -505,12 +501,6 @@ button:is(:disabled, [aria-disabled='true']) {
   color: var(--color-error);
 }
 
-/* 試作(docs/design/SaveConfirm.dc.html)のとおり、ほかのボタンと離して左に置き、枠を付けない */
-.dialog-buttons .confirm-dialog-cancel {
-  margin-right: auto;
-  border: 0;
-}
-
 .slug-dialog-fields {
   display: flex;
   flex-direction: column;
@@ -546,22 +536,36 @@ button:is(:disabled, [aria-disabled='true']) {
   overflow-wrap: anywhere;
 }
 
-/* 狭い窓で畳む左のカラム(記事一覧)の入れ物(Drawer.tsx)。広い窓ではカラムを並びの中に
-   そのまま出す。窓を広げたときは、畳んだ位置(.narrow .drawer)から滑って戻し、狭めて畳むとき
-   (左の外へ滑る)と出入りの動きを揃える。起動時は前の位置が無いので動かない。 */
+/* 左のカラム(記事一覧)の入れ物(Drawer.tsx)。広い窓では隣の内容を押しながら左の外へ滑らせて
+   畳む。閉じたら、滑り終えてからvisibilityで隠す(隠れている間にTabで中へ入れないようにするため)。
+   窓を広げたときは、畳んだ位置(.narrow .drawer)からtransformで滑って戻し、狭めて畳むときと
+   出入りの動きを揃える。起動時は前の位置が無いので動かない。 */
 .drawer {
   display: flex;
   flex-shrink: 0;
-  transition: transform var(--motion-duration) ease-out;
+  margin-inline-start: calc(-1 * var(--sidebar-width));
+  visibility: hidden;
+  transition:
+    margin-inline-start var(--motion-duration) ease-out,
+    transform var(--motion-duration) ease-out,
+    visibility 0s linear var(--motion-duration);
 }
 
-/* 狭い窓では内容の上に重ね、左の外から滑らせて出し入れする。閉じたら、滑り終えてから
-   visibilityで隠す(隠れている間にTabで中へ入れないようにするため)。 */
+.drawer.open {
+  margin-inline-start: 0;
+  visibility: visible;
+  transition:
+    margin-inline-start var(--motion-duration) ease-out,
+    transform var(--motion-duration) ease-out;
+}
+
+/* 狭い窓では内容の上に重ね、左の外から滑らせて出し入れする。 */
 .narrow .drawer {
   position: absolute;
   inset-block: 0;
   inset-inline-start: 0;
   width: min(var(--drawer-width), calc(100% - 3.5rem));
+  margin-inline-start: 0;
   transform: translateX(-100%);
   visibility: hidden;
   transition:
@@ -614,6 +618,7 @@ button:is(:disabled, [aria-disabled='true']) {
 
 @media (prefers-reduced-motion: reduce) {
   .drawer,
+  .drawer.open,
   .narrow .drawer,
   .narrow .drawer.open,
   .drawer-backdrop,
@@ -707,7 +712,7 @@ button:is(:disabled, [aria-disabled='true']) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) 0;
+  padding: var(--space-3);
   text-align: left;
 }
 
@@ -768,5 +773,5 @@ button:is(:disabled, [aria-disabled='true']) {
 }
 
 .settings-rows .settings-text {
-  padding-bottom: var(--space-4);
+  padding: 0 var(--space-3) var(--space-4);
 }
