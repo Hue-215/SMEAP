@@ -263,6 +263,11 @@ button:is(:disabled, [aria-disabled='true']) {
   padding-inline: var(--space-1);
 }
 
+/* 読み上げのために空でも置いておくので、余白だけ消す */
+.save-status:empty {
+  padding-inline: 0;
+}
+
 .save-status.error {
   color: var(--color-error);
 }
