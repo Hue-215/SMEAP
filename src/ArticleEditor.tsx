@@ -32,7 +32,6 @@ export interface ArticleEditorHandle {
   isDirty: () => boolean
   // 失敗したらfalse
   save: () => Promise<boolean>
-  title: () => string
   insertLink: () => void
   insertImages: (files: File[]) => void
 }
@@ -236,7 +235,6 @@ export default function ArticleEditor({
   useImperativeHandle(ref, () => ({
     isDirty: () => saver.isDirty(),
     save: () => saver.save(),
-    title: () => latest.current.title ?? '',
     insertLink: () => {
       if (view.current) insertLink(view.current)
     },
