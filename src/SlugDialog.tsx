@@ -28,7 +28,7 @@ const texts = {
 }
 
 const failureMessages = new Map([
-  ['alreadyExists', '同じslugのフォルダが既にあります'],
+  ['alreadyExists', '同じslugの記事が既にあります'],
   ['invalidSlug', invalidSlugMessage],
   ['notFound', '元の記事が見つかりません'],
 ])

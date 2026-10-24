@@ -364,7 +364,7 @@ impl Store {
     pub fn create_article(&self, slug: &str) -> Result<Article, StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
-        // 競合はnoclobberの書き込みで見るが、mkdirを作る前に分からせるため先に確かめる
+        // 競合はnoclobberの書き込みで見るが、ディレクトリを作る前に断れるよう先に確かめる
         let md = self.md_path(slug);
         check_absent(&md, slug)?;
 
@@ -556,8 +556,8 @@ impl Store {
         }
         let dest = self.md_path(new);
         check_absent(&dest, new)?;
-        // 移動先のassetsは、そのままでは空のディレクトリでもrenameが失敗する。
-        // 作り直しと同じにするため、空なら消して、画像が残っていれば消さずに失敗にする
+        // 移動先に残ったassetsは、空なら消してから移す(Windowsのrenameは空のディレクトリでも失敗する)。
+        // 画像が残っていれば、消さずに失敗にする
         let new_assets = self.assets_dir(new);
         match fs::read_dir(&new_assets) {
             Ok(mut entries) => {
@@ -1308,7 +1308,7 @@ mod tests {
             store.save_article(slug, input("", date)).unwrap();
         }
 
-        // 一覧に出したいもの以外(root直下のassetsの残骸のディレクトリなど)が置いてあっても、
+        // postsの下に記事でないもの、assetsの下にmdの無いディレクトリがあっても、
         // 壊れた記事にはならず一覧の成功も保たれる
         let posts = store.posts_dir();
         fs::create_dir_all(posts.join("some-dir")).unwrap();
@@ -1405,7 +1405,7 @@ mod tests {
     }
 
     #[test]
-    fn 開けない記事はbrokenにして無関係なフォルダは入らない() {
+    fn 開けない記事はbrokenにして記事でないものは入らない() {
         let (_tmp, store) = setup();
         store.create_article("good").unwrap();
         store
@@ -1517,7 +1517,7 @@ mod tests {
     }
 
     #[test]
-    fn 削除するとフォルダとバックアップが消える() {
+    fn 削除するとmdとassetsとバックアップが消える() {
         let (_tmp, store) = setup();
         store.create_article("del-post").unwrap();
         store
