@@ -20,13 +20,13 @@ interface TopBarProps {
   notice: Notice | null
 }
 
-function StatusText({ status, notice }: { status: SaveStatus | null; notice: Notice | null }) {
-  const saved = status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : ''
-  const shown: Notice =
-    notice ??
-    (status?.failed
-      ? { text: '保存できませんでした', error: true }
-      : { text: saved, error: false })
+function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice {
+  if (notice) return notice
+  if (status?.failed) return { text: '保存できませんでした', error: true }
+  return { text: status?.savedAt ? `保存済み ${formatSavedTime(status.savedAt)}` : '', error: false }
+}
+
+function StatusText({ shown }: { shown: Notice }) {
   return (
     <span role="status" className={shown.error ? 'save-status error' : 'save-status'}>
       {shown.text}
@@ -45,6 +45,7 @@ export default function TopBar({
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const sidebarLabel = sidebarOpen ? '記事一覧を閉じる' : '記事一覧を開く'
+  const shown = statusNotice(saveStatus, notice)
   return (
     <div role="toolbar" aria-label="編集" className="topbar">
       {drawer.narrow ? (
@@ -73,7 +74,7 @@ export default function TopBar({
         </button>
       )}
       {drawer.narrow ? (
-        <StatusText status={saveStatus} notice={notice} />
+        <StatusText shown={shown} />
       ) : (
         <span className="topbar-spacer" aria-hidden="true" />
       )}
@@ -112,8 +113,8 @@ export default function TopBar({
       />
       {!drawer.narrow && (
         <>
-          <span className="topbar-divider" aria-hidden="true" />
-          <StatusText status={saveStatus} notice={notice} />
+          {shown.text && <span className="topbar-divider" aria-hidden="true" />}
+          <StatusText shown={shown} />
         </>
       )}
     </div>

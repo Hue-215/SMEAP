@@ -1,0 +1,72 @@
+import { useId, useState, type ReactNode } from 'react'
+import Dialog from './Dialog'
+
+interface ConfirmDialogProps {
+  title: string
+  children: ReactNode
+  confirmLabel: string
+  failedText: string
+  onCancel: () => void
+  // できたらtrue。できたら閉じるのは親が行う
+  onConfirm: () => Promise<boolean>
+  // キャンセルと確定の間に置くボタン
+  secondary?: { label: string; onClick: () => void }
+}
+
+export default function ConfirmDialog({
+  title,
+  children,
+  confirmLabel,
+  failedText,
+  onCancel,
+  onConfirm,
+  secondary,
+}: ConfirmDialogProps) {
+  const [state, setState] = useState<'idle' | 'running' | 'failed'>('idle')
+  const running = state === 'running'
+  const headingId = useId()
+  const bodyId = useId()
+
+  const confirm = () => {
+    setState('running')
+    void onConfirm().then((ok) => {
+      if (!ok) setState('failed')
+    })
+  }
+
+  // 処理中に閉じると、処理の後の操作が残る
+  const cancel = () => {
+    if (!running) onCancel()
+  }
+
+  return (
+    <Dialog labelledBy={headingId} describedBy={bodyId} role="alertdialog" onCancel={cancel}>
+      <div className="dialog-form">
+        <h2 id={headingId} className="dialog-title">
+          {title}
+        </h2>
+        <div className="dialog-body">
+          <p id={bodyId}>{children}</p>
+          {state === 'failed' && (
+            <p role="alert" className="confirm-dialog-error">
+              {failedText}
+            </p>
+          )}
+        </div>
+        <div className="dialog-buttons">
+          <button type="button" className="confirm-dialog-cancel" onClick={cancel} disabled={running}>
+            キャンセル
+          </button>
+          {secondary && (
+            <button type="button" onClick={secondary.onClick} disabled={running}>
+              {secondary.label}
+            </button>
+          )}
+          <button type="button" className="primary" onClick={confirm} disabled={running}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}

@@ -11,7 +11,7 @@ import {
 } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
-import DeleteConfirmDialog from './DeleteConfirmDialog'
+import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
@@ -203,24 +203,20 @@ export default function App() {
     setSettingsOpen(true)
   }
 
-  // 消すのが開いている記事なら、未保存の変更を伴わないよう先に閉じる。未保存の変更は捨てる
-  const deleteConfirm = async () => {
-    const target = deleteTarget
-    if (!target) return false
-    if (article.status !== 'none' && article.slug === target.slug) {
-      setArticle({ status: 'none' })
-    }
+  // 消すのが開いている記事なら先に閉じる。未保存の変更は捨てる
+  const deleteConfirmed = async (slug: string) => {
+    if (slug === selectedSlug) setArticle({ status: 'none' })
     try {
       // 自動保存と消す処理が重ならないよう、終わってからにする
       await whenSaved()
-      await deleteArticle(target.slug)
+      await deleteArticle(slug)
       setDeleteTarget(null)
-      reloadArticles()
       return true
     } catch (e) {
       console.error('記事を削除できませんでした', e)
-      reloadArticles()
       return false
+    } finally {
+      reloadArticles()
     }
   }
 
@@ -264,9 +260,7 @@ export default function App() {
     reloadArticles()
     const replaces =
       slugDialog?.kind === 'create' ||
-      (slugDialog?.kind === 'rename' &&
-        article.status !== 'none' &&
-        article.slug === slugDialog.slug)
+      (slugDialog?.kind === 'rename' && slugDialog.slug === selectedSlug)
     if (replaces) setArticle({ status: 'loaded', slug: a.slug, article: a })
   }
 
@@ -318,12 +312,18 @@ export default function App() {
         />
       )}
       {deleteTarget && (
-        <DeleteConfirmDialog
-          slug={deleteTarget.slug}
-          title={deleteTarget.title}
+        <ConfirmDialog
+          title="記事を削除しますか"
+          confirmLabel="削除する"
+          failedText="削除できませんでした"
           onCancel={() => setDeleteTarget(null)}
-          onDelete={deleteConfirm}
-        />
+          onConfirm={() => deleteConfirmed(deleteTarget.slug)}
+        >
+          {deleteTarget.title === null
+            ? deleteTarget.slug
+            : `「${deleteTarget.title || '無題'}」(${deleteTarget.slug})`}
+          を削除します。画像とバックアップも消え、元に戻せません。
+        </ConfirmDialog>
       )}
       {settingsOpen && <Settings narrow={drawer.narrow} onClose={() => setSettingsOpen(false)} />}
     </div>
