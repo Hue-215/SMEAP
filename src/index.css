@@ -575,13 +575,17 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   font-size: var(--font-size-sm);
 }
 
-.slug-dialog-input {
-  height: var(--control-size-md);
-  padding: 0 var(--space-3);
+.slug-dialog-input,
+.posts-dir-name input {
   border: var(--border-width) solid var(--color-field-border);
   background: none;
   color: var(--color-text);
   font: inherit;
+}
+
+.slug-dialog-input {
+  height: var(--control-size-md);
+  padding: 0 var(--space-3);
 }
 
 .slug-dialog-hint,
@@ -827,4 +831,38 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 
 .settings-rows .settings-text {
   padding: 0 var(--space-3) var(--space-4);
+}
+
+* + .settings-h2 {
+  margin-top: var(--space-5);
+}
+
+.settings-row-main .settings-note {
+  overflow-wrap: anywhere;
+}
+
+.settings-failure {
+  margin: var(--space-2) var(--space-3) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+.posts-dir-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.posts-dir-name input {
+  width: 10em;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-sm);
+}
+
+.posts-dir-name input:disabled {
+  opacity: 0.5;
+}
+
+.posts-dir-note > span {
+  display: block;
 }

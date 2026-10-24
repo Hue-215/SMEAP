@@ -6,6 +6,7 @@ export type SlugDialogMode = { kind: 'create' } | { kind: 'rename'; slug: string
 
 interface SlugDialogProps {
   mode: SlugDialogMode
+  destination: string | null
   onDone: (article: Article) => void
   onCancel: () => void
 }
@@ -33,7 +34,7 @@ const failureMessages = new Map([
   ['notFound', '元の記事が見つかりません'],
 ])
 
-export default function SlugDialog({ mode, onDone, onCancel }: SlugDialogProps) {
+export default function SlugDialog({ mode, destination, onDone, onCancel }: SlugDialogProps) {
   const text = texts[mode.kind]
   const currentSlug = mode.kind === 'rename' ? mode.slug : null
   const [value, setValue] = useState(currentSlug ?? '')
@@ -105,9 +106,11 @@ export default function SlugDialog({ mode, onDone, onCancel }: SlugDialogProps) 
           >
             {error ?? text.hint}
           </p>
-          <p className="slug-dialog-destination">
-            書き出し先: ./src/content/posts/{shownSlug}.md
-          </p>
+          {destination !== null && (
+            <p className="slug-dialog-destination">
+              書き出し先: {destination}/{shownSlug}.md
+            </p>
+          )}
         </div>
         <div className="dialog-buttons">
           <button type="button" onClick={cancel} disabled={submitting}>

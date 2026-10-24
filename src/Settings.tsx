@@ -1,10 +1,18 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { UnsavedArticleError, type PostsDir, type StoreError } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
+import { isAndroid } from './platform'
 import type { License } from 'virtual:licenses'
 
 interface SettingsProps {
   narrow: boolean
+  // 読めていない間はnull
+  postsDir: PostsDir | null
+  // デスクトップだけ
+  onPickPostsDir: () => Promise<void>
+  // Androidだけ
+  onChangePostsDirName: (name: string) => Promise<void>
   onClose: () => void
 }
 
@@ -15,7 +23,13 @@ interface ShownText {
 
 // 編集画面の上に重ねる設定画面。ライセンスの全文は、広い窓では一覧の行の下に開き、狭い窓では
 // 別のページに出す。
-export default function Settings({ narrow, onClose }: SettingsProps) {
+export default function Settings({
+  narrow,
+  postsDir,
+  onPickPostsDir,
+  onChangePostsDirName,
+  onClose,
+}: SettingsProps) {
   const [page, setPage] = useState<'top' | 'list'>('top')
   const [shown, setShown] = useState<ShownText | null>(null)
   const headingId = useId()
@@ -73,6 +87,14 @@ export default function Settings({ narrow, onClose }: SettingsProps) {
           <div className="settings-content">
             {page === 'top' ? (
               <>
+                <h2 className="settings-h2">記事の保存先</h2>
+                {isAndroid ? (
+                  postsDir?.kind === 'android' && (
+                    <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
+                  )
+                ) : (
+                  <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
+                )}
                 <h2 className="settings-h2">このアプリについて</h2>
                 <div className="settings-rows">
                   <div className="settings-row">
@@ -101,6 +123,125 @@ export default function Settings({ narrow, onClose }: SettingsProps) {
         </div>
       </div>
     </Dialog>
+  )
+}
+
+function PostsDirRow({
+  postsDir,
+  onPick,
+}: {
+  postsDir: PostsDir | null
+  onPick: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const dirs = postsDir?.kind === 'desktop' ? postsDir : null
+
+  const pick = async () => {
+    setBusy(true)
+    setFailure(null)
+    try {
+      await onPick()
+    } catch (e) {
+      console.error('記事のディレクトリを変えられませんでした', e)
+      setFailure(
+        (e as StoreError | undefined)?.kind === 'invalidPostsDir'
+          ? 'このディレクトリは記事の保存先に使えません'
+          : e instanceof UnsavedArticleError
+            ? '開いている記事を保存できませんでした'
+            : '変更できませんでした',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="settings-rows">
+        <button type="button" className="settings-row" onClick={pick} disabled={busy}>
+          <span className="settings-row-main">
+            記事のディレクトリ
+            <span className="settings-note posts-dir-note">
+              {dirs && (
+                <>
+                  <span>記事: {dirs.postsDir}</span>
+                  <span>画像: {dirs.assetsDir}/{'{slug}'}/</span>
+                </>
+              )}
+            </span>
+          </span>
+          <Icon name="chevron_right" />
+        </button>
+      </div>
+      {failure && <p className="settings-failure">{failure}</p>}
+    </>
+  )
+}
+
+function PostsDirNameRow({
+  initial,
+  onChange,
+}: {
+  initial: string
+  onChange: (name: string) => Promise<void>
+}) {
+  const [value, setValue] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const inputId = useId()
+
+  const commit = async () => {
+    const name = value.trim()
+    if (busy || name === initial) return
+    setBusy(true)
+    setFailure(null)
+    try {
+      await onChange(name)
+      setValue(name)
+    } catch (e) {
+      console.error('記事のディレクトリ名を変えられませんでした', e)
+      setFailure(
+        (e as StoreError | undefined)?.kind === 'invalidPostsDirName'
+          ? 'ディレクトリ名に使えません'
+          : '変更できませんでした',
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="settings-rows">
+        <div className="settings-row">
+          <span className="settings-row-main">
+            <label htmlFor={inputId}>記事のディレクトリ名</label>
+            <span className="settings-note posts-dir-name">
+              <span>src/content/</span>
+              <input
+                id={inputId}
+                type="text"
+                value={value}
+                disabled={busy}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void commit()
+                }}
+                onBlur={() => void commit()}
+                onChange={(e) => {
+                  setValue(e.target.value)
+                  setFailure(null)
+                }}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </span>
+          </span>
+        </div>
+      </div>
+      {failure && <p className="settings-failure">{failure}</p>}
+    </>
   )
 }
 
