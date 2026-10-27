@@ -83,5 +83,7 @@
   "topbar.insert_link": "リンク",
   "topbar.open_sidebar": "記事一覧を開く",
   "topbar.saved_at": "保存済み {time}",
-  "topbar.toolbar_label": "編集"
+  "topbar.toolbar_label": "編集",
+  "topbar.unsaved_at": "最終保存 {time}",
+  "topbar.unsaved": "未保存の変更があります"
 }

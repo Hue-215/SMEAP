@@ -8,9 +8,10 @@ export interface SaveStatus {
   // この記事を開いてから最後に保存できた時刻
   savedAt: Date | null
   failed: boolean
+  dirty: boolean
 }
 
-export const initialSaveStatus: SaveStatus = { savedAt: null, failed: false }
+export const initialSaveStatus: SaveStatus = { savedAt: null, failed: false, dirty: false }
 
 // 保存は記事をまたいで1つずつ順に行う
 let queue: Promise<unknown> = Promise.resolve()
@@ -59,6 +60,8 @@ export class AutoSaver {
 
   changed() {
     this.revision++
+    // きれいな状態から変わったときだけ知らせる。入力のたびには流さない
+    if (!this.status.dirty) this.setStatus({ ...this.status })
     this.schedule()
   }
 
@@ -114,8 +117,8 @@ export class AutoSaver {
   }
 
   private setStatus(status: SaveStatus) {
-    this.status = status
-    this.host?.onStatus(status)
+    this.status = { ...status, dirty: this.isDirty() }
+    this.host?.onStatus(this.status)
   }
 
   private schedule() {
