@@ -10,7 +10,7 @@ interface ConfirmDialogProps {
   onCancel: () => void
   // 成功ならtrue。閉じるのは親が行う
   onConfirm: () => Promise<boolean>
-  // キャンセルと確定の間に置くボタン
+  // キャンセルの左に置くボタン。確定の左にも置かれる
   secondary?: { label: string; onClick: () => void }
 }
 
@@ -58,14 +58,14 @@ export default function ConfirmDialog({
           )}
         </div>
         <div className="dialog-buttons">
-          <button type="button" onClick={cancel} disabled={running}>
-            {t('common.cancel')}
-          </button>
           {secondary && (
-            <button type="button" onClick={secondary.onClick} disabled={running}>
+            <button type="button" className="left" onClick={secondary.onClick} disabled={running}>
               {secondary.label}
             </button>
           )}
+          <button type="button" onClick={cancel} disabled={running}>
+            {t('common.cancel')}
+          </button>
           <button type="button" className="primary" onClick={confirm} disabled={running}>
             {confirmLabel}
           </button>
