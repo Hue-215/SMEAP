@@ -23,6 +23,11 @@ interface TopBarProps {
 function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice {
   if (notice) return notice
   if (status?.failed) return { text: t('common.save_failed'), error: true }
+  if (status?.dirty)
+    return {
+      text: status.savedAt ? t('topbar.unsaved_at', { time: formatSavedTime(status.savedAt) }) : t('topbar.unsaved'),
+      error: false,
+    }
   return {
     text: status?.savedAt ? t('topbar.saved_at', { time: formatSavedTime(status.savedAt) }) : '',
     error: false,
