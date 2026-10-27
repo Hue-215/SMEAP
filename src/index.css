@@ -532,6 +532,11 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   gap: var(--space-2);
 }
 
+/* 破棄など、ほかのボタンから離して左端に置くボタン */
+.dialog-buttons .left {
+  margin-right: auto;
+}
+
 .dialog-buttons button {
   height: var(--control-size-md);
   padding: 0 var(--space-4);
