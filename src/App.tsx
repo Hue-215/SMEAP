@@ -140,6 +140,18 @@ export default function App() {
   // 開いている記事が無ければ保存済みとみなす
   const saveOpenArticle = () => editor.current?.save() ?? Promise.resolve(true)
 
+  // Ctrl+S・Cmd+S(CapsLockやShift下では大文字の"S"になる)で保存する
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault()
+        void saveOpenArticle()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const proceed = (action: PendingAction) => {
     setSaveConfirm(null)
     if (action.kind === 'switch') openArticle(action.slug)
