@@ -61,7 +61,7 @@ export class AutoSaver {
   changed() {
     this.revision++
     // きれいな状態から変わったときだけ知らせる。入力のたびには流さない
-    if (!this.status.dirty) this.setStatus({ ...this.status })
+    if (!this.status.dirty) this.setStatus(this.status)
     this.schedule()
   }
 
@@ -116,7 +116,7 @@ export class AutoSaver {
     return true
   }
 
-  private setStatus(status: SaveStatus) {
+  private setStatus(status: Omit<SaveStatus, 'dirty'>) {
     this.status = { ...status, dirty: this.isDirty() }
     this.host?.onStatus(this.status)
   }
