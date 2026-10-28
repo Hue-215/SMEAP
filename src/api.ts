@@ -161,3 +161,120 @@ const assetsRef = (slug: string) => `../../assets/${slug}/`
 export function heroImageUrl(slug: string, name: string, version: number): string {
   return `${articleImageUrl(slug, assetsRef(slug) + name)}?v=${version}`
 }
+
+// GitHub連携。Rust側はsrc-tauri/src/github/の下
+
+// Rust側のRepoRef(src-tauri/src/github/config.rs)とそろえる
+export interface GithubRepoRef {
+  owner: string
+  name: string
+  defaultBranch: string
+}
+
+export function repoFullName(repo: GithubRepoRef): string {
+  return `${repo.owner}/${repo.name}`
+}
+
+// Rust側のGithubSettings(src-tauri/src/github/config.rs)とそろえる
+export interface GithubSettings {
+  repo: GithubRepoRef | null
+  baseBranch: string | null
+  branchFormat: string
+  postsPath: string
+}
+
+// Rust側のGithubStatus(src-tauri/src/github/commands.rs)とそろえる
+export interface GithubStatus {
+  loggedIn: boolean
+  // 通信できなければ、ログインしていてもnull
+  login: string | null
+  settings: GithubSettings
+  tokenUnreadable: boolean
+  // ログインし直しが必要になった。画面が記事を保存してからgithubLogoutで保存先を戻す
+  loginExpired: boolean
+}
+
+// Rust側のStartLogin(src-tauri/src/github/commands.rs)とそろえる
+export interface GithubStartLogin {
+  userCode: string
+  verificationUri: string
+  expiresIn: number
+}
+
+// Rust側のWaitLogin(src-tauri/src/github/commands.rs)とそろえる
+export interface GithubWaitLogin {
+  outcome: 'loggedIn' | 'expired' | 'denied' | 'cancelled'
+  login: string | null
+}
+
+// Rust側のGithubError(src-tauri/src/github/mod.rs)とそろえる。画面はkindで文言を選ぶ
+export type GithubError =
+  | { kind: 'loginRequired' }
+  | { kind: 'rateLimited'; retryAt: number | null }
+  | { kind: 'status'; status: number }
+  | { kind: 'redirect' }
+  | { kind: 'urlNotAllowed' }
+  | { kind: 'network'; reason: string }
+  | { kind: 'invalidResponse'; reason: string }
+  | { kind: 'invalidBranchFormat' }
+  | { kind: 'invalidBranchName' }
+  | { kind: 'invalidPostsPath' }
+  | { kind: 'invalidRepository' }
+  | { kind: 'io'; path: string; reason: string }
+
+export function githubStatus(): Promise<GithubStatus> {
+  return invoke<GithubStatus>('github_status')
+}
+
+export function githubStartLogin(): Promise<GithubStartLogin> {
+  return invoke<GithubStartLogin>('github_start_login')
+}
+
+// 承認・期限切れ・拒否・取り消しまで返らない。やめるにはgithubCancelLoginを呼ぶ
+export function githubWaitLogin(): Promise<GithubWaitLogin> {
+  return invoke<GithubWaitLogin>('github_wait_login')
+}
+
+export function githubCancelLogin(): Promise<void> {
+  return invoke('github_cancel_login')
+}
+
+export function githubLogout(): Promise<void> {
+  return invoke('github_logout')
+}
+
+export function githubListRepositories(): Promise<GithubRepoRef[]> {
+  return invoke<GithubRepoRef[]>('github_list_repositories')
+}
+
+export function githubSelectRepository(repo: GithubRepoRef): Promise<void> {
+  return invoke('github_select_repository', { repo })
+}
+
+export function githubUpdateSettings(
+  baseBranch: string | null,
+  branchFormat: string,
+  postsPath: string,
+): Promise<void> {
+  return invoke('github_update_settings', { baseBranch, branchFormat, postsPath })
+}
+
+// 入力中の案内に使う。Rust側のvalidate_branch_format(src-tauri/src/github/config.rs)とそろえる
+export function validateBranchFormat(format: string): Promise<void> {
+  return invoke('validate_branch_format', { format })
+}
+
+export function validatePostsPath(path: string): Promise<void> {
+  return invoke('validate_posts_path', { path })
+}
+
+// deviceは認可のページ、installはAppのインストールのページ
+export function openGithubPage(page: 'device' | 'install'): Promise<void> {
+  return invoke('open_github_page', { page })
+}
+
+// 画像は記事のディレクトリの2つ上のassetsに入る。Rust側のassets_path(src-tauri/src/github/config.rs)とそろえる
+export function githubAssetsPath(postsPath: string): string {
+  const components = postsPath.split('/')
+  return [...components.slice(0, -2), 'assets'].join('/')
+}

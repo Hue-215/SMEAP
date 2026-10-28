@@ -261,8 +261,6 @@ fn assets_base_of(posts_dir: &Path) -> Result<PathBuf, StoreError> {
         })
 }
 
-// 差し替えはデスクトップだけ(src/settings.rs)
-#[cfg_attr(target_os = "android", allow(dead_code))]
 pub(crate) fn check_posts_dir(posts_dir: &Path) -> Result<(), StoreError> {
     assets_base_of(posts_dir).map(drop)
 }
@@ -310,8 +308,7 @@ impl Store {
         })
     }
 
-    // lock_guardを取ってから差し替え、書き込み中の操作と重ならないようにする。差し替えはデスクトップだけ(src/settings.rs)
-    #[cfg_attr(target_os = "android", allow(dead_code))]
+    // lock_guardを取ってから差し替え、書き込み中の操作と重ならないようにする
     pub fn set_posts_dir(&self, posts_dir: PathBuf) -> Result<(), StoreError> {
         let dirs = dirs_of(&posts_dir, &self.backup_root)?;
         let _guard = self.lock_guard();

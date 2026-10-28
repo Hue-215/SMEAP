@@ -75,6 +75,13 @@ jobs:
       - name: Rustのターゲットを入れる
         run: rustup target add aarch64-linux-android
 
+      # GitHub連携のTLS(rustlsのring)にCのコードがあり、Android向けのCコンパイラが要る。ランナーに入っているNDKを使う
+      - name: NDKのCコンパイラを指定する
+        run: |
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "CC_aarch64_linux_android=$bin/aarch64-linux-android29-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$bin/llvm-ar" >> "$GITHUB_ENV"
+
       - name: cargoのキャッシュ
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:

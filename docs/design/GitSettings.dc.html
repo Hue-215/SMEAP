@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>GitHub デスクトップ 設定画面</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,300..400,0,0&amp;display=block">
+<style>
+body{margin:0}
+.ms{font-family:'Material Symbols Outlined';font-weight:300;font-style:normal;font-size:20px;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;display:inline-block}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+</style>
+</helmet>
+<div style="height: 800px; display: flex; flex-direction: column; background: {{t.bg}}; color: {{t.fg}}; font-family: 'Noto Sans JP', sans-serif; overflow: hidden">
+<div style="height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid {{t.line}}">
+<a href="GitMain.dc.html" aria-label="編集画面に戻る" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">arrow_back</span></a>
+<h1 style="margin: 0; font-size: 16px; font-weight: 500">設定</h1>
+</div>
+<div style="flex: 1; overflow-y: auto">
+<div style="max-width: 720px; margin: 0 auto; padding: 40px 32px; box-sizing: border-box">
+
+<h2 style="margin: 0 0 12px; font-size: 14px; font-weight: 500">GitHub</h2>
+<div style="border-top: 1px solid {{t.line}}">
+
+<sc-if value="{{loggedOut}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid {{t.line}}; font-size: 14px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span>ログインしていません</span>
+<span style="font-size: 13px; color: {{t.gray}}">ログインすると、記事をGitHubのrepositoryで読み書きします</span>
+</span>
+<a href="GitLogin.dc.html" style="height: 36px; flex-shrink: 0; display: flex; align-items: center; padding: 0 16px; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">GitHubにログイン</a>
+</div>
+</sc-if>
+
+<sc-if value="{{loggedIn}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid {{t.line}}; font-size: 14px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span>アカウント</span>
+<span style="font-size: 13px; color: {{t.gray}}">niigo</span>
+</span>
+<button onClick="{{logout}}" style="height: 36px; padding: 0 16px; border: 1px solid {{t.line}}; font-size: 14px">ログアウト</button>
+</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid {{t.line}}; font-size: 14px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span>Repository</span>
+<span style="font-size: 13px; color: {{repoColor}}">{{repo}}</span>
+</span>
+<a href="GitRepo.dc.html" style="height: 36px; display: flex; align-items: center; padding: 0 16px; border: 1px solid {{t.line}}; font-size: 14px">{{repoAction}}</a>
+</div>
+</sc-if>
+
+<sc-if value="{{ready}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 0; border-bottom: 1px solid {{t.line}}">
+<label for="base" style="font-size: 14px">Base branch</label>
+<input id="base" placeholder="main(default branch)" aria-describedby="base-hint" style="height: 40px; box-sizing: border-box; padding: 0 12px; border: 1px solid {{t.field}}; background: none; font-size: 14px">
+<p id="base-hint" style="margin: 0; font-size: 12px; line-height: 1.6; color: {{t.gray}}">空ならdefault branchを使います。記事用のbranchはここから作ります</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 0; border-bottom: 1px solid {{t.line}}">
+<label for="format" style="font-size: 14px">branch名の形式</label>
+<input id="format" value="{{format}}" onChange="{{onFormat}}" aria-describedby="format-hint" style="height: 40px; box-sizing: border-box; padding: 0 12px; border: 1px solid {{formatBorder}}; background: none; font-size: 14px">
+<p id="format-hint" style="margin: 0; font-size: 12px; line-height: 1.6; color: {{formatColor}}">{{formatHint}}</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 14px 0; border-bottom: 1px solid {{t.line}}">
+<label for="dir" style="font-size: 14px">記事のディレクトリ</label>
+<input id="dir" value="src/content/blog" aria-describedby="dir-hint" style="height: 40px; box-sizing: border-box; padding: 0 12px; border: 1px solid {{t.field}}; background: none; font-size: 14px">
+<p id="dir-hint" style="margin: 0; font-size: 12px; line-height: 1.6; color: {{t.gray}}">記事: src/content/blog/{slug}.md<br>画像: src/assets/{slug}/</p>
+</div>
+</sc-if>
+</div>
+
+<sc-if value="{{local}}" hint-placeholder-val="{{ false }}">
+<h2 style="margin: 32px 0 12px; font-size: 14px; font-weight: 500">記事の保存先</h2>
+<div style="border-top: 1px solid {{t.line}}; border-bottom: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; font-size: 14px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span>記事のディレクトリ</span>
+<span style="font-size: 13px; color: {{t.gray}}">記事: /home/niigo/blog/src/content/blog</span>
+<span style="font-size: 13px; color: {{t.gray}}">画像: /home/niigo/blog/src/assets/{slug}/</span>
+</span>
+<button style="height: 36px; padding: 0 16px; border: 1px solid {{t.line}}; font-size: 14px">変更</button>
+</div>
+</sc-if>
+
+<h2 style="margin: 32px 0 12px; font-size: 14px; font-weight: 500">このアプリについて</h2>
+<div style="border-top: 1px solid {{t.line}}">
+<div style="display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid {{t.line}}; font-size: 14px">
+<span>SMEAP</span>
+<span style="color: {{t.gray}}">MIT License</span>
+</div>
+<div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid {{t.line}}; font-size: 14px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span>オープンソースライセンス</span>
+<span style="font-size: 13px; color: {{t.gray}}">使っているライブラリ・フォントとライセンス文</span>
+</span>
+<span class="ms" aria-hidden="true" style="color: {{t.gray}}">chevron_right</span>
+</div>
+</div>
+
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"login":{"editor":"enum","options":["ログイン済み","Repository未選択","未ログイン"],"default":"ログイン済み"},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { out: false, format: 'blog/{slug}' }; }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', field: '#5A5A5A', acc: '#F99D1D', err: '#F08A7E' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', field: '#8A8A8A', acc: '#D57C00', err: '#B3261E' };
+    const login = this.props.login ?? 'ログイン済み';
+    const out = this.state.out || login === '未ログイン';
+    const noRepo = login === 'Repository未選択';
+    const format = this.state.format;
+    const count = format.split('{slug}').length - 1;
+    const name = format.replace('{slug}', 'first-post');
+    const bad = /(^\/|\/\/|\/$|\.\.|[\s~^:?*\[\\{}]|@\{|\.lock(\/|$)|\.$)/.test(name);
+    const formatHint = count !== 1 ? '{slug}を1つだけ入れてください' : bad ? 'branch名に使えない文字や並びがあります' : '例: ' + name;
+    const ng = count !== 1 || bad;
+    return {
+      t, format, formatHint,
+      loggedOut: out,
+      loggedIn: !out,
+      ready: !out && !noRepo,
+      local: out || noRepo,
+      repo: noRepo ? '選んでいません' : 'niigo/blog',
+      repoColor: t.gray,
+      repoAction: noRepo ? '選ぶ' : '変更',
+      logout: () => this.setState({ out: true }),
+      onFormat: (e) => this.setState({ format: e.target.value }),
+      formatColor: ng ? t.err : t.gray,
+      formatBorder: ng ? t.err : t.field
+    };
+  }
+}
+</script>
+</body>
+</html>

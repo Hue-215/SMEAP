@@ -1,0 +1,64 @@
+pub mod auth;
+pub mod commands;
+pub mod config;
+#[cfg(test)]
+pub(crate) mod fake;
+pub mod http;
+pub mod repos;
+pub mod token;
+
+use serde::Serialize;
+
+// docs/github-app.mdで登録したAppの値。公開してよい
+pub const CLIENT_ID: &str = "Iv23lioXdMt6XLfnVtBp";
+pub const APP_SLUG: &str = "s-m-e-a-p";
+
+// 画面で種類ごとに文言を選べるよう、StoreErrorと同じくkindに種類を入れてJSONにする
+#[derive(Debug, Serialize, thiserror::Error)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum GithubError {
+    // 401、bad_refresh_token、更新用トークンの期限切れ
+    #[error("login required")]
+    LoginRequired,
+    // 再開できる時刻(unix秒)。分からなければNone
+    #[error("rate limited")]
+    RateLimited { retry_at: Option<i64> },
+    #[error("unexpected status: {status}")]
+    Status { status: u16 },
+    #[error("redirect is not followed")]
+    Redirect,
+    #[error("URL is not allowed")]
+    UrlNotAllowed,
+    #[error("network error: {reason}")]
+    Network { reason: String },
+    #[error("invalid response: {reason}")]
+    InvalidResponse { reason: String },
+    #[error("invalid branch name format")]
+    InvalidBranchFormat,
+    #[error("invalid branch name")]
+    InvalidBranchName,
+    #[error("invalid posts path")]
+    InvalidPostsPath,
+    #[error("invalid repository")]
+    InvalidRepository,
+    #[error("io error: {path}: {reason}")]
+    Io { path: String, reason: String },
+}
+
+impl GithubError {
+    // 応答の中身(トークンを含むことがある)をエラー文に入れない
+    pub(crate) fn invalid_field(key: &str) -> Self {
+        GithubError::InvalidResponse {
+            reason: format!("{key} is missing or invalid"),
+        }
+    }
+}
+
+// unix秒
+pub(crate) fn now() -> i64 {
+    chrono::Utc::now().timestamp()
+}

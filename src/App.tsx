@@ -4,6 +4,7 @@ import {
   deleteArticle,
   getPostsDir,
   getPostsDirName,
+  githubWaitLogin,
   listArticles,
   pickPostsDir,
   setPostsDirName,
@@ -12,6 +13,7 @@ import {
   UnsavedArticleError,
   type Article,
   type EditedFields,
+  type GithubWaitLogin,
   type PostsDir,
   type StoreError,
 } from './api'
@@ -150,6 +152,12 @@ export default function App() {
   // 開いている記事が無ければ保存済みとみなす
   const saveOpenArticle = () => editor.current?.save() ?? Promise.resolve(true)
 
+  // 進む前に開いている記事を保存する
+  const saveBeforeProceed = async () => {
+    if (!(await saveOpenArticle())) throw new UnsavedArticleError()
+    await whenSaved()
+  }
+
   // Ctrl+F・Cmd+Fで検索を開く。受け手のeffectは依存を空にして付けっぱなしにするので、
   // 開く処理はref経由で最新のものを呼ぶ
   const openFindRef = useRef<(target: EventTarget | null) => void>(() => {})
@@ -285,8 +293,7 @@ export default function App() {
 
   // 開いている記事は前のディレクトリのものなので、選び直したら閉じる
   const pickPostsDirAndReload = async () => {
-    if (!(await saveOpenArticle())) throw new UnsavedArticleError()
-    await whenSaved()
+    await saveBeforeProceed()
     const picked = await pickPostsDir()
     if (picked === null) return
     setArticle({ status: 'none' })
@@ -297,6 +304,33 @@ export default function App() {
   const changePostsDirName = async (name: string) => {
     await setPostsDirName(name)
     setPostsDir({ kind: 'android', name })
+  }
+
+  // 保存先が替わった後。開いている記事は前の保存先のものなので閉じ、一覧と保存先を読み直す
+  const afterDestinationChange = () => {
+    setArticle({ status: 'none' })
+    reloadArticles()
+    if (!isAndroid) {
+      getPostsDir()
+        .then((location) => setPostsDir({ kind: 'desktop', ...location }))
+        .catch((e) => console.error('Failed to read the article directory', e))
+    }
+  }
+
+  // 保存先が替わるGitHubの操作。開いている記事を保存してから呼び、替わったら閉じて読み直す。
+  // 保存できなければUnsavedArticleErrorを投げて、呼ばない
+  const switchDestination = async (command: () => Promise<void>) => {
+    await saveBeforeProceed()
+    await command()
+    afterDestinationChange()
+  }
+
+  // ログインの待ち。Rust側はログインできると保存先を替えるので、呼ぶ前に保存しておき、返った後に閉じて読み直す
+  const waitGithubLogin = async (): Promise<GithubWaitLogin> => {
+    await saveBeforeProceed()
+    const result = await githubWaitLogin()
+    if (result.outcome === 'loggedIn') afterDestinationChange()
+    return result
   }
 
   const openSettings = () => {
@@ -459,6 +493,8 @@ export default function App() {
           postsDir={postsDir}
           onPickPostsDir={pickPostsDirAndReload}
           onChangePostsDirName={changePostsDirName}
+          onGithubSwitch={switchDestination}
+          onGithubLoginWait={waitGithubLogin}
           onClose={() => setSettingsOpen(false)}
         />
       )}
