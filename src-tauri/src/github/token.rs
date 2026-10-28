@@ -58,7 +58,7 @@ pub fn write(path: &Path, tokens: &TokenSet) -> Result<(), GithubError> {
     })?;
     fs::create_dir_all(dir).map_err(|error| io_error(dir, error))?;
     let json = serde_json::to_vec(tokens).expect("TokenSet should serialize");
-    // store.rsのwrite_tempは0644で作るので、token.jsonは直接作る。NamedTempFileはunixで0600で作る
+    // write_tempを使わず、NamedTempFile(unixでは0600)で書いて置き換える
     let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|error| io_error(dir, error))?;
     tmp.write_all(&json)
         .map_err(|error| io_error(tmp.path(), error))?;
@@ -99,12 +99,8 @@ impl TokenManager {
 
     // 期限内ならそのまま、切れていれば取り直して保存してから返す
     pub fn access_token(&self, now: i64) -> Result<String, GithubError> {
-        let tokens = self.tokens(now)?;
-        if tokens.expires_at > now + EXPIRY_MARGIN {
-            return Ok(tokens.access_token);
-        }
+        // 読みと消す・書き替える判断は、ほかの書き込みと重ねないため最初にロックを取る
         let _guard = self.lock();
-        // 待っている間に、ほかのスレッドが取り直しを済ませたかもしれない
         let tokens = self.tokens(now)?;
         if tokens.expires_at > now + EXPIRY_MARGIN {
             return Ok(tokens.access_token);
@@ -129,7 +125,7 @@ impl TokenManager {
         }
     }
 
-    // 更新用のトークンが切れていたら、取り直せないのでtoken.jsonを消してログインし直し
+    // ロックの中で呼ぶ。更新用のトークンが切れていたら、読んだ組を消してログインし直し
     fn tokens(&self, now: i64) -> Result<TokenSet, GithubError> {
         let tokens = read(&self.path)?.ok_or(GithubError::LoginRequired)?;
         if tokens.refresh_token_expires_at <= now + EXPIRY_MARGIN {
@@ -137,6 +133,16 @@ impl TokenManager {
             return Err(GithubError::LoginRequired);
         }
         Ok(tokens)
+    }
+
+    // GitHub側で認可を取り消されたときに消す。読み直して、そのaccess_tokenが引数と同じ組のときだけ消す
+    pub fn invalidate(&self, access_token: &str) -> Result<(), GithubError> {
+        let _guard = self.lock();
+        let tokens = read(&self.path)?;
+        if tokens.is_some_and(|tokens| tokens.access_token == access_token) {
+            delete(&self.path)?;
+        }
+        Ok(())
     }
 
     // ログイン・ログアウトでtoken.jsonを書き換える間に取る。取っている間はaccess_tokenを呼ばない(同じロックを取る)
@@ -264,6 +270,20 @@ mod tests {
     }
 
     #[test]
+    fn invalidateは同じaccess_tokenのときだけ消す() {
+        let tmp = TempDir::new().unwrap();
+        let path = file_of(&tmp);
+        write(&path, &tokens(100, 200)).unwrap();
+        let transport = Arc::new(FakeTransport::new(vec![]));
+        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
+        // 別の組が書かれていたら消さない
+        manager.invalidate("OTHER").unwrap();
+        assert_eq!(read(&path).unwrap(), Some(tokens(100, 200)));
+        manager.invalidate("ACCESS").unwrap();
+        assert_eq!(read(&path).unwrap(), None);
+    }
+
+    #[test]
     fn トークンの組のDebugにトークンが出ない() {
         let debug = format!("{:?}", tokens(100, 200));
         assert!(!debug.contains("ACCESS"));
@@ -313,10 +333,14 @@ mod tests {
         let Some(read_only) = read_only_dir(&dir) else {
             return;
         };
-        let manager = TokenManager::new(path, CLIENT_ID.to_string(), transport);
+        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
         let result = manager.access_token(NOW);
         drop(read_only);
-        assert!(result.is_err());
+        // 通信は通っているので、ログインし直しではない
+        let error = result.unwrap_err();
+        assert!(!matches!(error, GithubError::LoginRequired));
+        // 前の組はそのまま
+        assert_eq!(read(&path).unwrap(), Some(tokens(NOW + 1, NOW + 10_000)));
     }
 
     #[test]

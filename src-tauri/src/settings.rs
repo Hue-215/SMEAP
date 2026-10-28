@@ -413,6 +413,30 @@ mod tests {
         assert_eq!(read.github.repo, Some(repo()));
         assert_eq!(read.github.branch_format, "posts/{slug}");
         assert_eq!(read.github.posts_path, "src/content/blog");
+
+        // 不正なbaseBranch
+        let read = read_with_one_invalid("baseBranch", serde_json::json!("a..b"));
+        assert_eq!(read.github.repo, Some(repo()));
+        assert_eq!(read.github.base_branch, None);
+
+        // defaultBranchが不正なrepository
+        let read = read_with_one_invalid(
+            "repo",
+            serde_json::json!({ "owner": "owner", "name": "blog", "defaultBranch": "a..b" }),
+        );
+        assert_eq!(read.github.repo, None);
+
+        // ownerかnameが..のrepository
+        let read = read_with_one_invalid(
+            "repo",
+            serde_json::json!({ "owner": "..", "name": "blog", "defaultBranch": "main" }),
+        );
+        assert_eq!(read.github.repo, None);
+        let read = read_with_one_invalid(
+            "repo",
+            serde_json::json!({ "owner": "owner", "name": "..", "defaultBranch": "main" }),
+        );
+        assert_eq!(read.github.repo, None);
     }
 
     #[test]

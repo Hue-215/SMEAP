@@ -104,7 +104,7 @@ pub fn poll_once(
     }
 }
 
-// started_atはrequest_device_codeした時刻。sleepは秒数を受けて待つ
+// started_atはrequest_device_codeした時刻
 pub fn poll_until_done(
     transport: &dyn Transport,
     client_id: &str,
@@ -181,7 +181,7 @@ fn seconds_of(body: &serde_json::Value, key: &str) -> Result<u64, GithubError> {
         .ok_or_else(|| GithubError::invalid_field(key))
 }
 
-// 応答の項目から、期限を今の時刻からの秒数にした組を作る
+// 応答の秒数を、unix秒の期限の時刻にして組を作る
 fn token_of(body: &serde_json::Value, now: i64) -> Result<TokenSet, GithubError> {
     Ok(TokenSet {
         access_token: string_of(body, "access_token")?,
@@ -419,7 +419,7 @@ mod tests {
         let transport = FakeTransport::new(vec![Ok(Response {
             status: 200,
             headers: vec![],
-            body: format!(r#"{{"error":true,"access_token":"{ACCESS_TOKEN}"}}"#).into_bytes(),
+            body: format!(r#"{{"access_token":"{ACCESS_TOKEN}""#).into_bytes(),
         })]);
         let error = request_device_code(&transport, CLIENT_ID).unwrap_err();
         assert!(!format!("{error}").contains(ACCESS_TOKEN));
@@ -546,6 +546,64 @@ mod tests {
         .unwrap();
         assert_eq!(outcome, LoginOutcome::Expired);
         assert_eq!(transport.requests().len(), 1);
+    }
+
+    #[test]
+    fn access_deniedなら拒否で終わる() {
+        let transport = FakeTransport::new(vec![Ok(json_response(
+            200,
+            json!({ "error": "access_denied" }),
+        ))]);
+        let time = FakeTime::new();
+        let outcome = poll_until_done(
+            &transport,
+            CLIENT_ID,
+            &device_code(),
+            NOW,
+            &|| time.now(),
+            &|seconds| time.sleep(seconds),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(outcome, LoginOutcome::Denied);
+    }
+
+    #[test]
+    fn expired_tokenなら期限切れで終わる() {
+        let transport = FakeTransport::new(vec![Ok(json_response(
+            200,
+            json!({ "error": "expired_token" }),
+        ))]);
+        let time = FakeTime::new();
+        let outcome = poll_until_done(
+            &transport,
+            CLIENT_ID,
+            &device_code(),
+            NOW,
+            &|| time.now(),
+            &|seconds| time.sleep(seconds),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(outcome, LoginOutcome::Expired);
+    }
+
+    #[test]
+    fn 通信の失敗はエラーで終わる() {
+        let transport = FakeTransport::new(vec![Err(GithubError::Network {
+            reason: "closed".to_string(),
+        })]);
+        let time = FakeTime::new();
+        let outcome = poll_until_done(
+            &transport,
+            CLIENT_ID,
+            &device_code(),
+            NOW,
+            &|| time.now(),
+            &|seconds| time.sleep(seconds),
+            &AtomicBool::new(false),
+        );
+        assert!(outcome.is_err());
     }
 
     #[test]

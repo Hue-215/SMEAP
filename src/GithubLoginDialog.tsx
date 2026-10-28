@@ -80,7 +80,7 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
     }
   }, [])
 
-  // やり直す。前の試行の出し物を消して、コードから取り直す
+  // やり直す
   const retry = () => {
     setPhase('starting')
     setCode(null)

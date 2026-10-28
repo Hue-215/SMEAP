@@ -3,7 +3,6 @@ import {
   githubListRepositories,
   openGithubPage,
   type GithubRepoRef,
-  type GithubRepository,
 } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
@@ -11,7 +10,7 @@ import { githubErrorText } from './githubError'
 import { t } from './i18n'
 
 interface GithubRepoDialogProps {
-  // 初めに選んでおくrepository。選んでいなければnull
+  // 初めに選んでおくrepository
   current: GithubRepoRef | null
   // 選ぶ。開いている記事の保存と向き先の替えはAppが行う。失敗の文言を返す
   onSelect: (repo: GithubRepoRef) => Promise<string | null>
@@ -21,7 +20,7 @@ interface GithubRepoDialogProps {
 // トークンで触れられるrepositoryの一覧から選ぶダイアログ
 export default function GithubRepoDialog({ current, onSelect, onCancel }: GithubRepoDialogProps) {
   // 一覧。nullは読んでいる間、'failed'は読めなかった
-  const [repos, setRepos] = useState<GithubRepository[] | 'failed' | null>(null)
+  const [repos, setRepos] = useState<GithubRepoRef[] | 'failed' | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   const [picked, setPicked] = useState<GithubRepoRef | null>(current)
   const [busy, setBusy] = useState(false)

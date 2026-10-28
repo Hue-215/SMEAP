@@ -71,7 +71,6 @@ pub struct Response {
 }
 
 impl Response {
-    // 大文字小文字を区別しない
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -135,18 +134,23 @@ pub fn api_url(segments: &[&str], query: &[(&str, &str)]) -> Result<String, Gith
     Ok(url)
 }
 
-// check_urlを通し、Authorization・User-Agent・X-GitHub-Api-Version・Acceptを付ける
+// トークンはAPIにだけ送る。AuthorizationのあるRequestのURLはAPI_BASEの下に限る(Linkのnextがログイン用のURLを指していても送らない)
+fn check_api_url(url: &str) -> Result<(), GithubError> {
+    check_url(url)?;
+    if url.starts_with(&format!("{API_BASE}/")) {
+        Ok(())
+    } else {
+        Err(GithubError::UrlNotAllowed)
+    }
+}
+
 pub fn api_request(
     method: Method,
     url: &str,
     token: &str,
     body: Option<serde_json::Value>,
 ) -> Result<Request, GithubError> {
-    check_url(url)?;
-    // トークンはAPIにだけ送る(Linkのnextがログイン用のURLを指していても送らない)
-    if !url.starts_with(&format!("{API_BASE}/")) {
-        return Err(GithubError::UrlNotAllowed);
-    }
+    check_api_url(url)?;
     let mut headers = vec![
         ("Authorization".to_string(), format!("Bearer {token}")),
         ("User-Agent".to_string(), USER_AGENT.to_string()),
@@ -168,7 +172,7 @@ pub fn api_request(
     })
 }
 
-// github.com/login用。フォームをapplication/x-www-form-urlencodedで送り、Accept: application/jsonを付ける。Authorizationは付けない
+// Authorizationは付けない
 pub fn login_request(url: &str, form: &[(&str, &str)]) -> Result<Request, GithubError> {
     check_url(url)?;
     let body = form
@@ -196,7 +200,7 @@ pub fn login_request(url: &str, form: &[(&str, &str)]) -> Result<Request, Github
     })
 }
 
-// 2xxはOk。それ以外をGithubErrorに分ける。nowはretry-afterから再開時刻を求めるのに使う
+// nowはretry-afterから再開時刻を求めるのに使う
 pub fn classify(response: Response, now: i64) -> Result<Response, GithubError> {
     let status = response.status;
     if (200..300).contains(&status) {
@@ -215,8 +219,11 @@ pub fn classify(response: Response, now: i64) -> Result<Response, GithubError> {
                 retry_at: Some(retry_at),
             });
         }
-        // ヘッダーの無い429は、いつ再開できるか分からないレート制限。403はそれ以外の理由
-        if status == 429 {
+        // ヘッダーの無い429と、残りが0でもresetの読めない403は、いつ再開できるか分からない
+        let exhausted = response
+            .header("x-ratelimit-remaining")
+            .is_some_and(|value| value.trim() == "0");
+        if status == 429 || exhausted {
             return Err(GithubError::RateLimited { retry_at: None });
         }
     }
@@ -320,6 +327,16 @@ fn network_reason(error: ureq::Error) -> String {
 
 impl Transport for UreqTransport {
     fn send(&self, request: &Request) -> Result<Response, GithubError> {
+        // 呼び出し側で組み立てたRequestも確かめる
+        if request
+            .headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        {
+            check_api_url(&request.url)?;
+        } else {
+            check_url(&request.url)?;
+        }
         self.call(request).map_err(|error| GithubError::Network {
             reason: network_reason(error),
         })
@@ -438,6 +455,19 @@ mod tests {
                 "{ng:?} は断るはず"
             );
         }
+    }
+
+    #[test]
+    fn api_urlはsegmentの特殊文字をpercentエンコードする() {
+        assert_eq!(
+            api_url(&["a?b", "c#d"], &[]).unwrap(),
+            "https://api.github.com/a%3Fb/c%23d"
+        );
+        // 空のsegmentは断つ
+        assert!(matches!(
+            api_url(&["a", ""], &[]),
+            Err(GithubError::UrlNotAllowed)
+        ));
     }
 
     #[test]
@@ -566,6 +596,21 @@ mod tests {
     }
 
     #[test]
+    fn classifyは403で残りが0でなければステータスのエラーにする() {
+        let result = classify(response(403, &[("x-ratelimit-remaining", "5")]), NOW);
+        assert!(matches!(result, Err(GithubError::Status { status: 403 })));
+    }
+
+    #[test]
+    fn classifyは403で残りが0でもresetが読めなければ再開できる時刻を持たない() {
+        let result = classify(response(403, &[("x-ratelimit-remaining", "0")]), NOW);
+        match result {
+            Err(GithubError::RateLimited { retry_at }) => assert_eq!(retry_at, None),
+            other => panic!("403 はレート制限のはず: {other:?}"),
+        }
+    }
+
+    #[test]
     fn classifyは404と5xxをステータスのエラーにする() {
         for status in [404, 500, 502] {
             let result = classify(response(status, &[]), NOW);
@@ -574,6 +619,33 @@ mod tests {
                 "{status} はステータスのエラーのはず"
             );
         }
+    }
+
+    #[test]
+    fn 送る前に宛先をもう一度確かめる() {
+        let transport = UreqTransport::new();
+        // Authorizationが無くても、許可の外のURLは送らない
+        let request = Request {
+            method: Method::Get,
+            url: "https://example.com/".to_string(),
+            headers: vec![],
+            body: None,
+        };
+        assert!(matches!(
+            transport.send(&request),
+            Err(GithubError::UrlNotAllowed)
+        ));
+        // AuthorizationのあるRequestはAPIの下だけ。トークンをログイン用のURLへ送らない
+        let request = Request {
+            method: Method::Get,
+            url: TOKEN_URL.to_string(),
+            headers: vec![("Authorization".to_string(), "Bearer TOKEN".to_string())],
+            body: None,
+        };
+        assert!(matches!(
+            transport.send(&request),
+            Err(GithubError::UrlNotAllowed)
+        ));
     }
 
     #[test]

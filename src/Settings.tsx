@@ -77,7 +77,6 @@ export default function Settings({
   // 全文から戻ったときに、一覧の位置へ戻す
   const listScroll = useRef(0)
 
-  // 設定画面を開いたときに読む。節は読めている間だけ出す
   const reloadGithub = (): Promise<GithubStatus | null> => {
     return githubStatus()
       .then(async (status) => {
@@ -108,7 +107,7 @@ export default function Settings({
   }, [])
 
   // 連携しているか。ログインしていてRepositoryを選んでいること(Rust側のconfig::linkedと同じ)
-  const linked = github !== null && github.loggedIn && github.repo !== null
+  const linked = github !== null && github.loggedIn && github.settings.repo !== null
 
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = page === 'list' && !shown ? listScroll.current : 0
@@ -164,7 +163,7 @@ export default function Settings({
   const loginDone = async () => {
     setLoginDialog(false)
     const status = await reloadGithub()
-    if (status !== null && status.repo === null) setRepoDialog(true)
+    if (status !== null && status.settings.repo === null) setRepoDialog(true)
   }
 
   // 選べたらダイアログを閉じて読み直す。失敗の文言はダイアログに出す
@@ -242,9 +241,9 @@ export default function Settings({
                           <span className="settings-row-main">
                             <span>{t('settings.github_repo')}</span>
                             <span className="settings-note">
-                              {github.repo === null
+                              {github.settings.repo === null
                                 ? t('settings.github_repo_none')
-                                : `${github.repo.owner}/${github.repo.name}`}
+                                : `${github.settings.repo.owner}/${github.settings.repo.name}`}
                             </span>
                           </span>
                           <button
@@ -252,14 +251,14 @@ export default function Settings({
                             className="settings-row-action"
                             onClick={() => setRepoDialog(true)}
                           >
-                            {github.repo === null
+                            {github.settings.repo === null
                               ? t('settings.github_repo_pick')
                               : t('settings.github_repo_change')}
                           </button>
                         </div>
-                        {github.repo !== null && (
+                        {github.settings.repo !== null && (
                           <GithubFields
-                            key={`${github.repo.owner}/${github.repo.name}`}
+                            key={`${github.settings.repo.owner}/${github.settings.repo.name}`}
                             initial={github.settings}
                             onSave={saveGithubSettings}
                           />
@@ -334,7 +333,7 @@ export default function Settings({
       )}
       {repoDialog && (
         <GithubRepoDialog
-          current={github?.repo ?? null}
+          current={github?.settings.repo ?? null}
           onSelect={selectRepo}
           onCancel={() => setRepoDialog(false)}
         />

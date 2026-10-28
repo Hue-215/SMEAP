@@ -190,7 +190,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 
 #### 手元の記事
 
-- アプリのデータ領域の`github/{owner}/{repo}/`の下に、リポジトリと同じ並び(`src/content/blog/{slug}.md`、`src/assets/{slug}/`)で記事のファイルだけを置く。読み書きは今の保存層がそのまま行う
+- アプリのデータ領域の`github/{owner}/{repo}/files/`の下に、リポジトリと同じ並び(`src/content/blog/{slug}.md`、`src/assets/{slug}/`)で記事のファイルだけを置く。読み書きは今の保存層がそのまま行う
 - 記事ごとに、手元の内容がどのリモートの内容から来たかを`github/{owner}/{repo}/state.json`に持つ
   - 元にしたブランチ(ベースか記事用か)とコミット
   - 元にしたときの記事のファイルの一覧(mdと`assets/{slug}/`の下)と、それぞれのblobのSHA(`blob {バイト数}\0{内容}`のSHA-1)、手元に取ってきたか

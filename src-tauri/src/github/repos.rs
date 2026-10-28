@@ -1,15 +1,6 @@
-use serde::Serialize;
-
+use super::config::RepoRef;
 use super::http::{api_request, api_url, classify, json_body, next_link, Method, Transport};
 use super::GithubError;
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Repository {
-    pub owner: String,
-    pub name: String,
-    pub default_branch: String,
-}
 
 pub fn current_user(
     transport: &dyn Transport,
@@ -29,7 +20,7 @@ pub fn list_repositories(
     transport: &dyn Transport,
     token: &str,
     now: i64,
-) -> Result<Vec<Repository>, GithubError> {
+) -> Result<Vec<RepoRef>, GithubError> {
     let start = api_url(&["user", "installations"], &[("per_page", "100")])?;
     let mut repositories = Vec::new();
     for installation in list_all(transport, token, now, &start, "installations")? {
@@ -76,8 +67,8 @@ fn list_all(
     Ok(items)
 }
 
-fn repository_of(item: &serde_json::Value) -> Result<Repository, GithubError> {
-    Ok(Repository {
+fn repository_of(item: &serde_json::Value) -> Result<RepoRef, GithubError> {
+    Ok(RepoRef {
         owner: item
             .get("owner")
             .and_then(|owner| owner.get("login"))
@@ -109,9 +100,9 @@ mod tests {
     const NOW: i64 = 1_000_000;
     const TOKEN: &str = "TOKEN";
 
-    fn repository(full_name: &str) -> Repository {
+    fn repository(full_name: &str) -> RepoRef {
         let (owner, name) = full_name.split_once('/').unwrap();
-        Repository {
+        RepoRef {
             owner: owner.to_string(),
             name: name.to_string(),
             default_branch: "main".to_string(),

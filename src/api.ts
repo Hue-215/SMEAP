@@ -184,7 +184,6 @@ export interface GithubStatus {
   loggedIn: boolean
   // 通信できなければ、ログインしていてもnull
   login: string | null
-  repo: GithubRepoRef | null
   settings: GithubSettings
   tokenUnreadable: boolean
   // ログインし直しが必要になった。画面が記事を保存してからgithubLogoutで保存先を戻す
@@ -202,13 +201,6 @@ export interface GithubStartLogin {
 export interface GithubWaitLogin {
   outcome: 'loggedIn' | 'expired' | 'denied' | 'cancelled'
   login: string | null
-}
-
-// Rust側のRepository(src-tauri/src/github/repos.rs)とそろえる
-export interface GithubRepository {
-  owner: string
-  name: string
-  defaultBranch: string
 }
 
 // Rust側のGithubError(src-tauri/src/github/mod.rs)とそろえる。画面はkindで文言を選ぶ
@@ -234,7 +226,7 @@ export function githubStartLogin(): Promise<GithubStartLogin> {
   return invoke<GithubStartLogin>('github_start_login')
 }
 
-// 承認されるまで返らない。やめるのは先にgithubCancelLoginを呼ぶ
+// 承認・期限切れ・拒否・取り消しまで返らない。やめるにはgithubCancelLoginを呼ぶ
 export function githubWaitLogin(): Promise<GithubWaitLogin> {
   return invoke<GithubWaitLogin>('github_wait_login')
 }
@@ -247,8 +239,8 @@ export function githubLogout(): Promise<void> {
   return invoke('github_logout')
 }
 
-export function githubListRepositories(): Promise<GithubRepository[]> {
-  return invoke<GithubRepository[]>('github_list_repositories')
+export function githubListRepositories(): Promise<GithubRepoRef[]> {
+  return invoke<GithubRepoRef[]>('github_list_repositories')
 }
 
 export function githubSelectRepository(repo: GithubRepoRef): Promise<void> {

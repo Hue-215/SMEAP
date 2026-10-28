@@ -74,7 +74,7 @@ pub fn validate_branch_format(format: &str) -> Result<(), GithubError> {
 
 pub fn validate_posts_path(path: &str) -> Result<(), GithubError> {
     // /区切りの相対パスで、2つ上があること(画像は2つ上のassetsに入る)。
-    // 空の部分・.・..・\・制御文字は受け付けない
+    // .で始まる部分・\・ASCIIの印字可能文字以外は断つ
     let ok = !path.is_empty()
         && path.split('/').count() >= 2
         && path.split('/').all(|component| {
@@ -136,8 +136,7 @@ fn check_ref_format(name: &str) -> bool {
 // "src/content/blog" -> "src/assets"
 pub fn assets_path(posts_path: &str) -> String {
     let mut components: Vec<&str> = posts_path.split('/').collect();
-    // 記事のディレクトリの2つ上(validate_posts_pathの深さ2以上を確かめた後)
-    components.truncate(components.len() - 2);
+    components.truncate(components.len().saturating_sub(2));
     components.push("assets");
     components.join("/")
 }
@@ -146,15 +145,16 @@ pub fn token_path(data_dir: &Path) -> PathBuf {
     data_dir.join("github/token.json")
 }
 
+// filesの下に記事を置き、同じgithub/{owner}/{repo}/の下にstate.json・synced・backupを置く(#64)
 pub fn github_posts_dir(data_dir: &Path, repo: &RepoRef, posts_path: &str) -> PathBuf {
     data_dir
         .join("github")
         .join(&repo.owner)
         .join(&repo.name)
+        .join("files")
         .join(posts_path)
 }
 
-// ログインしていてRepositoryを選んでいればGitHub用の置き場所、そうでなければlocal
 pub fn choose_posts_dir(
     local: PathBuf,
     data_dir: &Path,
@@ -355,7 +355,7 @@ mod tests {
     fn GitHub用の置き場所はデータ領域のgithubの下() {
         assert_eq!(
             github_posts_dir(Path::new("/data"), &repo(), "src/content/blog"),
-            PathBuf::from("/data/github/owner/blog/src/content/blog")
+            PathBuf::from("/data/github/owner/blog/files/src/content/blog")
         );
     }
 
@@ -415,5 +415,19 @@ mod tests {
         assert_eq!(posts_dir, local);
         // 画面で知らせるために返す
         assert!(error.is_some());
+    }
+
+    #[test]
+    fn linkedはrepositoryとtoken_jsonの両方あるときtrue() {
+        let tmp = TempDir::new().unwrap();
+        // token.jsonが無ければfalse
+        assert!(!linked(tmp.path(), &settings_with_repo()));
+        token::write(&token_path(tmp.path()), &token_set()).unwrap();
+        // repositoryが無ければfalse
+        assert!(!linked(tmp.path(), &GithubSettings::default()));
+        assert!(linked(tmp.path(), &settings_with_repo()));
+        // token.jsonが壊れていればfalse
+        fs::write(token_path(tmp.path()), "@").unwrap();
+        assert!(!linked(tmp.path(), &settings_with_repo()));
     }
 }
