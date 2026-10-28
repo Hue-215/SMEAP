@@ -1,5 +1,5 @@
 use super::config::RepoRef;
-use super::http::{api_request, api_url, classify, json_body, next_link, Method, Transport};
+use super::http::{api_request, api_url, next_link, send_json, string_of, Method, Transport};
 use super::GithubError;
 
 pub fn current_user(
@@ -8,12 +8,8 @@ pub fn current_user(
     now: i64,
 ) -> Result<String, GithubError> {
     let request = api_request(Method::Get, &api_url(&["user"], &[])?, token, None)?;
-    let response = classify(transport.send(&request)?, now)?;
-    let body = json_body(&response)?;
-    body.get("login")
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| GithubError::invalid_field("login"))
+    let (_, body) = send_json(transport, &request, now)?;
+    string_of(&body, "login")
 }
 
 pub fn list_repositories(
@@ -55,8 +51,7 @@ fn list_all(
     let mut url = Some(start_url.to_string());
     while let Some(current) = url {
         let request = api_request(Method::Get, &current, token, None)?;
-        let response = classify(transport.send(&request)?, now)?;
-        let body = json_body(&response)?;
+        let (response, body) = send_json(transport, &request, now)?;
         let page = body
             .get(key)
             .and_then(serde_json::Value::as_array)
@@ -69,22 +64,9 @@ fn list_all(
 
 fn repository_of(item: &serde_json::Value) -> Result<RepoRef, GithubError> {
     Ok(RepoRef {
-        owner: item
-            .get("owner")
-            .and_then(|owner| owner.get("login"))
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| GithubError::invalid_field("owner.login"))?
-            .to_string(),
-        name: item
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| GithubError::invalid_field("name"))?
-            .to_string(),
-        default_branch: item
-            .get("default_branch")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| GithubError::invalid_field("default_branch"))?
-            .to_string(),
+        owner: string_of(item, "owner.login")?,
+        name: string_of(item, "name")?,
+        default_branch: string_of(item, "default_branch")?,
     })
 }
 

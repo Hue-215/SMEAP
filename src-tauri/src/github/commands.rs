@@ -12,9 +12,9 @@ use super::config::{self, GithubSettings, RepoRef};
 use super::http::{Transport, UreqTransport, VERIFICATION_URL};
 use super::repos;
 use super::token::{self, TokenManager, TokenSet};
-use super::{APP_SLUG, CLIENT_ID};
+use super::{now, APP_SLUG, CLIENT_ID};
 use crate::github::GithubError;
-use crate::settings;
+use crate::settings::{self, Settings};
 use crate::store::{Store, StoreError};
 
 // GithubErrorとStoreErrorはkind付きのJSONで画面へ返す。Openerだけkindが無く、文字列になる
@@ -38,14 +38,14 @@ impl Serialize for CommandError {
     }
 }
 
-// デバイスフローの待ち。device_codeは画面に渡さずここに持つ
-struct LoginState {
+// デバイスフローの試行。device_codeは画面に渡さずここに持つ
+#[derive(Clone)]
+struct Attempt {
     // 始め直すと替わる。待ちが終わったときに、自分の試行がまだ続いているかを確かめる
-    attempt: u64,
+    number: u64,
     code: DeviceCode,
     started_at: i64,
     cancelled: Arc<AtomicBool>,
-    waiting: bool,
 }
 
 #[derive(Default)]
@@ -54,40 +54,35 @@ struct Login {
     state: Option<LoginState>,
 }
 
-// 待ちを始めた試行。取り消しと、終わったときに自分の試行かを確かめるのに使う
-struct Waiting {
-    attempt: u64,
-    code: DeviceCode,
-    started_at: i64,
-    cancelled: Arc<AtomicBool>,
+// 始めている試行と、待ちに入ったか
+struct LoginState {
+    attempt: Attempt,
+    waiting: bool,
 }
 
 impl Login {
     // 新しい試行を始める。前の試行の待ちは取り消す
     fn start(&mut self, code: DeviceCode, started_at: i64) {
         if let Some(previous) = &self.state {
-            previous.cancelled.store(true, Ordering::SeqCst);
+            previous.attempt.cancelled.store(true, Ordering::SeqCst);
         }
         self.last_attempt += 1;
         self.state = Some(LoginState {
-            attempt: self.last_attempt,
-            code,
-            started_at,
-            cancelled: Arc::new(AtomicBool::new(false)),
+            attempt: Attempt {
+                number: self.last_attempt,
+                code,
+                started_at,
+                cancelled: Arc::new(AtomicBool::new(false)),
+            },
             waiting: false,
         });
     }
 
     // 待ちを始める。始めた試行が無い・もう待っているときはNone
-    fn begin_wait(&mut self) -> Option<Waiting> {
+    fn begin_wait(&mut self) -> Option<Attempt> {
         let state = self.state.as_mut().filter(|state| !state.waiting)?;
         state.waiting = true;
-        Some(Waiting {
-            attempt: state.attempt,
-            code: state.code.clone(),
-            started_at: state.started_at,
-            cancelled: state.cancelled.clone(),
-        })
+        Some(state.attempt.clone())
     }
 
     // 待ちを終える。始め直されていたら、新しい試行の状態は残す
@@ -95,7 +90,7 @@ impl Login {
         if self
             .state
             .as_ref()
-            .is_some_and(|state| state.attempt == attempt)
+            .is_some_and(|state| state.attempt.number == attempt)
         {
             self.state = None;
         }
@@ -103,7 +98,7 @@ impl Login {
 
     fn cancel(&mut self) {
         if let Some(state) = &self.state {
-            state.cancelled.store(true, Ordering::SeqCst);
+            state.attempt.cancelled.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -140,7 +135,7 @@ impl GitHub {
     fn logout(&self, app: &AppHandle, store: &Store) -> Result<(), CommandError> {
         let _changes = settings::lock_changes();
         let _tokens = self.manager.lock();
-        let settings = settings::current(&settings::file_path(app)?)?;
+        let settings = settings::read_from(&settings::file_path(app)?)?;
         settings::logout(
             store,
             &settings::data_dir(app)?,
@@ -214,37 +209,27 @@ fn status_of(
         logged_in: false,
         login: None,
         settings: settings.clone(),
-        token_unreadable: false,
+        token_unreadable: token_read.is_err(),
         login_expired: false,
     };
-    if token_read.is_err() {
-        status.token_unreadable = true;
-    }
-    match access {
-        Some(Ok(_)) => match user {
-            Some(Ok(login)) => {
-                status.logged_in = true;
-                status.login = Some(login.clone());
-            }
-            // 通信できなければ、ログインしたまま名前だけ出さない
-            Some(Err(GithubError::Network { .. } | GithubError::RateLimited { .. })) => {
-                status.logged_in = true;
-            }
-            // GitHub側で認可を取り消された。手元の組を消すのは呼び出し側が行う
-            Some(Err(GithubError::LoginRequired)) => {}
-            Some(Err(error)) => {
-                eprintln!("Failed to read the GitHub account: {error}");
-                status.logged_in = true;
-            }
-            None => {}
-        },
+    // userを確かめるのはaccessが通ったとき。2つの通信の失敗は同じ扱いにする
+    let (result, message) = match access {
+        Some(Ok(_)) => (user, "Failed to read the GitHub account"),
+        other => (other, "Failed to get a GitHub access token"),
+    };
+    match result {
+        Some(Ok(login)) => {
+            status.logged_in = true;
+            status.login = Some(login.clone());
+        }
         // 通信できなければ、ログインしたまま出す
         Some(Err(GithubError::Network { .. } | GithubError::RateLimited { .. })) => {
             status.logged_in = true;
         }
+        // GitHub側で認可を取り消された。手元の組を消すのは呼び出し側が行う
         Some(Err(GithubError::LoginRequired)) => {}
         Some(Err(error)) => {
-            eprintln!("Failed to get a GitHub access token: {error}");
+            eprintln!("{message}: {error}");
             status.logged_in = true;
         }
         None => {}
@@ -261,7 +246,7 @@ pub fn github_status(
     github: State<'_, GitHub>,
     store: State<'_, Store>,
 ) -> Result<GithubStatus, CommandError> {
-    let settings = settings::current(&settings::file_path(&app)?)?;
+    let settings = settings::read_from(&settings::file_path(&app)?)?;
     let data_dir = settings::data_dir(&app)?;
     let local = local_dir(&github.default_local_dir, &settings);
     let token_read = token::read(&config::token_path(&data_dir));
@@ -269,14 +254,10 @@ pub fn github_status(
     let (access, user) = match &token_read {
         Ok(Some(_)) => {
             let access = github.manager.access_token(now());
-            let user = match &access {
-                Ok(access) => Some(repos::current_user(
-                    github.transport.as_ref(),
-                    access,
-                    now(),
-                )),
-                Err(_) => None,
-            };
+            let user = access
+                .as_ref()
+                .ok()
+                .map(|access| repos::current_user(github.transport.as_ref(), access, now()));
             (Some(access), user)
         }
         _ => (None, None),
@@ -312,13 +293,10 @@ pub async fn github_wait_login(
     github: State<'_, GitHub>,
     store: State<'_, Store>,
 ) -> Result<WaitLogin, CommandError> {
-    let cancelled = WaitLogin {
-        outcome: LoginResult::Cancelled,
-        login: None,
-    };
+    let cancelled = wait_login(LoginResult::Cancelled);
     // startしていない呼び出しと、同じ試行を2つ目に待つ呼び出しは、取り消されたものとして終える
-    let Some(Waiting {
-        attempt,
+    let Some(Attempt {
+        number,
         code,
         started_at,
         cancelled: waiting,
@@ -344,7 +322,7 @@ pub async fn github_wait_login(
     .map_err(|error| GithubError::InvalidResponse {
         reason: format!("the login wait stopped: {error}"),
     })?;
-    github.login().end_wait(attempt);
+    github.login().end_wait(number);
     match outcome? {
         // 取れた後に取り消されていたら、保存しない
         LoginOutcome::Token(_) if waiting.load(Ordering::SeqCst) => Ok(cancelled),
@@ -366,15 +344,17 @@ pub async fn github_wait_login(
                 login,
             })
         }
-        LoginOutcome::Expired => Ok(WaitLogin {
-            outcome: LoginResult::Expired,
-            login: None,
-        }),
-        LoginOutcome::Denied => Ok(WaitLogin {
-            outcome: LoginResult::Denied,
-            login: None,
-        }),
+        LoginOutcome::Expired => Ok(wait_login(LoginResult::Expired)),
+        LoginOutcome::Denied => Ok(wait_login(LoginResult::Denied)),
         LoginOutcome::Cancelled => Ok(cancelled),
+    }
+}
+
+// トークンを取れずに終わったときの応答
+fn wait_login(outcome: LoginResult) -> WaitLogin {
+    WaitLogin {
+        outcome,
+        login: None,
     }
 }
 
@@ -392,7 +372,7 @@ fn save_login(
     let path = config::token_path(data_dir);
     token::write(&path, tokens)?;
     let switched = (|| {
-        let settings = settings::current(file)?;
+        let settings = settings::read_from(file)?;
         let target = config::choose_posts_dir(
             local_dir(default_local_dir, &settings),
             data_dir,
@@ -430,6 +410,28 @@ pub fn github_list_repositories(github: State<'_, GitHub>) -> Result<Vec<RepoRef
     repos::list_repositories(github.transport.as_ref(), &token, now()).map_err(CommandError::Github)
 }
 
+// 設定を読み直して書き替え、GitHubの設定に合わせて保存先を替える
+fn change_github_settings(
+    app: &AppHandle,
+    github: &GitHub,
+    store: &Store,
+    change: impl FnOnce(&mut Settings),
+) -> Result<(), CommandError> {
+    let _changes = settings::lock_changes();
+    let file = settings::file_path(app)?;
+    let data_dir = settings::data_dir(app)?;
+    let mut settings = settings::read_from(&file)?;
+    change(&mut settings);
+    let target = config::choose_posts_dir(
+        local_dir(&github.default_local_dir, &settings),
+        &data_dir,
+        &settings.github,
+        config::linked(&data_dir, &settings.github),
+    );
+    settings::switch_posts_dir(store, &file, &settings, target)?;
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn github_select_repository(
     app: AppHandle,
@@ -440,23 +442,13 @@ pub fn github_select_repository(
     config::validate_repo_part(&repo.owner)?;
     config::validate_repo_part(&repo.name)?;
     config::validate_branch_name(&repo.default_branch)?;
-    let _changes = settings::lock_changes();
-    let file = settings::file_path(&app)?;
-    let data_dir = settings::data_dir(&app)?;
-    let mut settings = settings::current(&file)?;
-    // base_branchはrepositoryごとに決まるので、替えたら選び直させる
-    if settings.github.repo.as_ref() != Some(&repo) {
-        settings.github.base_branch = None;
-    }
-    settings.github.repo = Some(repo);
-    let target = config::choose_posts_dir(
-        local_dir(&github.default_local_dir, &settings),
-        &data_dir,
-        &settings.github,
-        config::linked(&data_dir, &settings.github),
-    );
-    settings::switch_posts_dir(&store, &file, &settings, target)?;
-    Ok(())
+    change_github_settings(&app, &github, &store, |settings| {
+        // base_branchはrepositoryごとに決まるので、替えたら選び直させる
+        if settings.github.repo.as_ref() != Some(&repo) {
+            settings.github.base_branch = None;
+        }
+        settings.github.repo = Some(repo);
+    })
 }
 
 #[tauri::command(async)]
@@ -474,22 +466,12 @@ pub fn github_update_settings(
     if let Some(branch) = &base_branch {
         config::validate_branch_name(branch)?;
     }
-    let _changes = settings::lock_changes();
-    let file = settings::file_path(&app)?;
-    let data_dir = settings::data_dir(&app)?;
-    let mut settings = settings::current(&file)?;
-    settings.github.base_branch = base_branch;
-    settings.github.branch_format = branch_format;
-    settings.github.posts_path = posts_path;
     // 記事のディレクトリが変わったら、向き先も新しい置き場所へ替える
-    let target = config::choose_posts_dir(
-        local_dir(&github.default_local_dir, &settings),
-        &data_dir,
-        &settings.github,
-        config::linked(&data_dir, &settings.github),
-    );
-    settings::switch_posts_dir(&store, &file, &settings, target)?;
-    Ok(())
+    change_github_settings(&app, &github, &store, |settings| {
+        settings.github.base_branch = base_branch;
+        settings.github.branch_format = branch_format;
+        settings.github.posts_path = posts_path;
+    })
 }
 
 // 画面で入力中に案内を出すため(validate_slugと同じ形)
@@ -520,10 +502,6 @@ pub fn open_github_page(app: AppHandle, page: String) -> Result<(), CommandError
     };
     app.opener().open_url(url, None::<&str>)?;
     Ok(())
-}
-
-fn now() -> i64 {
-    chrono::Utc::now().timestamp()
 }
 
 fn sleep(seconds: u64) {
@@ -624,7 +602,7 @@ mod tests {
             github_posts_dir(&data_dir, &repo(), "src/content/blog")
         );
         assert_eq!(token::read(&token_path(&data_dir)).unwrap(), Some(tokens()));
-        let settings = settings::current(&file).unwrap();
+        let settings = settings::read_from(&file).unwrap();
         assert_eq!(settings.github.repo, Some(repo()));
     }
 
@@ -657,7 +635,7 @@ mod tests {
         // token.jsonは消え、settings.jsonと向き先も替わらない
         assert_eq!(token::read(&token_path(&data_dir)).unwrap(), None);
         assert_eq!(store.posts_dir(), local);
-        let settings = settings::current(&file).unwrap();
+        let settings = settings::read_from(&file).unwrap();
         assert_eq!(settings.github.repo, Some(repo()));
         assert_eq!(
             settings.posts_dir,
@@ -800,7 +778,7 @@ mod tests {
         login.start(device_code(), NOW);
         let waiting = login.begin_wait().unwrap();
         login.start(device_code(), NOW + 1);
-        login.end_wait(waiting.attempt);
+        login.end_wait(waiting.number);
         assert!(login.begin_wait().is_some());
         // 自分の試行が終わったら消える
         login.end_wait(login.last_attempt);

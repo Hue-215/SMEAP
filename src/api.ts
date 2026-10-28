@@ -171,6 +171,10 @@ export interface GithubRepoRef {
   defaultBranch: string
 }
 
+export function repoFullName(repo: GithubRepoRef): string {
+  return `${repo.owner}/${repo.name}`
+}
+
 // Rust側のGithubSettings(src-tauri/src/github/config.rs)とそろえる
 export interface GithubSettings {
   repo: GithubRepoRef | null

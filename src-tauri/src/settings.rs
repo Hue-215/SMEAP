@@ -81,11 +81,7 @@ fn read(app: &AppHandle) -> Result<Settings, StoreError> {
     read_from(&file_path(app)?)
 }
 
-pub(crate) fn current(file: &Path) -> Result<Settings, StoreError> {
-    read_from(file)
-}
-
-fn read_from(file: &Path) -> Result<Settings, StoreError> {
+pub(crate) fn read_from(file: &Path) -> Result<Settings, StoreError> {
     let content = match fs::read_to_string(file) {
         Ok(content) => content,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),

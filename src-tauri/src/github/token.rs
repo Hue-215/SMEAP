@@ -44,18 +44,15 @@ pub fn read(path: &Path) -> Result<Option<TokenSet>, GithubError> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(io_error(path, error)),
     };
-    let tokens: TokenSet = serde_json::from_str(&content).map_err(|_| GithubError::Io {
-        path: path.display().to_string(),
-        reason: "not a valid token file".to_string(),
-    })?;
+    let tokens: TokenSet =
+        serde_json::from_str(&content).map_err(|_| io_error(path, "not a valid token file"))?;
     Ok(Some(tokens))
 }
 
 pub fn write(path: &Path, tokens: &TokenSet) -> Result<(), GithubError> {
-    let dir = path.parent().ok_or_else(|| GithubError::Io {
-        path: path.display().to_string(),
-        reason: "no parent directory".to_string(),
-    })?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| io_error(path, "no parent directory"))?;
     fs::create_dir_all(dir).map_err(|error| io_error(dir, error))?;
     let json = serde_json::to_vec(tokens).expect("TokenSet should serialize");
     // write_tempを使わず、NamedTempFile(unixでは0600)で書いて置き換える

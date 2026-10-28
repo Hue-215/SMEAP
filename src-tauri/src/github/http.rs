@@ -220,14 +220,17 @@ pub fn classify(response: Response, now: i64) -> Result<Response, GithubError> {
             });
         }
         // ヘッダーの無い429と、残りが0でもresetの読めない403は、いつ再開できるか分からない
-        let exhausted = response
-            .header("x-ratelimit-remaining")
-            .is_some_and(|value| value.trim() == "0");
-        if status == 429 || exhausted {
+        if status == 429 || rate_limit_exhausted(&response) {
             return Err(GithubError::RateLimited { retry_at: None });
         }
     }
     Err(GithubError::Status { status })
+}
+
+fn rate_limit_exhausted(response: &Response) -> bool {
+    response
+        .header("x-ratelimit-remaining")
+        .is_some_and(|value| value.trim() == "0")
 }
 
 fn rate_limit_retry_at(response: &Response, now: i64) -> Option<i64> {
@@ -238,11 +241,37 @@ fn rate_limit_retry_at(response: &Response, now: i64) -> Option<i64> {
         return Some(now + seconds);
     }
     // 残りが0のときだけ、resetの時刻(unix秒)に再開できる
+    if !rate_limit_exhausted(response) {
+        return None;
+    }
     response
-        .header("x-ratelimit-remaining")
-        .filter(|value| value.trim() == "0")
-        .and_then(|_| response.header("x-ratelimit-reset"))
+        .header("x-ratelimit-reset")
         .and_then(|value| value.trim().parse::<i64>().ok())
+}
+
+// 送って、応答の種類を確かめ、bodyをJSONとして読む。ヘッダーを確かめることもあるのでResponseも返す
+pub fn send_json(
+    transport: &dyn Transport,
+    request: &Request,
+    now: i64,
+) -> Result<(Response, serde_json::Value), GithubError> {
+    let response = classify(transport.send(request)?, now)?;
+    let body = json_body(&response)?;
+    Ok((response, body))
+}
+
+// keyは"login"や"owner.login"のように、.でつないだ項目の名前
+pub(crate) fn string_of(body: &serde_json::Value, key: &str) -> Result<String, GithubError> {
+    let mut value = body;
+    for name in key.split('.') {
+        value = value
+            .get(name)
+            .ok_or_else(|| GithubError::invalid_field(key))?;
+    }
+    value
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| GithubError::invalid_field(key))
 }
 
 pub fn next_link(response: &Response) -> Option<String> {
@@ -345,6 +374,7 @@ impl Transport for UreqTransport {
 
 impl UreqTransport {
     fn call(&self, request: &Request) -> Result<Response, ureq::Error> {
+        let body = request.body.as_deref().unwrap_or(&[]);
         let response = match request.method {
             Method::Get => {
                 with_headers(self.0.get(request.url.as_str()), &request.headers).call()?
@@ -352,16 +382,11 @@ impl UreqTransport {
             Method::Delete => {
                 with_headers(self.0.delete(request.url.as_str()), &request.headers).call()?
             }
-            Method::Post | Method::Patch => {
-                let body = request.body.as_deref().unwrap_or(&[]);
-                match request.method {
-                    Method::Post => {
-                        with_headers(self.0.post(request.url.as_str()), &request.headers)
-                            .send(body)?
-                    }
-                    _ => with_headers(self.0.patch(request.url.as_str()), &request.headers)
-                        .send(body)?,
-                }
+            Method::Post => {
+                with_headers(self.0.post(request.url.as_str()), &request.headers).send(body)?
+            }
+            Method::Patch => {
+                with_headers(self.0.patch(request.url.as_str()), &request.headers).send(body)?
             }
         };
         let status = response.status().as_u16();

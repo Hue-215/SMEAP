@@ -2,8 +2,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use super::http::{
-    classify, json_body, login_request, Transport, DEVICE_CODE_URL, TOKEN_URL, VERIFICATION_URL,
+    login_request, send_json, string_of, Transport, DEVICE_CODE_URL, TOKEN_URL, VERIFICATION_URL,
 };
+use super::now;
 use super::token::TokenSet;
 use super::GithubError;
 
@@ -50,10 +51,9 @@ pub fn request_device_code(
     client_id: &str,
 ) -> Result<DeviceCode, GithubError> {
     let request = login_request(DEVICE_CODE_URL, &[("client_id", client_id)])?;
-    let response = classify(transport.send(&request)?, now())?;
-    let body = json_body(&response)?;
+    let (_, body) = send_json(transport, &request, now())?;
     // Appでデバイスフローを有効にしていないとき(device_flow_disabled)など
-    if let Some(error) = body.get("error").and_then(serde_json::Value::as_str) {
+    if let Some(error) = error_of(&body) {
         return Err(endpoint_error(error));
     }
     let verification_uri = string_of(&body, "verification_uri")?;
@@ -87,10 +87,9 @@ pub fn poll_once(
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
         ],
     )?;
-    let response = classify(transport.send(&request)?, now)?;
-    let body = json_body(&response)?;
+    let (_, body) = send_json(transport, &request, now)?;
     // 待ち状態も200でerrorとして返ってくる
-    match body.get("error").and_then(serde_json::Value::as_str) {
+    match error_of(&body) {
         Some("authorization_pending") => Ok(Poll::Pending),
         Some("slow_down") => {
             // 間隔が返ってこなければ、今の間隔の5秒後ろ
@@ -147,18 +146,18 @@ pub fn refresh(
             ("refresh_token", refresh_token),
         ],
     )?;
-    let response = classify(transport.send(&request)?, now)?;
-    let body = json_body(&response)?;
+    let (_, body) = send_json(transport, &request, now)?;
     // 通信の失敗や5xxは?とclassifyでそのまま伝える。ログインし直しにするのは、更新用のトークンが無効なときだけ
-    match body.get("error").and_then(serde_json::Value::as_str) {
+    match error_of(&body) {
         Some("bad_refresh_token") => Err(GithubError::LoginRequired),
         Some(error) => Err(endpoint_error(error)),
         None => token_of(&body, now),
     }
 }
 
-fn now() -> i64 {
-    chrono::Utc::now().timestamp()
+// 待ち状態も200でerrorとして返ってくるので、まずerrorの文字列を確かめる
+fn error_of(body: &serde_json::Value) -> Option<&str> {
+    body.get("error").and_then(serde_json::Value::as_str)
 }
 
 // errorの値はトークンではないので、理由に残す
@@ -166,13 +165,6 @@ fn endpoint_error(error: &str) -> GithubError {
     GithubError::InvalidResponse {
         reason: format!("GitHub returned {error}"),
     }
-}
-
-fn string_of(body: &serde_json::Value, key: &str) -> Result<String, GithubError> {
-    body.get(key)
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| GithubError::invalid_field(key))
 }
 
 fn seconds_of(body: &serde_json::Value, key: &str) -> Result<u64, GithubError> {
@@ -295,6 +287,23 @@ mod tests {
 
         fn waited(&self) -> Vec<u64> {
             self.sleeps.borrow().clone()
+        }
+
+        // poll_until_doneを、偽の時刻と受け取った取り消しで呼ぶ
+        fn poll(
+            &self,
+            transport: &FakeTransport,
+            cancelled: &AtomicBool,
+        ) -> Result<LoginOutcome, GithubError> {
+            poll_until_done(
+                transport,
+                CLIENT_ID,
+                &device_code(),
+                NOW,
+                &|| self.now(),
+                &|seconds| self.sleep(seconds),
+                cancelled,
+            )
         }
     }
 
@@ -443,16 +452,7 @@ mod tests {
             Ok(json_response(200, token_json())),
         ]);
         let time = FakeTime::new();
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        let outcome = time.poll(&transport, &AtomicBool::new(false)).unwrap();
         assert_eq!(outcome, LoginOutcome::Token(token_set_received_at(NOW + 5)));
         assert_eq!(time.waited(), vec![5]);
     }
@@ -467,16 +467,7 @@ mod tests {
             Ok(json_response(200, token_json())),
         ]);
         let time = FakeTime::new();
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        let outcome = time.poll(&transport, &AtomicBool::new(false)).unwrap();
         assert_eq!(
             outcome,
             LoginOutcome::Token(token_set_received_at(NOW + 10))
@@ -488,16 +479,7 @@ mod tests {
     fn 取り消したら次の問い合わせをしないで終わる() {
         let transport = FakeTransport::new(vec![]);
         let time = FakeTime::new();
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(true),
-        )
-        .unwrap();
+        let outcome = time.poll(&transport, &AtomicBool::new(true)).unwrap();
         assert_eq!(outcome, LoginOutcome::Cancelled);
         assert!(transport.requests().is_empty());
     }
@@ -555,16 +537,7 @@ mod tests {
             json!({ "error": "access_denied" }),
         ))]);
         let time = FakeTime::new();
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        let outcome = time.poll(&transport, &AtomicBool::new(false)).unwrap();
         assert_eq!(outcome, LoginOutcome::Denied);
     }
 
@@ -575,16 +548,7 @@ mod tests {
             json!({ "error": "expired_token" }),
         ))]);
         let time = FakeTime::new();
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        let outcome = time.poll(&transport, &AtomicBool::new(false)).unwrap();
         assert_eq!(outcome, LoginOutcome::Expired);
     }
 
@@ -594,15 +558,7 @@ mod tests {
             reason: "closed".to_string(),
         })]);
         let time = FakeTime::new();
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(false),
-        );
+        let outcome = time.poll(&transport, &AtomicBool::new(false));
         assert!(outcome.is_err());
     }
 
@@ -625,16 +581,7 @@ mod tests {
         let transport = FakeTransport::new(vec![]);
         let time = FakeTime::new();
         time.now.set(NOW + 901);
-        let outcome = poll_until_done(
-            &transport,
-            CLIENT_ID,
-            &device_code(),
-            NOW,
-            &|| time.now(),
-            &|seconds| time.sleep(seconds),
-            &AtomicBool::new(false),
-        )
-        .unwrap();
+        let outcome = time.poll(&transport, &AtomicBool::new(false)).unwrap();
         assert_eq!(outcome, LoginOutcome::Expired);
         assert!(transport.requests().is_empty());
     }

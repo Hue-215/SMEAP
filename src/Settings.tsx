@@ -6,6 +6,7 @@ import {
   githubSelectRepository,
   githubStatus,
   githubUpdateSettings,
+  repoFullName,
   validateBranchFormat,
   validatePostsPath,
   type GithubError,
@@ -82,7 +83,7 @@ export default function Settings({
       .then(async (status) => {
         // ログインが切れていたら、記事を保存してから今までの保存先へ戻す
         if (status.loginExpired) {
-          await onGithubSwitch(() => githubLogout())
+          await onGithubSwitch(githubLogout)
           status = await githubStatus()
         }
         setGithub(status)
@@ -108,6 +109,7 @@ export default function Settings({
 
   // 連携しているか。ログインしていてRepositoryを選んでいること(Rust側のconfig::linkedと同じ)
   const linked = github !== null && github.loggedIn && github.settings.repo !== null
+  const showPostsLocation = isAndroid || !linked
 
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = page === 'list' && !shown ? listScroll.current : 0
@@ -142,7 +144,7 @@ export default function Settings({
     setLogoutBusy(true)
     setGithubFailure(null)
     try {
-      await onGithubSwitch(() => githubLogout())
+      await onGithubSwitch(githubLogout)
       await reloadGithub()
     } catch (e) {
       console.error('Failed to log out from GitHub', e)
@@ -243,7 +245,7 @@ export default function Settings({
                             <span className="settings-note">
                               {github.settings.repo === null
                                 ? t('settings.github_repo_none')
-                                : `${github.settings.repo.owner}/${github.settings.repo.name}`}
+                                : repoFullName(github.settings.repo)}
                             </span>
                           </span>
                           <button
@@ -258,7 +260,7 @@ export default function Settings({
                         </div>
                         {github.settings.repo !== null && (
                           <GithubFields
-                            key={`${github.settings.repo.owner}/${github.settings.repo.name}`}
+                            key={repoFullName(github.settings.repo)}
                             initial={github.settings}
                             onSave={saveGithubSettings}
                           />
@@ -284,17 +286,16 @@ export default function Settings({
                 {githubFailure !== null && (
                   <p className="settings-failure">{githubFailure}</p>
                 )}
-                {isAndroid ? (
+                {showPostsLocation && (
                   <>
                     <h2 className="settings-h2">{t('settings.posts_location')}</h2>
-                    {postsDir?.kind === 'android' && (
-                      <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
+                    {isAndroid ? (
+                      postsDir?.kind === 'android' && (
+                        <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
+                      )
+                    ) : (
+                      <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
                     )}
-                  </>
-                ) : linked ? null : (
-                  <>
-                    <h2 className="settings-h2">{t('settings.posts_location')}</h2>
-                    <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
                   </>
                 )}
                 <h2 className="settings-h2">{t('settings.about')}</h2>
@@ -472,6 +473,42 @@ const isGithubError = (e: unknown, kind: GithubError['kind']) =>
 const checkOf = (e: unknown, kind: GithubError['kind']): Check =>
   isGithubError(e, kind) ? 'invalid' : 'failed'
 
+// 入力のたびに確かめ、最後の応答だけを出す。nullは確かめている間、failedは確かめられなかった
+function useCheck(validate: (value: string) => Promise<void>, kind: GithubError['kind']) {
+  const [check, setCheck] = useState<Check | null>('ok')
+  const request = useRef(0)
+  const run = (value: string) => {
+    const id = ++request.current
+    setCheck(null)
+    validate(value).then(
+      () => {
+        if (id === request.current) setCheck('ok')
+      },
+      (e) => {
+        if (id === request.current) setCheck(checkOf(e, kind))
+      },
+    )
+  }
+  return [check, run, setCheck] as const
+}
+
+// 文言の{slug}は差し込む値ではなく、形式に入れる文字そのもの
+function branchFormatMessage(count: number, check: Check | null, format: string): string | null {
+  if (count !== 1) return t('settings.github_branch_format_count', { slug: '{slug}' })
+  switch (check) {
+    case 'ok':
+      return t('settings.github_branch_format_example', {
+        name: format.replace('{slug}', 'first-post'),
+      })
+    case 'invalid':
+      return t('settings.github_branch_format_invalid')
+    case 'failed':
+      return t('settings.github_check_failed')
+    default:
+      return null
+  }
+}
+
 // GitHubの節の、Base branch以下の3つの入力欄。欄から外れたときとEnterで、3つをまとめて保存する
 function GithubFields({
   initial,
@@ -480,18 +517,21 @@ function GithubFields({
   initial: GithubSettings
   onSave: (values: GithubFieldsValues, dirChanged: boolean) => Promise<void>
 }) {
-  const [baseBranch, setBaseBranch] = useState(initial.baseBranch ?? '')
-  const [format, setFormat] = useState(initial.branchFormat)
-  const [postsPath, setPostsPath] = useState(initial.postsPath)
-  // 保存できた値。替わったかは、ここと比べて分かる
-  const [saved, setSaved] = useState<GithubFieldsValues>({
+  const initialValues: GithubFieldsValues = {
     baseBranch: initial.baseBranch ?? '',
     branchFormat: initial.branchFormat,
     postsPath: initial.postsPath,
-  })
-  // 入力中の検証。nullは確かめている間、failedは確かめられなかった
-  const [formatCheck, setFormatCheck] = useState<Check | null>('ok')
-  const [pathCheck, setPathCheck] = useState<Check | null>('ok')
+  }
+  const [baseBranch, setBaseBranch] = useState(initialValues.baseBranch)
+  const [format, setFormat] = useState(initialValues.branchFormat)
+  const [postsPath, setPostsPath] = useState(initialValues.postsPath)
+  // 保存できた値。替わったかは、ここと比べて分かる
+  const [saved, setSaved] = useState(initialValues)
+  const [formatCheck, checkFormat, setFormatCheck] = useCheck(
+    validateBranchFormat,
+    'invalidBranchFormat',
+  )
+  const [pathCheck, checkPostsPath, setPathCheck] = useCheck(validatePostsPath, 'invalidPostsPath')
   // Base branchは入力中には確かめず、保存のときに断られたら出す
   const [baseInvalid, setBaseInvalid] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -502,33 +542,6 @@ function GithubFields({
   const formatHintId = useId()
   const pathId = useId()
   const pathHintId = useId()
-  // 入力のたびに呼んで、最後の応答だけを出す
-  const formatRequest = useRef(0)
-  const pathRequest = useRef(0)
-
-  const checkFormat = (value: string) => {
-    const id = ++formatRequest.current
-    validateBranchFormat(value).then(
-      () => {
-        if (id === formatRequest.current) setFormatCheck('ok')
-      },
-      (e) => {
-        if (id === formatRequest.current) setFormatCheck(checkOf(e, 'invalidBranchFormat'))
-      },
-    )
-  }
-
-  const checkPostsPath = (value: string) => {
-    const id = ++pathRequest.current
-    validatePostsPath(value).then(
-      () => {
-        if (id === pathRequest.current) setPathCheck('ok')
-      },
-      (e) => {
-        if (id === pathRequest.current) setPathCheck(checkOf(e, 'invalidPostsPath'))
-      },
-    )
-  }
 
   const commit = async () => {
     if (busy) return
@@ -568,20 +581,8 @@ function GithubFields({
     }
   }
 
-  // 文言の{slug}は差し込む値ではなく、形式に入れる文字そのもの
   const formatCount = format.split('{slug}').length - 1
-  const formatMessage =
-    formatCount !== 1
-      ? t('settings.github_branch_format_count', { slug: '{slug}' })
-      : formatCheck === 'ok'
-        ? t('settings.github_branch_format_example', {
-            name: format.replace('{slug}', 'first-post'),
-          })
-        : formatCheck === 'invalid'
-          ? t('settings.github_branch_format_invalid')
-          : formatCheck === 'failed'
-            ? t('settings.github_check_failed')
-            : null
+  const formatMessage = branchFormatMessage(formatCount, formatCheck, format)
   const formatInvalid = formatCount !== 1 || formatCheck === 'invalid'
   const pathInvalid = pathCheck === 'invalid'
 
@@ -589,31 +590,23 @@ function GithubFields({
     <>
       <div className="settings-field">
         <label htmlFor={baseId}>{t('settings.github_base_branch')}</label>
-        <input
+        <FieldInput
           id={baseId}
-          type="text"
-          className={baseInvalid ? 'settings-input error' : 'settings-input'}
+          describedBy={baseHintId}
           value={baseBranch}
-          disabled={busy}
-          aria-invalid={baseInvalid}
+          invalid={baseInvalid}
+          busy={busy}
           placeholder={
             initial.repo === null
               ? undefined
               : t('settings.github_base_branch_placeholder', { name: initial.repo.defaultBranch })
           }
-          aria-describedby={baseHintId}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void commit()
-          }}
-          onBlur={() => void commit()}
-          onChange={(e) => {
-            setBaseBranch(e.target.value)
+          onCommit={() => void commit()}
+          onChange={(value) => {
+            setBaseBranch(value)
             setBaseInvalid(false)
             setFailure(null)
           }}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
         />
         <p
           id={baseHintId}
@@ -627,28 +620,18 @@ function GithubFields({
       </div>
       <div className="settings-field">
         <label htmlFor={formatId}>{t('settings.github_branch_format')}</label>
-        <input
+        <FieldInput
           id={formatId}
-          type="text"
-          className={formatInvalid ? 'settings-input error' : 'settings-input'}
+          describedBy={formatMessage === null ? undefined : formatHintId}
           value={format}
-          disabled={busy}
-          aria-invalid={formatInvalid}
-          aria-describedby={formatMessage === null ? undefined : formatHintId}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void commit()
-          }}
-          onBlur={() => void commit()}
-          onChange={(e) => {
-            const value = e.target.value
+          invalid={formatInvalid}
+          busy={busy}
+          onCommit={() => void commit()}
+          onChange={(value) => {
             setFormat(value)
-            setFormatCheck(null)
             setFailure(null)
             checkFormat(value)
           }}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
         />
         {formatMessage !== null && (
           <p
@@ -662,28 +645,18 @@ function GithubFields({
       </div>
       <div className="settings-field">
         <label htmlFor={pathId}>{t('settings.github_posts_path')}</label>
-        <input
+        <FieldInput
           id={pathId}
-          type="text"
-          className={pathInvalid ? 'settings-input error' : 'settings-input'}
+          describedBy={pathCheck === null ? undefined : pathHintId}
           value={postsPath}
-          disabled={busy}
-          aria-invalid={pathInvalid}
-          aria-describedby={pathCheck === null ? undefined : pathHintId}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void commit()
-          }}
-          onBlur={() => void commit()}
-          onChange={(e) => {
-            const value = e.target.value
+          invalid={pathInvalid}
+          busy={busy}
+          onCommit={() => void commit()}
+          onChange={(value) => {
             setPostsPath(value)
-            setPathCheck(null)
             setFailure(null)
             checkPostsPath(value)
           }}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
         />
         {pathCheck !== null && (
           <p
@@ -714,6 +687,48 @@ function GithubFields({
         </p>
       )}
     </>
+  )
+}
+
+// GitHubの節の3つの入力欄の共通の部分
+function FieldInput({
+  id,
+  describedBy,
+  value,
+  invalid,
+  busy,
+  placeholder,
+  onCommit,
+  onChange,
+}: {
+  id: string
+  describedBy?: string
+  value: string
+  invalid: boolean
+  busy: boolean
+  placeholder?: string
+  onCommit: () => void
+  onChange: (value: string) => void
+}) {
+  return (
+    <input
+      id={id}
+      type="text"
+      className={invalid ? 'settings-input error' : 'settings-input'}
+      value={value}
+      placeholder={placeholder}
+      disabled={busy}
+      aria-invalid={invalid}
+      aria-describedby={describedBy}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit()
+      }}
+      onBlur={onCommit}
+      onChange={(e) => onChange(e.target.value)}
+      autoCapitalize="none"
+      autoCorrect="off"
+      spellCheck={false}
+    />
   )
 }
 

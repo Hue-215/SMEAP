@@ -2,12 +2,16 @@ import { useEffect, useId, useRef, useState } from 'react'
 import {
   githubListRepositories,
   openGithubPage,
+  repoFullName,
   type GithubRepoRef,
 } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
 import { githubErrorText } from './githubError'
 import { t } from './i18n'
+
+// ownerとnameだけで比べる(defaultBranchは問わない)
+const sameRepo = (a: GithubRepoRef, b: GithubRepoRef) => a.owner === b.owner && a.name === b.name
 
 interface GithubRepoDialogProps {
   // 初めに選んでおくrepository
@@ -69,9 +73,7 @@ export default function GithubRepoDialog({ current, onSelect, onCancel }: Github
   }
 
   const pick = async () => {
-    if (busy || picked === null || repos === null || repos === 'failed') return
-    const selected = repos.find((repo) => repo.owner === picked.owner && repo.name === picked.name)
-    if (selected === undefined) return
+    if (busy || selected === null) return
     busyRef.current = true
     setBusy(true)
     setFailure(null)
@@ -89,11 +91,11 @@ export default function GithubRepoDialog({ current, onSelect, onCancel }: Github
   }
 
   const list = repos === null || repos === 'failed' ? null : repos
-  // 今のrepositoryが一覧に無い(Appを外した)ときは、どれも選んでいない扱いにする
-  const pickedInList =
-    picked !== null &&
-    list !== null &&
-    list.some((repo) => repo.owner === picked.owner && repo.name === picked.name)
+  const hasRepos = list !== null && list.length > 0
+  const emptyList = list !== null && list.length === 0
+  // 一覧の中で選んでいるrepository。今のrepositoryが一覧に無い(Appを外した)ときは、どれも選んでいない扱いにする
+  const selected =
+    picked === null || list === null ? null : (list.find((repo) => sameRepo(repo, picked)) ?? null)
 
   return (
     <Dialog labelledBy={headingId} onCancel={cancel}>
@@ -101,16 +103,16 @@ export default function GithubRepoDialog({ current, onSelect, onCancel }: Github
         <h2 id={headingId} className="dialog-title">
           {t('github_repo.title')}
         </h2>
-        {list !== null && list.length > 0 && (
+        {hasRepos && (
           <div role="radiogroup" aria-labelledby={headingId} className="github-repo-list">
             {list.map((repo) => {
-              const name = `${repo.owner}/${repo.name}`
+              const name = repoFullName(repo)
               return (
                 <label key={name} className="github-repo-option">
                   <input
                     type="radio"
                     name="github-repo"
-                    checked={picked !== null && picked.owner === repo.owner && picked.name === repo.name}
+                    checked={picked !== null && sameRepo(repo, picked)}
                     onChange={() => setPicked(repo)}
                   />
                   <span>{name}</span>
@@ -119,9 +121,9 @@ export default function GithubRepoDialog({ current, onSelect, onCancel }: Github
             })}
           </div>
         )}
-        {(failure !== null || (list !== null && list.length === 0)) && (
+        {(failure !== null || emptyList) && (
           <div className="dialog-body">
-            {list !== null && list.length === 0 && <p>{t('github_repo.empty')}</p>}
+            {emptyList && <p>{t('github_repo.empty')}</p>}
             {failure !== null && (
               <p role="alert" className="confirm-dialog-error">
                 {failure}
@@ -137,12 +139,12 @@ export default function GithubRepoDialog({ current, onSelect, onCancel }: Github
           <button type="button" onClick={cancel} disabled={busy}>
             {t('common.cancel')}
           </button>
-          {list !== null && list.length > 0 && (
+          {hasRepos && (
             <button
               type="button"
               className="primary"
               onClick={() => void pick()}
-              disabled={busy || !pickedInList}
+              disabled={busy || selected === null}
             >
               {t('github_repo.pick')}
             </button>

@@ -10,6 +10,22 @@ import Icon from './Icon'
 import { githubErrorText } from './githubError'
 import { t } from './i18n'
 
+type Phase = 'starting' | 'waiting' | 'expired' | 'denied' | 'failed'
+
+// 待っている間と、待ちが終わってやり直せる状態に出す文言
+function phaseStatus(phase: Phase): string | null {
+  switch (phase) {
+    case 'waiting':
+      return t('github_login.waiting')
+    case 'expired':
+      return t('github_login.expired')
+    case 'denied':
+      return t('github_login.denied')
+    default:
+      return null
+  }
+}
+
 interface GithubLoginDialogProps {
   // 承認を待つ。待つ前に開いている記事を保存することと、loggedInで返った後の読み直しはAppが行う
   onWait: () => Promise<GithubWaitLogin>
@@ -21,9 +37,7 @@ interface GithubLoginDialogProps {
 // デバイスフローでログインするダイアログ。開くとコードを取り、承認を待つ。やり直すとコードから取り直す
 export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLoginDialogProps) {
   // startingはコードを取りに行っている間。expiredとdeniedは、待ちが終わってやり直せる状態
-  const [phase, setPhase] = useState<'starting' | 'waiting' | 'expired' | 'denied' | 'failed'>(
-    'starting',
-  )
+  const [phase, setPhase] = useState<Phase>('starting')
   const [code, setCode] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
   // 始め直した試行より前の応答は捨てる
@@ -70,7 +84,7 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
   useEffect(() => {
     if (started.current) return
     started.current = true
-    void beginRef.current()
+    beginRef.current()
   }, [])
   // 外に出たら、以後の応答を捨てる。StrictModeで付け直されたときは戻す
   useEffect(() => {
@@ -85,7 +99,7 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
     setPhase('starting')
     setCode(null)
     setFailure(null)
-    void begin()
+    begin()
   }
 
   // 待っている間は、Rust側の待ちも止める
@@ -106,15 +120,7 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
     })
   }
 
-  const status =
-    failure ??
-    (phase === 'waiting'
-      ? t('github_login.waiting')
-      : phase === 'expired'
-        ? t('github_login.expired')
-        : phase === 'denied'
-          ? t('github_login.denied')
-          : null)
+  const status = failure ?? phaseStatus(phase)
 
   return (
     <Dialog labelledBy={headingId} onCancel={cancel}>

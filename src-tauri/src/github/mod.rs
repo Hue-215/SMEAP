@@ -57,3 +57,8 @@ impl GithubError {
         }
     }
 }
+
+// unix秒
+pub(crate) fn now() -> i64 {
+    chrono::Utc::now().timestamp()
+}

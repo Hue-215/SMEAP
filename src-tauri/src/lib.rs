@@ -43,12 +43,10 @@ pub fn run() {
                     .map(|dir| (store::Store::new(dir.clone(), backup_root.clone()), dir))
                 {
                     Some((Ok(store), dir)) => (store, dir, default_dir),
-                    Some((Err(error), _)) => {
-                        eprintln!("Failed to use the configured article directory: {error}");
-                        let store = store::Store::new(default_dir.clone(), backup_root)?;
-                        (store, default_dir.clone(), default_dir)
-                    }
-                    None => {
+                    other => {
+                        if let Some((Err(error), _)) = other {
+                            eprintln!("Failed to use the configured article directory: {error}");
+                        }
                         let store = store::Store::new(default_dir.clone(), backup_root)?;
                         (store, default_dir.clone(), default_dir)
                     }
