@@ -26,6 +26,13 @@ zip = { version = "8.6", default-features = false, features = ["chrono", "deflat
 # Androidの保存画面(src/export.rs)と、デスクトップの記事のディレクトリを選ぶ画面(src/settings.rs)
 tauri-plugin-dialog = "2"
 
+# GitHub連携(src/github/)。TLSはrustlsと、同梱のルート証明書(rustlsの既定のWebPki)を使い、native-tls・OpenSSLは使わない
+ureq = "3"
+# 宛先のURLを読んで確かめる(src/github/http.rs)。tauriが既に使っている版
+url = "2"
+# GitHubのページをブラウザで開く(src/github/commands.rs)。fsとdialogと同じくRust側からだけ使い、画面に権限は与えない
+tauri-plugin-opener = "2"
+
 # 貼り付けた画像をクリップボードから読む(src/clipboard.rs)。TauriがLinuxで使っている版にそろえる
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

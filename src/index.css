@@ -961,3 +961,121 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 .posts-dir-note > span {
   display: block;
 }
+
+/* 設定画面のGitHubの節(Settings.tsx)。行の中の右に置くボタン。 */
+.settings-row-action {
+  flex-shrink: 0;
+  height: 2.25rem;
+  padding: 0 var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+/* 主ボタン。地を塗るので、押しても背景を替えない(button:activeの対象外) */
+.settings-row-action.primary {
+  border: 0;
+  background: var(--color-text);
+  color: var(--color-bg);
+}
+
+/* 節の上に出す、tokenを読めなかったことの警告。 */
+.settings-github-warning {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+/* ラベル・入力欄・案内を縦に並べる欄。 */
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.settings-input {
+  height: var(--control-size-md);
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid var(--color-field-border);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.settings-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.settings-input.error {
+  border-color: var(--color-error);
+}
+
+.settings-hint.error {
+  color: var(--color-error);
+}
+
+/* 記事と画像の2行を出すので、行ごとに折る */
+.settings-hint > span {
+  display: block;
+}
+
+/* ログインのダイアログ(GithubLoginDialog.tsx)。 */
+.github-login-code {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.github-login-code code {
+  font-family: var(--font-family-mono);
+  font-size: 1.75rem;
+  letter-spacing: 0.1em;
+}
+
+.github-login-open {
+  height: var(--control-size-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-sm);
+}
+
+/* Repositoryの選択のダイアログ(GithubRepoDialog.tsx)。 */
+.github-repo-list {
+  max-height: 16rem;
+  overflow-y: auto;
+  border-top: var(--border-width) solid var(--color-border);
+}
+
+.github-repo-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-1);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.github-repo-option input[type='radio'] {
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+/* 左端の「repositoryを追加」。枠は要らない */
+.dialog-buttons .github-repo-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+}

@@ -1,7 +1,26 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { UnsavedArticleError, type PostsDir, type StoreError } from './api'
+import {
+  UnsavedArticleError,
+  githubAssetsPath,
+  githubLogout,
+  githubSelectRepository,
+  githubStatus,
+  githubUpdateSettings,
+  validateBranchFormat,
+  validatePostsPath,
+  type GithubError,
+  type GithubRepoRef,
+  type GithubSettings,
+  type GithubStatus,
+  type GithubWaitLogin,
+  type PostsDir,
+  type StoreError,
+} from './api'
 import Dialog from './Dialog'
+import GithubLoginDialog from './GithubLoginDialog'
+import GithubRepoDialog from './GithubRepoDialog'
 import Icon from './Icon'
+import { githubErrorText } from './githubError'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import type { License } from 'virtual:licenses'
@@ -14,12 +33,23 @@ interface SettingsProps {
   onPickPostsDir: () => Promise<void>
   // Androidだけ
   onChangePostsDirName: (name: string) => Promise<void>
+  // 保存先が替わるGitHubの操作。開いている記事を保存してから呼び、記事を閉じて読み直すのはAppが行う
+  onGithubSwitch: (command: () => Promise<void>) => Promise<void>
+  // ログインの待ち。待つ前に開いている記事を保存することと、loggedInで返った後の読み直しはAppが行う
+  onGithubLoginWait: () => Promise<GithubWaitLogin>
   onClose: () => void
 }
 
 interface ShownText {
   title: string
   text: string
+}
+
+// GitHubの節でまとめて保存する3つの値
+interface GithubFieldsValues {
+  baseBranch: string
+  branchFormat: string
+  postsPath: string
 }
 
 // 編集画面の上に重ねる設定画面。ライセンスの全文は、広い窓では一覧の行の下に開き、狭い窓では
@@ -29,15 +59,56 @@ export default function Settings({
   postsDir,
   onPickPostsDir,
   onChangePostsDirName,
+  onGithubSwitch,
+  onGithubLoginWait,
   onClose,
 }: SettingsProps) {
   const [page, setPage] = useState<'top' | 'list'>('top')
   const [shown, setShown] = useState<ShownText | null>(null)
+  // GitHubの節の状態。読めている間だけ節を出す
+  const [github, setGithub] = useState<GithubStatus | null>(null)
+  const [githubFailure, setGithubFailure] = useState<string | null>(null)
+  const [loginDialog, setLoginDialog] = useState(false)
+  const [repoDialog, setRepoDialog] = useState(false)
+  const [logoutBusy, setLogoutBusy] = useState(false)
   const headingId = useId()
   const backButton = useRef<HTMLButtonElement>(null)
   const body = useRef<HTMLDivElement>(null)
   // 全文から戻ったときに、一覧の位置へ戻す
   const listScroll = useRef(0)
+
+  // 設定画面を開いたときに読む。節は読めている間だけ出す
+  const reloadGithub = (): Promise<GithubStatus | null> => {
+    return githubStatus()
+      .then(async (status) => {
+        // ログインが切れていたら、記事を保存してから今までの保存先へ戻す
+        if (status.loginExpired) {
+          await onGithubSwitch(() => githubLogout())
+          status = await githubStatus()
+        }
+        setGithub(status)
+        setGithubFailure(null)
+        return status
+      })
+      .catch((e) => {
+        console.error('Failed to read the GitHub status', e)
+        setGithub(null)
+        setGithubFailure(githubErrorText(e))
+        return null
+      })
+  }
+
+  // 開いたときに一度だけ読む。読む処理はpropsを使うので、ref経由で最新のものを呼ぶ
+  const reloadGithubRef = useRef(reloadGithub)
+  useEffect(() => {
+    reloadGithubRef.current = reloadGithub
+  })
+  useEffect(() => {
+    void reloadGithubRef.current()
+  }, [])
+
+  // 連携しているか。ログインしていてRepositoryを選んでいること(Rust側のconfig::linkedと同じ)
+  const linked = github !== null && github.loggedIn && github.repo !== null
 
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = page === 'list' && !shown ? listScroll.current : 0
@@ -67,6 +138,61 @@ export default function Settings({
       ? [t('settings.licenses'), t('settings.back_to_settings')]
       : [t('settings.title'), t('settings.back_to_editor')]
 
+  const logout = async () => {
+    if (logoutBusy) return
+    setLogoutBusy(true)
+    setGithubFailure(null)
+    try {
+      await onGithubSwitch(() => githubLogout())
+      await reloadGithub()
+    } catch (e) {
+      console.error('Failed to log out from GitHub', e)
+      setGithubFailure(githubErrorText(e))
+    } finally {
+      setLogoutBusy(false)
+    }
+  }
+
+  // ダイアログを閉じた後に承認が通っても、表示をログインした状態に合わせる
+  const waitLogin = async () => {
+    const result = await onGithubLoginWait()
+    if (result.outcome === 'loggedIn') void reloadGithub()
+    return result
+  }
+
+  // ログインできた後。Repositoryを選んでいなければ、続けて選ばせる
+  const loginDone = async () => {
+    setLoginDialog(false)
+    const status = await reloadGithub()
+    if (status !== null && status.repo === null) setRepoDialog(true)
+  }
+
+  // 選べたらダイアログを閉じて読み直す。失敗の文言はダイアログに出す
+  const selectRepo = async (repo: GithubRepoRef): Promise<string | null> => {
+    try {
+      await onGithubSwitch(() => githubSelectRepository(repo))
+      setRepoDialog(false)
+      await reloadGithub()
+      return null
+    } catch (e) {
+      console.error('Failed to select the repository', e)
+      return githubErrorText(e)
+    }
+  }
+
+  // 3つの欄をまとめて保存する。記事のディレクトリが変わるときは保存先も替わるので、
+  // 開いている記事の保存と読み直しをAppが行う
+  const saveGithubSettings = async (values: GithubFieldsValues, dirChanged: boolean) => {
+    const command = () =>
+      githubUpdateSettings(
+        values.baseBranch === '' ? null : values.baseBranch,
+        values.branchFormat,
+        values.postsPath,
+      )
+    if (dirChanged) await onGithubSwitch(command)
+    else await command()
+  }
+
   return (
     <Dialog labelledBy={headingId} onCancel={back} className="settings-dialog">
       <div className="settings">
@@ -88,13 +214,89 @@ export default function Settings({
           <div className="settings-content">
             {page === 'top' ? (
               <>
-                <h2 className="settings-h2">{t('settings.posts_location')}</h2>
+                {github?.tokenUnreadable && (
+                  <p className="settings-github-warning">{t('settings.github_token_unreadable')}</p>
+                )}
+                <h2 className="settings-h2">{t('settings.github')}</h2>
+                {github !== null && (
+                  <div className="settings-rows">
+                    {github.loggedIn ? (
+                      <>
+                        <div className="settings-row">
+                          <span className="settings-row-main">
+                            <span>{t('settings.github_account')}</span>
+                            <span className="settings-note">
+                              {github.login ?? t('settings.github_account_unreadable')}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="settings-row-action"
+                            onClick={() => void logout()}
+                            disabled={logoutBusy}
+                          >
+                            {t('settings.github_logout')}
+                          </button>
+                        </div>
+                        <div className="settings-row">
+                          <span className="settings-row-main">
+                            <span>{t('settings.github_repo')}</span>
+                            <span className="settings-note">
+                              {github.repo === null
+                                ? t('settings.github_repo_none')
+                                : `${github.repo.owner}/${github.repo.name}`}
+                            </span>
+                          </span>
+                          <button
+                            type="button"
+                            className="settings-row-action"
+                            onClick={() => setRepoDialog(true)}
+                          >
+                            {github.repo === null
+                              ? t('settings.github_repo_pick')
+                              : t('settings.github_repo_change')}
+                          </button>
+                        </div>
+                        {github.repo !== null && (
+                          <GithubFields
+                            key={`${github.repo.owner}/${github.repo.name}`}
+                            initial={github.settings}
+                            onSave={saveGithubSettings}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <div className="settings-row">
+                        <span className="settings-row-main">
+                          <span>{t('settings.github_not_logged_in')}</span>
+                          <span className="settings-note">{t('settings.github_login_note')}</span>
+                        </span>
+                        <button
+                          type="button"
+                          className="settings-row-action primary"
+                          onClick={() => setLoginDialog(true)}
+                        >
+                          {t('settings.github_login')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {githubFailure !== null && (
+                  <p className="settings-failure">{githubFailure}</p>
+                )}
                 {isAndroid ? (
-                  postsDir?.kind === 'android' && (
-                    <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
-                  )
-                ) : (
-                  <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
+                  <>
+                    <h2 className="settings-h2">{t('settings.posts_location')}</h2>
+                    {postsDir?.kind === 'android' && (
+                      <PostsDirNameRow initial={postsDir.name} onChange={onChangePostsDirName} />
+                    )}
+                  </>
+                ) : linked ? null : (
+                  <>
+                    <h2 className="settings-h2">{t('settings.posts_location')}</h2>
+                    <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
+                  </>
                 )}
                 <h2 className="settings-h2">{t('settings.about')}</h2>
                 <div className="settings-rows">
@@ -123,6 +325,20 @@ export default function Settings({
           </div>
         </div>
       </div>
+      {loginDialog && (
+        <GithubLoginDialog
+          onWait={waitLogin}
+          onDone={() => void loginDone()}
+          onCancel={() => setLoginDialog(false)}
+        />
+      )}
+      {repoDialog && (
+        <GithubRepoDialog
+          current={github?.repo ?? null}
+          onSelect={selectRepo}
+          onCancel={() => setRepoDialog(false)}
+        />
+      )}
     </Dialog>
   )
 }
@@ -244,6 +460,260 @@ function PostsDirNameRow({
         </div>
       </div>
       {failure && <p className="settings-failure">{failure}</p>}
+    </>
+  )
+}
+
+type Check = 'ok' | 'invalid' | 'failed'
+
+const isGithubError = (e: unknown, kind: GithubError['kind']) =>
+  typeof e === 'object' && e !== null && (e as { kind?: unknown }).kind === kind
+
+// 使えない値ならinvalid、確かめること自体に失敗したらfailed
+const checkOf = (e: unknown, kind: GithubError['kind']): Check =>
+  isGithubError(e, kind) ? 'invalid' : 'failed'
+
+// GitHubの節の、Base branch以下の3つの入力欄。欄から外れたときとEnterで、3つをまとめて保存する
+function GithubFields({
+  initial,
+  onSave,
+}: {
+  initial: GithubSettings
+  onSave: (values: GithubFieldsValues, dirChanged: boolean) => Promise<void>
+}) {
+  const [baseBranch, setBaseBranch] = useState(initial.baseBranch ?? '')
+  const [format, setFormat] = useState(initial.branchFormat)
+  const [postsPath, setPostsPath] = useState(initial.postsPath)
+  // 保存できた値。替わったかは、ここと比べて分かる
+  const [saved, setSaved] = useState<GithubFieldsValues>({
+    baseBranch: initial.baseBranch ?? '',
+    branchFormat: initial.branchFormat,
+    postsPath: initial.postsPath,
+  })
+  // 入力中の検証。nullは確かめている間、failedは確かめられなかった
+  const [formatCheck, setFormatCheck] = useState<Check | null>('ok')
+  const [pathCheck, setPathCheck] = useState<Check | null>('ok')
+  // Base branchは入力中には確かめず、保存のときに断られたら出す
+  const [baseInvalid, setBaseInvalid] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | null>(null)
+  const baseId = useId()
+  const baseHintId = useId()
+  const formatId = useId()
+  const formatHintId = useId()
+  const pathId = useId()
+  const pathHintId = useId()
+  // 入力のたびに呼んで、最後の応答だけを出す
+  const formatRequest = useRef(0)
+  const pathRequest = useRef(0)
+
+  const checkFormat = (value: string) => {
+    const id = ++formatRequest.current
+    validateBranchFormat(value).then(
+      () => {
+        if (id === formatRequest.current) setFormatCheck('ok')
+      },
+      (e) => {
+        if (id === formatRequest.current) setFormatCheck(checkOf(e, 'invalidBranchFormat'))
+      },
+    )
+  }
+
+  const checkPostsPath = (value: string) => {
+    const id = ++pathRequest.current
+    validatePostsPath(value).then(
+      () => {
+        if (id === pathRequest.current) setPathCheck('ok')
+      },
+      (e) => {
+        if (id === pathRequest.current) setPathCheck(checkOf(e, 'invalidPostsPath'))
+      },
+    )
+  }
+
+  const commit = async () => {
+    if (busy) return
+    const next: GithubFieldsValues = {
+      baseBranch: baseBranch.trim(),
+      branchFormat: format,
+      postsPath,
+    }
+    const dirChanged = next.postsPath !== saved.postsPath
+    const changed =
+      dirChanged || next.baseBranch !== saved.baseBranch || next.branchFormat !== saved.branchFormat
+    if (!changed) return
+    setBusy(true)
+    setFailure(null)
+    try {
+      // 入力中の確かめが終わる前に欄を離れても保存できるよう、ここで確かめ直す
+      try {
+        await validateBranchFormat(next.branchFormat)
+        await validatePostsPath(next.postsPath)
+      } catch (e) {
+        if (isGithubError(e, 'invalidBranchFormat')) setFormatCheck('invalid')
+        else if (isGithubError(e, 'invalidPostsPath')) setPathCheck('invalid')
+        else throw e
+        return
+      }
+      await onSave(next, dirChanged)
+      setSaved(next)
+    } catch (e) {
+      if (isGithubError(e, 'invalidBranchName')) {
+        setBaseInvalid(true)
+        return
+      }
+      console.error('Failed to save the GitHub settings', e)
+      setFailure(githubErrorText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // 文言の{slug}は差し込む値ではなく、形式に入れる文字そのもの
+  const formatCount = format.split('{slug}').length - 1
+  const formatMessage =
+    formatCount !== 1
+      ? t('settings.github_branch_format_count', { slug: '{slug}' })
+      : formatCheck === 'ok'
+        ? t('settings.github_branch_format_example', {
+            name: format.replace('{slug}', 'first-post'),
+          })
+        : formatCheck === 'invalid'
+          ? t('settings.github_branch_format_invalid')
+          : formatCheck === 'failed'
+            ? t('settings.github_check_failed')
+            : null
+  const formatInvalid = formatCount !== 1 || formatCheck === 'invalid'
+  const pathInvalid = pathCheck === 'invalid'
+
+  return (
+    <>
+      <div className="settings-field">
+        <label htmlFor={baseId}>{t('settings.github_base_branch')}</label>
+        <input
+          id={baseId}
+          type="text"
+          className={baseInvalid ? 'settings-input error' : 'settings-input'}
+          value={baseBranch}
+          disabled={busy}
+          aria-invalid={baseInvalid}
+          placeholder={
+            initial.repo === null
+              ? undefined
+              : t('settings.github_base_branch_placeholder', { name: initial.repo.defaultBranch })
+          }
+          aria-describedby={baseHintId}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commit()
+          }}
+          onBlur={() => void commit()}
+          onChange={(e) => {
+            setBaseBranch(e.target.value)
+            setBaseInvalid(false)
+            setFailure(null)
+          }}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        <p
+          id={baseHintId}
+          aria-live="polite"
+          className={baseInvalid ? 'settings-hint error' : 'settings-hint'}
+        >
+          {baseInvalid
+            ? t('settings.github_base_branch_invalid')
+            : t('settings.github_base_branch_note')}
+        </p>
+      </div>
+      <div className="settings-field">
+        <label htmlFor={formatId}>{t('settings.github_branch_format')}</label>
+        <input
+          id={formatId}
+          type="text"
+          className={formatInvalid ? 'settings-input error' : 'settings-input'}
+          value={format}
+          disabled={busy}
+          aria-invalid={formatInvalid}
+          aria-describedby={formatMessage === null ? undefined : formatHintId}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commit()
+          }}
+          onBlur={() => void commit()}
+          onChange={(e) => {
+            const value = e.target.value
+            setFormat(value)
+            setFormatCheck(null)
+            setFailure(null)
+            checkFormat(value)
+          }}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        {formatMessage !== null && (
+          <p
+            id={formatHintId}
+            aria-live="polite"
+            className={formatCheck === 'ok' ? 'settings-hint' : 'settings-hint error'}
+          >
+            {formatMessage}
+          </p>
+        )}
+      </div>
+      <div className="settings-field">
+        <label htmlFor={pathId}>{t('settings.github_posts_path')}</label>
+        <input
+          id={pathId}
+          type="text"
+          className={pathInvalid ? 'settings-input error' : 'settings-input'}
+          value={postsPath}
+          disabled={busy}
+          aria-invalid={pathInvalid}
+          aria-describedby={pathCheck === null ? undefined : pathHintId}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void commit()
+          }}
+          onBlur={() => void commit()}
+          onChange={(e) => {
+            const value = e.target.value
+            setPostsPath(value)
+            setPathCheck(null)
+            setFailure(null)
+            checkPostsPath(value)
+          }}
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        {pathCheck !== null && (
+          <p
+            id={pathHintId}
+            aria-live="polite"
+            className={pathCheck === 'ok' ? 'settings-hint' : 'settings-hint error'}
+          >
+            {pathCheck === 'ok' ? (
+              <>
+                <span>{t('settings.posts_dir_posts', { path: `${postsPath}/{slug}.md` })}</span>
+                <span>
+                  {t('settings.posts_dir_assets', {
+                    path: `${githubAssetsPath(postsPath)}/{slug}/`,
+                  })}
+                </span>
+              </>
+            ) : pathInvalid ? (
+              t('settings.github_posts_path_invalid')
+            ) : (
+              t('settings.github_check_failed')
+            )}
+          </p>
+        )}
+      </div>
+      {failure !== null && (
+        <p role="alert" className="settings-failure">
+          {failure}
+        </p>
+      )}
     </>
   )
 }
