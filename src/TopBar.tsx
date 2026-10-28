@@ -3,6 +3,7 @@ import { formatSavedTime, type SaveStatus } from './autoSave'
 import Icon from './Icon'
 import { t } from './i18n'
 import ImageFileInput from './ImageFileInput'
+import { isAndroid } from './platform'
 import type { DrawerState } from './useDrawer'
 
 export interface Notice {
@@ -18,6 +19,8 @@ interface TopBarProps {
   saveStatus: SaveStatus | null
   // あれば保存の状態の代わりに出す
   notice: Notice | null
+  // 記事内検索を開く。ボタンはAndroidだけに出す。nullなら押せない
+  onFind: (() => void) | null
 }
 
 function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice {
@@ -48,6 +51,7 @@ export default function TopBar({
   onInsertImages,
   saveStatus,
   notice,
+  onFind,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const closes = !drawer.narrow && drawer.expanded
@@ -93,6 +97,18 @@ export default function TopBar({
         multiple
         onFiles={(files) => onInsertImages?.(files)}
       />
+      {isAndroid && (
+        <button
+          type="button"
+          className="icon-button"
+          disabled={onFind === null}
+          onClick={() => onFind?.()}
+          aria-label={t('topbar.find')}
+          title={t('topbar.find')}
+        >
+          <Icon name="search" />
+        </button>
+      )}
     </div>
   )
 }

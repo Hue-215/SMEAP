@@ -8,7 +8,8 @@ import {
   type RefObject,
 } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import type { EditorView } from '@codemirror/view'
+import { EditorSelection, type EditorState, type StateEffect } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import {
   importBodyImage,
   importBodyImageFromPath,
@@ -27,6 +28,17 @@ import Editor from './Editor'
 import { insertImageRefs, insertLink } from './editor'
 import { t } from './i18n'
 import { isAndroid } from './platform'
+import {
+  findMatches,
+  findNextMatch,
+  findPrevMatch,
+  findStatus,
+  nextMatch,
+  selectedQuery,
+  setSearchHighlight,
+  type FindStatus,
+  type Match,
+} from './search'
 
 export interface ArticleEditorHandle {
   isDirty: () => boolean
@@ -34,6 +46,13 @@ export interface ArticleEditorHandle {
   save: () => Promise<boolean>
   insertLink: () => void
   insertImages: (files: File[]) => void
+  // 今の選択の先頭を、findが探し始める位置として覚える。選択が1行に収まっていればその文字を返す
+  beginFind: () => string | null
+  find: (query: string) => void
+  findNext: () => void
+  findPrev: () => void
+  endFind: () => void
+  focusBody: () => void
 }
 
 interface ArticleEditorProps {
@@ -45,6 +64,8 @@ interface ArticleEditorProps {
   onSaved: (fields: EditedFields) => void
   // エラーとして出す文言
   onNotice: (text: string) => void
+  // 本文・選択・検索の文字が変わり、進み具合が前と違うときに知らせる
+  onFindStatus: (status: FindStatus) => void
   ref: Ref<ArticleEditorHandle>
 }
 
@@ -116,6 +137,7 @@ export default function ArticleEditor({
   onSaveStatus,
   onSaved,
   onNotice,
+  onFindStatus,
   ref,
 }: ArticleEditorProps) {
   const [fields, setFields] = useState<HeaderFields>(() => ({
@@ -130,9 +152,9 @@ export default function ArticleEditor({
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
   const latest = useRef(fields)
   const view = useRef<EditorView>(null)
-  const callbacks = useRef({ onSaveStatus, onSaved, onNotice })
+  const callbacks = useRef({ onSaveStatus, onSaved, onNotice, onFindStatus })
   useEffect(() => {
-    callbacks.current = { onSaveStatus, onSaved, onNotice }
+    callbacks.current = { onSaveStatus, onSaved, onNotice, onFindStatus }
   })
   const [saver] = useState(() => new AutoSaver(article.slug))
 
@@ -232,6 +254,46 @@ export default function ArticleEditor({
     }
   }, [slug])
 
+  const findStart = useRef(0)
+  // Appは前の記事の値を持っているので、初めの1回は値によらず知らせる(null)
+  const lastFindStatus = useRef<FindStatus | null>(null)
+
+  const reportFindStatus = (state: EditorState) => {
+    const status = findStatus(state)
+    const last = lastFindStatus.current
+    if (last && status.current === last.current && status.total === last.total) return
+    lastFindStatus.current = status
+    callbacks.current.onFindStatus(status)
+  }
+
+  const selectMatch = (match: Match, effects: StateEffect<unknown>[] = []) => {
+    view.current?.dispatch({
+      selection: EditorSelection.single(match.from, match.to),
+      // 上に浮かせた検索の箱に隠れないよう、余白を大きめにとる
+      effects: [...effects, EditorView.scrollIntoView(match.from, { y: 'nearest', yMargin: 80 })],
+    })
+  }
+
+  const find = (query: string) => {
+    const v = view.current
+    if (!v) return
+    const match = nextMatch(findMatches(v.state, query), findStart.current)
+    const effect = setSearchHighlight.of(query)
+    // 一致が無くても文字を渡しておき、後の書き換えで一致ができたら下線を付ける
+    if (match) selectMatch(match, [effect])
+    else v.dispatch({ effects: effect })
+  }
+
+  const findNext = () => {
+    const match = view.current && findNextMatch(view.current.state)
+    if (match) selectMatch(match)
+  }
+
+  const findPrev = () => {
+    const match = view.current && findPrevMatch(view.current.state)
+    if (match) selectMatch(match)
+  }
+
   useImperativeHandle(ref, () => ({
     isDirty: () => saver.isDirty(),
     save: () => saver.save(),
@@ -239,6 +301,16 @@ export default function ArticleEditor({
       if (view.current) insertLink(view.current)
     },
     insertImages: (files) => runImports(files.map(fromFile)),
+    beginFind: () => {
+      if (!view.current) return null
+      findStart.current = view.current.state.selection.main.from
+      return selectedQuery(view.current.state)
+    },
+    find,
+    findNext,
+    findPrev,
+    endFind: () => view.current?.dispatch({ effects: setSearchHighlight.of('') }),
+    focusBody: () => view.current?.focus(),
   }))
 
   const updateFields = (patch: FieldsPatch) => {
@@ -281,6 +353,7 @@ export default function ArticleEditor({
         initialDoc={article.body}
         viewRef={view}
         onChange={() => saver.changed()}
+        onUpdate={reportFindStatus}
         onPasteImage={(files) =>
           runImports(files.length > 0 ? files.map(fromFile) : isAndroid ? [] : [fromClipboard])
         }

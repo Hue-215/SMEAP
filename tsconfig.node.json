@@ -17,5 +17,5 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "scripts/licenses.ts", "src/licenses.d.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "scripts/licenses.ts", "src/licenses.d.ts"]
 }

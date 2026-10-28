@@ -4,6 +4,7 @@
 
 - 試作: https://claude.ai/artifact/8bn9qixundRorooQHvkTdF (持ち主だけが開ける)
 - 設定画面とライセンスの画面だけは、別の試作 https://claude.ai/artifact/RaRdKXTrSBXJvJAWdHCmwh (2026-10-23)から写した
+- 記事内検索の画面(`Search*.dc.html`)は、2026-10-28に上の試作(8bn9…)へ足して写した。上のバーの並びは今の実装に合わせてある
 - 決まった内容は[spec.md](../spec.md)にある。試作と食い違うときはspec.mdに従う
 
 ## ファイル
@@ -20,6 +21,10 @@
 | `AndroidDrawer.dc.html` | Android 記事一覧 |
 | `LicensesAndroid.dc.html` | Android オープンソースライセンス(押すと全文の画面へ移る) |
 | `Colors.dc.html` | アクセント色の見本 |
+| `SearchA.dc.html` | 記事内検索 案A 上のバーの下に行を出す(採らなかった) |
+| `SearchB.dc.html` | 記事内検索 案B 本文の右上に箱を浮かせる(デスクトップで採用) |
+| `SearchC.dc.html` | 記事内検索 案C 上のバーを検索欄に替える(デスクトップでは採らなかった) |
+| `SearchAndroid.dc.html` | 記事内検索 Android(案Cの形で採用) |
 
 ## 読み方
 
