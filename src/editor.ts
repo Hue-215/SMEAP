@@ -39,6 +39,7 @@ import {
 } from '@codemirror/state'
 import { articleImageUrl } from './api'
 import { t } from './i18n'
+import { searchHighlight } from './search'
 
 // ベースの"Link/... Image/...": tags.linkは記号とURLにも下線を引き継ぐ。リンクは文字の部分にだけ
 // 下線を付け(リンク内の太字などには付かない)、画像は記法全体を灰色にする。
@@ -212,6 +213,8 @@ const editorTheme = EditorView.theme({
     background: 'var(--color-selection)',
   },
   '.cm-content ::selection': { background: 'var(--color-selection)' },
+  // 今の一致は選択範囲になるので、下線の上に選択の塗りが重なる
+  '.cm-searchMatch': { boxShadow: 'inset 0 -2px 0 var(--color-accent)' },
   '.cm-heading-1, .cm-heading-2, .cm-heading-3, .cm-heading-4, .cm-heading-5, .cm-heading-6':
     {
       fontFamily: 'var(--font-family)',
@@ -304,6 +307,7 @@ export function editorExtensions(
     syntaxHighlighting(highlight),
     headingLine,
     imageField(slug),
+    searchHighlight,
     editorTheme,
     EditorView.cspNonce.of(styleNonce),
   ]

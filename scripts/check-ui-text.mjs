@@ -2,7 +2,7 @@
 //
 // 文字列リテラル・テンプレート・JSXのテキストに日本語があれば失敗させる。構文木で見るので、
 // コメントは対象にならない。ログと例外の文は英語で書くので、これも拾う。英語の直書きは
-// 見分けられないため、レビューで見る。
+// 見分けられないため、レビューで見る。テスト(`*.test.ts`)は試す文字に日本語を使うので見ない。
 //
 // あわせて、キーを文字列リテラルで渡す`t()`の呼び出しで、渡す値の名前と文言の`{名前}`が
 // 一致するかを確かめる。キーを変数で渡す呼び出しは見ない。
@@ -20,7 +20,7 @@ function sourceFiles(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) return sourceFiles(path)
-    return /\.tsx?$/.test(entry.name) ? [path] : []
+    return /\.tsx?$/.test(entry.name) && !/\.test\.ts$/.test(entry.name) ? [path] : []
   })
 }
 

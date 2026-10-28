@@ -22,6 +22,7 @@ import { Drawer } from './Drawer'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
+import SearchBar, { type FindStatus } from './SearchBar'
 import Settings from './Settings'
 import Sidebar from './Sidebar'
 import type { ArticleRef, ArticlesState } from './Sidebar'
@@ -59,6 +60,16 @@ export default function App() {
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
   const loaded = article.status === 'loaded' ? article : null
+
+  // 記事内検索。文字は記事を切り替えても残す
+  const [findFor, setFindFor] = useState<Article | null>(null)
+  const [findQuery, setFindQuery] = useState('')
+  const [findStatus, setFindStatus] = useState<FindStatus>({ current: -1, total: 0 })
+  const [findFocus, setFindFocus] = useState(0)
+  // 検索を始めた位置
+  const findStart = useRef(0)
+  // 検索を開いた記事が読み込み済みの記事と違えば、閉じているとみなす
+  const findOpen = loaded !== null && findFor === loaded.article
 
   // 後から出した読み込みが先に返ったら、前の読み込みの結果は捨てる
   const listRequest = useRef(0)
@@ -140,12 +151,57 @@ export default function App() {
   // 開いている記事が無ければ保存済みとみなす
   const saveOpenArticle = () => editor.current?.save() ?? Promise.resolve(true)
 
-  // Ctrl+S・Cmd+S(CapsLockやShift下では大文字の"S"になる)で保存する
+  // Ctrl+F・Cmd+Fで検索を開く。受け手のeffectは依存を空にして付けっぱなしにするので、
+  // 開く処理はref経由で最新のものを呼ぶ
+  const openFindRef = useRef<(target: EventTarget | null) => void>(() => {})
+  const openFind = (target: EventTarget | null) => {
+    if (!loaded) return
+    if (saveConfirm || deleteTarget || slugDialog || settingsOpen || drawer.shown) return
+    if (target instanceof HTMLElement && target.closest('[role="menu"]')) return
+    // 検索の箱・行の中にフォーカスがあるなら、文字を入れ直さず入力欄を選び直すだけ
+    if (findFor === loaded.article && document.activeElement?.closest('[data-find]')) {
+      setFindFocus((n) => n + 1)
+      return
+    }
+    const query = editor.current?.selectedQuery() ?? findQuery
+    findStart.current = editor.current?.selectionStart() ?? 0
+    setFindFor(loaded.article)
+    setFindFocus((n) => n + 1)
+    if (!query) return
+    setFindQuery(query)
+    editor.current?.find(query, findStart.current)
+  }
+  useEffect(() => {
+    openFindRef.current = openFind
+  })
+
+  // 閉じる理由が何であれ、閉じたら下線を消す
+  useEffect(() => {
+    if (!findOpen) editor.current?.endFind()
+  }, [findOpen])
+
+  const closeFind = () => {
+    setFindFor(null)
+    editor.current?.focusBody()
+  }
+
+  const changeFindQuery = (query: string) => {
+    setFindQuery(query)
+    editor.current?.find(query, findStart.current)
+  }
+
+  // Ctrl+S・Cmd+Sで保存し、Ctrl+F・Cmd+Fで検索を開く(CapsLockやShift下では大文字になる)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault()
         void saveOpenArticle()
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        // 開けないときもWebViewの既定の動作は出さない
+        e.preventDefault()
+        openFindRef.current(e.target)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -312,33 +368,55 @@ export default function App() {
     if (replaces) setArticle({ status: 'loaded', slug: a.slug, article: a })
   }
 
+  const findBar = (variant: 'box' | 'bar') => (
+    <SearchBar
+      variant={variant}
+      query={findQuery}
+      status={findStatus}
+      focusRequest={findFocus}
+      onQueryChange={changeFindQuery}
+      onNext={() => editor.current?.findNext()}
+      onPrev={() => editor.current?.findPrev()}
+      onClose={closeFind}
+    />
+  )
+
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
       <Drawer drawer={drawer}>{sidebar}</Drawer>
       <main inert={drawer.shown} {...swipeToOpen}>
-        <TopBar
-          drawer={drawer}
-          onInsertLink={loaded ? () => editor.current?.insertLink() : null}
-          onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
-          saveStatus={loaded ? saveStatus : null}
-          notice={notice}
-        />
-        <div className="editor-scroll">
-          <div className="editor-column">
-            {article.status === 'loaded' ? (
-              <ArticleEditor
-                key={article.slug}
-                ref={editor}
-                article={article.article}
-                paused={saveConfirm !== null || deleteTarget !== null}
-                onSaveStatus={setSaveStatus}
-                onSaved={onSaved}
-                onNotice={(text) => setNotice({ text, error: true })}
-              />
-            ) : article.status === 'failed' ? (
-              <p className="editor-message">{t('app.article_load_failed')}</p>
-            ) : null}
+        {isAndroid && findOpen ? (
+          findBar('bar')
+        ) : (
+          <TopBar
+            drawer={drawer}
+            onInsertLink={loaded ? () => editor.current?.insertLink() : null}
+            onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
+            saveStatus={loaded ? saveStatus : null}
+            notice={notice}
+            onFind={loaded ? () => openFindRef.current(null) : null}
+          />
+        )}
+        <div className="editor-area">
+          <div className="editor-scroll">
+            <div className="editor-column">
+              {article.status === 'loaded' ? (
+                <ArticleEditor
+                  key={article.slug}
+                  ref={editor}
+                  article={article.article}
+                  paused={saveConfirm !== null || deleteTarget !== null}
+                  onSaveStatus={setSaveStatus}
+                  onSaved={onSaved}
+                  onNotice={(text) => setNotice({ text, error: true })}
+                  onFindStatus={setFindStatus}
+                />
+              ) : article.status === 'failed' ? (
+                <p className="editor-message">{t('app.article_load_failed')}</p>
+              ) : null}
+            </div>
           </div>
+          {!isAndroid && findOpen && findBar('box')}
         </div>
       </main>
       {slugDialog && (

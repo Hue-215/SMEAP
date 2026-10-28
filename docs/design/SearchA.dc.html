@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>検索 案A</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;family=Noto+Serif+JP:wght@400&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0&amp;display=block">
+<style>
+body{margin:0}
+.ms{font-family:'Material Symbols Outlined';font-weight:400;font-style:normal;font-size:24px;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;display:inline-block}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+input{font:inherit;color:inherit}
+input:focus{outline:none}
+</style>
+</helmet>
+<div style="height: 800px; display: flex; background: {{t.bg}}; color: {{t.fg}}; font-family: 'Noto Sans JP', sans-serif; font-weight: 400; overflow: hidden">
+
+<aside style="width: 264px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid {{t.line}}">
+<div style="height: 52px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 8px 0 20px; border-bottom: 1px solid {{t.line}}">
+<span style="font-size: 13.6px; font-weight: 500">記事</span>
+<button aria-label="新しい記事" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">add</span></button>
+</div>
+<nav aria-label="記事一覧" style="flex: 1; padding: 8px 0">
+<sc-for list="{{posts}}" as="p" hint-placeholder-count="3">
+<a href="#" style="display: block; padding: 10px 20px 10px 17px; border-left: 3px solid {{p.mark}}; text-decoration: none; color: {{t.fg}}">
+<div style="font-size: 13.6px; line-height: 1.5">{{p.title}}</div>
+<div style="font-size: 12px; line-height: 1.5; color: {{t.gray}}">{{p.slug}} · {{p.date}}</div>
+</a>
+</sc-for>
+</nav>
+</aside>
+
+<main style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<div role="toolbar" aria-label="編集" style="height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding: 0 12px; border-bottom: 1px solid {{t.line}}">
+<button aria-label="記事一覧を閉じる" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">left_panel_close</span></button>
+<span role="status" style="flex: 1; padding: 0 8px; font-size: 12px; color: {{t.gray}}">保存済み 14:32</span>
+<sc-if value="{{searchButton}}" hint-placeholder-val="{{ true }}">
+<button aria-label="検索 (Ctrl+F)" title="検索 (Ctrl+F)" onClick="{{openSearch}}" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">search</span></button>
+</sc-if>
+<button aria-label="リンクを挿入" title="リンクを挿入" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">link</span></button>
+<button aria-label="画像を挿入" title="画像を挿入" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">image</span></button>
+</div>
+
+<sc-if value="{{search}}" hint-placeholder-val="{{ true }}">
+<div role="search" style="flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 8px 20px; border-bottom: 1px solid {{t.line}}">
+<div style="display: flex; align-items: center; gap: 2px">
+<label style="width: 320px; height: 36px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid {{t.field}}; outline: 2px solid {{t.acc}}; outline-offset: -2px">
+<span class="ms" aria-hidden="true" style="font-size: 20px; color: {{t.gray}}">search</span>
+<input aria-label="本文を検索" value="{{query}}" onChange="{{onQuery}}" style="flex: 1; min-width: 0; border: 0; background: none; font-size: 14px">
+</label>
+<span role="status" style="min-width: 88px; padding: 0 12px; font-size: 12px; color: {{t.gray}}">{{count}}</span>
+<button aria-label="前を検索" title="前を検索 (Shift+Enter)" onClick="{{prev}}" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">keyboard_arrow_up</span></button>
+<button aria-label="次を検索" title="次を検索 (Enter)" onClick="{{next}}" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">keyboard_arrow_down</span></button>
+<span style="flex: 1"></span>
+<button aria-label="検索を閉じる" title="検索を閉じる (Esc)" onClick="{{closeSearch}}" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">close</span></button>
+</div>
+<sc-if value="{{replace}}" hint-placeholder-val="{{ false }}">
+<div style="display: flex; align-items: center; gap: 8px">
+<label style="width: 320px; height: 36px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid {{t.field}}">
+<span class="ms" aria-hidden="true" style="font-size: 20px; color: {{t.gray}}">find_replace</span>
+<input aria-label="置き換える文字" placeholder="置き換える文字" style="flex: 1; min-width: 0; border: 0; background: none; font-size: 14px">
+</label>
+<button style="height: 36px; padding: 0 12px; font-size: 13.6px">置換</button>
+<button style="height: 36px; padding: 0 12px; font-size: 13.6px">すべて置換</button>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<div style="flex: 1; overflow-y: auto">
+<div style="max-width: 720px; margin: 0 auto; padding: 48px 32px 96px; box-sizing: border-box">
+<div style="display: flex; gap: 24px">
+<div style="flex: 1; min-width: 0">
+<h1 style="margin: 0; font-size: 32px; line-height: 1.4; font-weight: 500">はじめての記事</h1>
+<p style="margin: 8px 0 0; font-family: 'Noto Serif JP', serif; font-size: 15px; line-height: 1.8; color: {{t.gray}}">SMEAPで書いた最初の記事です。</p>
+</div>
+<div style="width: 160px; height: 96px; flex-shrink: 0; border: 1px solid {{t.line}}; display: flex; align-items: center; justify-content: center; font-size: 12px; color: {{t.gray}}">サムネイル未設定</div>
+</div>
+<div style="margin-top: 20px; padding: 12px 0; border-top: 1px solid {{t.line}}; border-bottom: 1px solid {{t.line}}; font-size: 13.6px; color: {{t.gray}}">公開日 <span style="color: {{t.fg}}; padding-left: 8px">2026-10-22</span></div>
+<div style="margin-top: 32px; font-family: 'Noto Serif JP', serif; font-size: 16px; line-height: 1.9">
+<sc-for list="{{lines}}" as="l" hint-placeholder-count="10">
+<p style="margin: 0; {{l.css}}"><sc-for list="{{l.segs}}" as="s" hint-placeholder-count="2"><span style="{{s.css}}">{{s.t}}</span></sc-for></p>
+</sc-for>
+</div>
+</div>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"replace":{"editor":"boolean","default":false},"searchButton":{"editor":"boolean","default":true},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { search: true, query: '記号', cur: 1 }; }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#808080', line: '#262626', field: '#5A5A5A', acc: '#FFA01A', sel: '#5A4228' }
+      : { bg: '#FAFAFA', fg: '#0A1526', gray: '#5A6A80', line: '#E0E0E0', field: '#8A8A8A', acc: '#FFA01A', sel: '#F3D9C2' };
+    const sans = "font-family: 'Noto Sans JP', sans-serif; ";
+    const base = { '': '', m: 'color: ' + t.gray, b: sans + 'font-weight: 500', u: 'text-decoration: underline' };
+    const body = [
+      { css: sans + 'font-weight: 500; font-size: 22px; line-height: 1.6', segs: [['## ', 'm'], ['はじめに', '']] },
+      { segs: [] },
+      { segs: [['この記事は', ''], ['**', 'm'], ['SMEAP', 'b'], ['**', 'm'], ['で書いています。記号は消さずに残し、見出しや太字にだけスタイルを付けます。', '']] },
+      { segs: [] },
+      { segs: [['- ', 'm'], ['箇条書きの記号もそのまま', '']] },
+      { segs: [['- ', 'm'], ['[', 'm'], ['リンク', 'u'], ['](https://astro.build)', 'm'], ['は下線だけ付ける', '']] },
+      { segs: [] },
+      { segs: [['見出しの記号も、太字の記号も灰色で残ります。', '']] },
+      { segs: [] },
+      { segs: [['ここに本文が続きます。', '']] }
+    ];
+    const q = this.state.search ? this.state.query : '';
+    let total = 0;
+    const split = body.map((line) => {
+      const out = [];
+      for (const [text, kind] of line.segs) {
+        if (!q) { out.push({ t: text, kind }); continue; }
+        const parts = text.split(q);
+        parts.forEach((p, i) => {
+          if (p) out.push({ t: p, kind });
+          if (i < parts.length - 1) out.push({ t: q, kind, hit: total++ });
+        });
+      }
+      if (!out.length) out.push({ t: '​', kind: '' });
+      return { css: line.css ?? '', segs: out };
+    });
+    const cur = total ? ((this.state.cur % total) + total) % total : -1;
+    const lines = split.map((line) => ({
+      css: line.css,
+      segs: line.segs.map((s) => {
+        let css = base[s.kind];
+        if (s.hit !== undefined) {
+          css += '; box-shadow: inset 0 -2px 0 ' + t.acc;
+          if (s.hit === cur) css += '; background: ' + t.sel;
+        }
+        return { t: s.t, css };
+      })
+    }));
+    const count = !q ? '' : total ? (cur + 1) + ' / ' + total : '見つかりません';
+    const step = (d) => () => this.setState({ cur: this.state.cur + d });
+    const posts = [
+      { title: 'はじめての記事', slug: 'first-post', date: '2026-10-22', on: true },
+      { title: '画像の入れ方', slug: 'how-to-images', date: '2026-10-18' },
+      { title: 'Astroのブログを始めた', slug: 'start-astro-blog', date: '2026-10-02' }
+    ].map((p) => ({ ...p, mark: p.on ? t.acc : 'transparent' }));
+    return {
+      t, posts, lines, count,
+      search: this.state.search,
+      query: this.state.query,
+      replace: this.props.replace ?? false,
+      searchButton: this.props.searchButton ?? true,
+      onQuery: (e) => this.setState({ query: e.target.value, cur: 0 }),
+      prev: step(-1),
+      next: step(1),
+      openSearch: () => this.setState({ search: true }),
+      closeSearch: () => this.setState({ search: false })
+    };
+  }
+}
+</script>
+</body>
+</html>
