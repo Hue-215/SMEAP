@@ -213,7 +213,7 @@ const editorTheme = EditorView.theme({
     background: 'var(--color-selection)',
   },
   '.cm-content ::selection': { background: 'var(--color-selection)' },
-  // 今の一致は選択範囲になるので、下線の上に選択の塗りが重なる
+  // 選択の塗りと見分けられるよう、一致は塗らずに下線にする
   '.cm-searchMatch': { boxShadow: 'inset 0 -2px 0 var(--color-accent)' },
   '.cm-heading-1, .cm-heading-2, .cm-heading-3, .cm-heading-4, .cm-heading-5, .cm-heading-6':
     {

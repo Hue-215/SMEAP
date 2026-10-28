@@ -1,10 +1,8 @@
 import { useEffect, useRef } from 'react'
 import Icon from './Icon'
 import { t } from './i18n'
+import type { FindStatus } from './search'
 import { useCloseOnBack } from './useCloseOnBack'
-
-// 本文の検索の進み具合。currentは0始まりで、選択がどの一致とも同じでなければ-1
-export type FindStatus = { current: number; total: number }
 
 interface SearchBarProps {
   // box: デスクトップで本文の上に浮かせる箱。bar: Androidで上のバーの代わりの行
@@ -51,7 +49,7 @@ export default function SearchBar({
       data-find="true"
       className={`find find-${variant}`}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') {
+        if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
           e.preventDefault()
           onClose()
         }
@@ -76,7 +74,7 @@ export default function SearchBar({
           aria-label={t('search.label')}
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key !== 'Enter') return
+            if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
             e.preventDefault()
             if (e.shiftKey) onPrev()
             else onNext()

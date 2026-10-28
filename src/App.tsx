@@ -22,7 +22,8 @@ import { Drawer } from './Drawer'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
-import SearchBar, { type FindStatus } from './SearchBar'
+import SearchBar from './SearchBar'
+import type { FindStatus } from './search'
 import Settings from './Settings'
 import Sidebar from './Sidebar'
 import type { ArticleRef, ArticlesState } from './Sidebar'
@@ -66,8 +67,6 @@ export default function App() {
   const [findQuery, setFindQuery] = useState('')
   const [findStatus, setFindStatus] = useState<FindStatus>({ current: -1, total: 0 })
   const [findFocus, setFindFocus] = useState(0)
-  // 検索を始めた位置
-  const findStart = useRef(0)
   // 検索を開いた記事が読み込み済みの記事と違えば、閉じているとみなす
   const findOpen = loaded !== null && findFor === loaded.article
 
@@ -163,13 +162,12 @@ export default function App() {
       setFindFocus((n) => n + 1)
       return
     }
-    const query = editor.current?.selectedQuery() ?? findQuery
-    findStart.current = editor.current?.selectionStart() ?? 0
+    const query = editor.current?.beginFind() ?? findQuery
     setFindFor(loaded.article)
     setFindFocus((n) => n + 1)
     if (!query) return
     setFindQuery(query)
-    editor.current?.find(query, findStart.current)
+    editor.current?.find(query)
   }
   useEffect(() => {
     openFindRef.current = openFind
@@ -187,7 +185,7 @@ export default function App() {
 
   const changeFindQuery = (query: string) => {
     setFindQuery(query)
-    editor.current?.find(query, findStart.current)
+    editor.current?.find(query)
   }
 
   // Ctrl+S・Cmd+Sで保存し、Ctrl+F・Cmd+Fで検索を開く(CapsLockやShift下では大文字になる)

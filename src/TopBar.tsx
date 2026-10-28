@@ -19,7 +19,7 @@ interface TopBarProps {
   saveStatus: SaveStatus | null
   // あれば保存の状態の代わりに出す
   notice: Notice | null
-  // 記事内検索を開く。nullなら押せない
+  // 記事内検索を開く。ボタンはAndroidだけに出す。nullなら押せない
   onFind: (() => void) | null
 }
 

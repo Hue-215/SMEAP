@@ -9,7 +9,7 @@ interface EditorProps {
   // 本文を読むときに使う。編集欄がある間だけ入る
   viewRef: RefObject<EditorView | null>
   onChange: () => void
-  // すべての更新後の状態。検索の件数の付け直しに使う
+  // 本文・選択が変わるか効果の付いた更新の後に呼ぶ。検索の件数を数え直すのに使う
   onUpdate: (state: EditorState) => void
   // 文字の無い貼り付け。filesは空のことがある
   onPasteImage: (files: File[]) => void
@@ -36,7 +36,8 @@ export default function Editor({
         editorExtensions(slug, (files) => callbacks.current.onPasteImage(files)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) callbacks.current.onChange()
-          callbacks.current.onUpdate(update.state)
+          if (update.docChanged || update.selectionSet || update.transactions.some((tr) => tr.effects.length > 0))
+            callbacks.current.onUpdate(update.state)
         }),
       ],
       parent: container.current ?? undefined,

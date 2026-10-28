@@ -3,6 +3,9 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import {
   currentIndex,
   findMatches,
+  findNextMatch,
+  findPrevMatch,
+  findStatus,
   nextMatch,
   prevMatch,
   searchHighlight,
@@ -51,6 +54,8 @@ describe('findMatches', () => {
   })
 
   it('NFKDで分かれた文字の途中までの一致は外す', () => {
+    expect(findMatches(createState('ｶﾞ'), 'カ')).toEqual([])
+    expect(findMatches(createState('か\u3099'), 'か')).toEqual([])
     expect(findMatches(createState('ガギ カ'), 'カ')).toEqual([{ from: 3, to: 4 }])
     expect(findMatches(createState('はばぱ'), 'は')).toEqual([{ from: 0, to: 1 }])
   })
@@ -132,12 +137,6 @@ describe('nextMatch', () => {
   it('一致が無ければnull', () => {
     expect(nextMatch([], 0)).toBeNull()
   })
-
-  it('選択のtoを渡すと選択中の一致の次へ進む', () => {
-    const state = createState('うえおうえおうえお', EditorSelection.single(3, 6))
-    const to = state.selection.main.to
-    expect(nextMatch(matches, to)).toEqual({ from: 6, to: 9 })
-  })
 })
 
 describe('prevMatch', () => {
@@ -163,12 +162,6 @@ describe('prevMatch', () => {
   it('一致が無ければnull', () => {
     expect(prevMatch([], 0)).toBeNull()
   })
-
-  it('選択のfromを渡すと選択中の一致の前へ戻る', () => {
-    const state = createState('うえおうえおうえお', EditorSelection.single(3, 6))
-    const from = state.selection.main.from
-    expect(prevMatch(matches, from)).toEqual({ from: 0, to: 3 })
-  })
 })
 
 describe('selectedQuery', () => {
@@ -182,6 +175,10 @@ describe('selectedQuery', () => {
 
   it('空の選択ならnull', () => {
     expect(selectedQuery(createState('あいうえお', EditorSelection.single(2)))).toBeNull()
+  })
+
+  it('行全体を選んで終わりが次の行の頭にあるならnull', () => {
+    expect(selectedQuery(createState('あいう\nえお', EditorSelection.single(0, 4)))).toBeNull()
   })
 
   it('改行をまたぐ選択ならnull', () => {
@@ -235,16 +232,24 @@ describe('searchHighlight', () => {
     expect(highlightRanges(searched)).toEqual(findMatches(searched, 'うえお'))
   })
 
-  it('空の文字を渡すと消える', () => {
+  it('空の文字を渡すと消え、その後に本文を書き換えても付かない', () => {
     const cleared = setQuery(setQuery(highlightState(doc), 'うえお'), '')
     expect(highlightRanges(cleared)).toEqual([])
+    const edited = cleared.update({ changes: { from: 0, insert: 'うえお' } }).state
+    expect(highlightRanges(edited)).toEqual([])
+  })
+
+  it('一致の無い文字でも、本文を書き換えて一致ができたら付く', () => {
+    const searched = setQuery(highlightState('あいう'), 'うえお')
+    expect(highlightRanges(searched)).toEqual([])
+    const edited = searched.update({ changes: { from: 3, insert: 'うえお' } }).state
+    expect(highlightRanges(edited)).toEqual([{ from: 3, to: 6 }])
   })
 
   it('本文を書き換えると新しい本文で付け直す', () => {
     const start = setQuery(highlightState('うえお'), 'うえお')
     expect(highlightRanges(start)).toEqual([{ from: 0, to: 3 }])
 
-    // 一致を足す
     const added = start.update({ changes: { from: 3, insert: 'うえお' } }).state
     expect(highlightRanges(added)).toEqual([
       { from: 0, to: 3 },
@@ -268,5 +273,39 @@ describe('searchHighlight', () => {
     const before = searched.field(searchHighlight)
     const moved = searched.update({ selection: EditorSelection.single(3) }).state
     expect(moved.field(searchHighlight)).toBe(before)
+  })
+})
+
+describe('findStatus・findNextMatch・findPrevMatch', () => {
+  const doc = 'うえおうえおうえお'
+
+  function searching(selection: EditorSelection, query = 'うえお'): EditorState {
+    return EditorState.create({ doc, selection, extensions: [searchHighlight] }).update({
+      effects: setSearchHighlight.of(query),
+    }).state
+  }
+
+  it('選択が一致なら番号と件数を返す', () => {
+    expect(findStatus(searching(EditorSelection.single(3, 6)))).toEqual({ current: 1, total: 3 })
+  })
+
+  it('選択が一致でなければ番号は-1', () => {
+    expect(findStatus(searching(EditorSelection.single(4)))).toEqual({ current: -1, total: 3 })
+  })
+
+  it('文字が空なら0件', () => {
+    expect(findStatus(searching(EditorSelection.single(0), ''))).toEqual({ current: -1, total: 0 })
+  })
+
+  it('選択中の一致の次と前へ移る', () => {
+    const state = searching(EditorSelection.single(3, 6))
+    expect(findNextMatch(state)).toEqual({ from: 6, to: 9 })
+    expect(findPrevMatch(state)).toEqual({ from: 0, to: 3 })
+  })
+
+  it('選択の向きが逆でも同じ', () => {
+    const state = searching(EditorSelection.single(6, 3))
+    expect(findNextMatch(state)).toEqual({ from: 6, to: 9 })
+    expect(findPrevMatch(state)).toEqual({ from: 0, to: 3 })
   })
 })

@@ -18,7 +18,16 @@ export interface Match {
   to: number
 }
 
+// currentは0始まりで、選択がどの一致とも同じでなければ-1
+export interface FindStatus {
+  current: number
+  total: number
+}
+
 const normalize = (text: string) => text.normalize('NFKD').toLowerCase()
+
+// 一致の直後が濁点などの結合する文字なら、その文字の途中までの一致になる(「ｶﾞ」「か゛」の「か」)
+const combining = /^[\p{M}ﾞﾟ]/u
 
 // @codemirror/searchの照合はNFKDで正規化するので、「ガ」の中の「カ」のように正規化で
 // 分かれた文字の途中までの一致は、testで範囲ごと比べて外す
@@ -27,7 +36,8 @@ function queryFor(search: string): SearchQuery {
     search,
     literal: true,
     caseSensitive: false,
-    test: (match) => normalize(match) === normalize(search),
+    test: (match, state, _from, to) =>
+      normalize(match) === normalize(search) && !combining.test(state.sliceDoc(to, to + 1)),
   })
 }
 
@@ -66,7 +76,6 @@ export function selectedQuery(state: EditorState): string | null {
 
 export const setSearchHighlight = StateEffect.define<string>()
 
-// 検索の文字。下線のStateFieldが、本文の書き換えの後に作り直すときに読む
 const searchQuery = StateField.define<string>({
   create: () => '',
   update: (value, tr) => {
@@ -74,6 +83,25 @@ const searchQuery = StateField.define<string>({
     return value
   },
 })
+
+// setSearchHighlightで渡した今の検索の文字
+export function searchText(state: EditorState): string {
+  return state.field(searchQuery, false) ?? ''
+}
+
+export function findStatus(state: EditorState): FindStatus {
+  const matches = findMatches(state, searchText(state))
+  return { current: currentIndex(matches, state.selection.main), total: matches.length }
+}
+
+// 今の選択の後ろの一致。選択中の一致そのものは飛ばす
+export function findNextMatch(state: EditorState): Match | null {
+  return nextMatch(findMatches(state, searchText(state)), state.selection.main.to)
+}
+
+export function findPrevMatch(state: EditorState): Match | null {
+  return prevMatch(findMatches(state, searchText(state)), state.selection.main.from)
+}
 
 function markMatches(state: EditorState, query: string): DecorationSet {
   const mark = Decoration.mark({ class: 'cm-searchMatch' })

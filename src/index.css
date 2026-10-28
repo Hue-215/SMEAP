@@ -383,7 +383,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   padding-inline: 0.25rem;
 }
 
-/* 入力欄の外枠は設定画面の絞り込み欄(.settings-filter)と同じ */
+/* 枠線とフォーカスの縁取りは設定画面の絞り込み欄(.settings-filter)と同じ。高さはバーに収まるよう低くしてある */
 .find-input {
   display: flex;
   align-items: center;

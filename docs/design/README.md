@@ -4,7 +4,7 @@
 
 - 試作: https://claude.ai/artifact/8bn9qixundRorooQHvkTdF (持ち主だけが開ける)
 - 設定画面とライセンスの画面だけは、別の試作 https://claude.ai/artifact/RaRdKXTrSBXJvJAWdHCmwh (2026-10-23)から写した
-- 記事内検索の画面(`Search*.dc.html`)は、2026-10-28に同じ試作へ足して写した。ほかの画面より新しく、上のバーの並びは今の実装に合わせてある
+- 記事内検索の画面(`Search*.dc.html`)は、2026-10-28に上の試作(8bn9…)へ足して写した。上のバーの並びは今の実装に合わせてある
 - 決まった内容は[spec.md](../spec.md)にある。試作と食い違うときはspec.mdに従う
 
 ## ファイル
