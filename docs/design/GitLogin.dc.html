@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>GitHubにログイン</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,300..400,0,0&amp;display=block">
+<style>
+body{margin:0}
+.ms{font-family:'Material Symbols Outlined';font-weight:300;font-style:normal;font-size:20px;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;display:inline-block}
+button{font:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width: 520px; height: 400px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: {{t.scrim}}; font-family: 'Noto Sans JP', sans-serif">
+<div role="dialog" aria-labelledby="lg-title" style="width: 440px; box-sizing: border-box; padding: 24px; background: {{t.bg}}; color: {{t.fg}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 16px">
+<h2 id="lg-title" style="margin: 0; font-size: 16px; font-weight: 500">GitHubにログイン</h2>
+<p style="margin: 0; font-size: 13px; line-height: 1.7; color: {{t.gray}}">ブラウザで github.com/login/device を開き、次のコードを入力してください。</p>
+<sc-if value="{{waiting}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; align-items: center; justify-content: center; gap: 8px">
+<span aria-label="コード" style="font-family: ui-monospace, monospace; font-size: 28px; letter-spacing: 0.1em">WDJB-MJHT</span>
+<button aria-label="コードをコピー" title="コードをコピー" style="width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: 0; background: none; color: {{t.fg}}"><span class="ms" aria-hidden="true">content_copy</span></button>
+</div>
+<button style="height: 40px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px"><span class="ms" aria-hidden="true">open_in_new</span>ブラウザで開く</button>
+<p role="status" style="margin: 0; font-size: 12px; color: {{t.gray}}">ブラウザで承認されるのを待っています</p>
+</sc-if>
+<sc-if value="{{expired}}" hint-placeholder-val="{{ false }}">
+<p role="status" style="margin: 0; font-size: 13px; line-height: 1.7; color: {{t.err}}">コードの期限が切れました。もう一度やり直してください。</p>
+</sc-if>
+<div style="display: flex; justify-content: flex-end; gap: 8px">
+<button style="height: 40px; padding: 0 16px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px">キャンセル</button>
+<sc-if value="{{expired}}" hint-placeholder-val="{{ false }}">
+<button style="height: 40px; padding: 0 16px; border: 0; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">やり直す</button>
+</sc-if>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"expired":{"editor":"boolean","default":false},"$preview":{"width":520,"height":400}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const expired = this.props.expired ?? false;
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', scrim: '#1A1A1A', err: '#F08A7E' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', scrim: '#D9D9D9', err: '#B3261E' };
+    return { t, expired, waiting: !expired };
+  }
+}
+</script>
+</body>
+</html>

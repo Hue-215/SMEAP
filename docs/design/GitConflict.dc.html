@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>GitHub上の内容との食い違い</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+button{font:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width: 520px; height: 320px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: {{t.scrim}}; font-family: 'Noto Sans JP', sans-serif">
+<div role="alertdialog" aria-labelledby="cf-title" aria-describedby="cf-body" style="width: 440px; box-sizing: border-box; padding: 24px; background: {{t.bg}}; color: {{t.fg}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+<h2 id="cf-title" style="margin: 0; font-size: 16px; font-weight: 500">{{title}}</h2>
+<p id="cf-body" style="margin: 0; font-size: 13px; line-height: 1.7; color: {{t.gray}}">{{body}}</p>
+<div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px">
+<button style="height: 40px; padding: 0 16px; border: 0; background: none; color: {{t.fg}}; font-size: 14px; margin-right: auto">{{remoteLabel}}</button>
+<button style="height: 40px; padding: 0 16px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px">キャンセル</button>
+<sc-if value="{{update}}" hint-placeholder-val="{{ true }}">
+<button style="height: 40px; padding: 0 16px; border: 0; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">Push</button>
+</sc-if>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"kind":{"editor":"enum","options":["同じファイルを両方で変えた","同じ名前のbranchがあった"],"default":"同じファイルを両方で変えた"},"$preview":{"width":520,"height":320}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const update = (this.props.kind ?? '同じファイルを両方で変えた') === '同じファイルを両方で変えた';
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', scrim: '#1A1A1A' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', scrim: '#D9D9D9' };
+    return {
+      t, update,
+      title: update ? 'Conflict' : 'branchが既にあります',
+      body: update
+        ? '「画像の入れ方」の本文がGitHub上でも変更されています。'
+        : 'blog/first-post が既にGitHub上にあります。slugを変えるか、Pullしてください。',
+      remoteLabel: 'Pull'
+    };
+  }
+}
+</script>
+</body>
+</html>

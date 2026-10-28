@@ -5,6 +5,7 @@
 - 試作: https://claude.ai/artifact/8bn9qixundRorooQHvkTdF (持ち主だけが開ける)
 - 設定画面とライセンスの画面だけは、別の試作 https://claude.ai/artifact/RaRdKXTrSBXJvJAWdHCmwh (2026-10-23)から写した
 - 記事内検索の画面(`Search*.dc.html`)は、2026-10-28に上の試作(8bn9…)へ足して写した。上のバーの並びは今の実装に合わせてある
+- GitHub連携の画面(`Git*.dc.html`)は、2026-10-28に上の試作(8bn9…)へ足して写した
 - 決まった内容は[spec.md](../spec.md)にある。試作と食い違うときはspec.mdに従う
 
 ## ファイル
@@ -25,6 +26,15 @@
 | `SearchB.dc.html` | 記事内検索 案B 本文の右上に箱を浮かせる(デスクトップで採用) |
 | `SearchC.dc.html` | 記事内検索 案C 上のバーを検索欄に替える(デスクトップでは採らなかった) |
 | `SearchAndroid.dc.html` | 記事内検索 Android(案Cの形で採用) |
+| `GitMain.dc.html` | GitHub連携 デスクトップ 編集画面(一覧の3つの分類、Commit & Pushのボタン) |
+| `GitSettings.dc.html` | GitHub連携 デスクトップ 設定画面(ログイン前・Repository未選択・ログイン後) |
+| `GitCommit.dc.html` | Commit & Pushのダイアログ |
+| `GitConflict.dc.html` | GitHub上の内容と食い違ったときのダイアログ |
+| `GitLogin.dc.html` | GitHubにログインのダイアログ |
+| `GitRepo.dc.html` | Repositoryの選択のダイアログ |
+| `GitDelete.dc.html` | 削除・編集をやめるのダイアログ |
+| `GitAndroid.dc.html` | GitHub連携 Android 編集画面 |
+| `GitAndroidDrawer.dc.html` | GitHub連携 Android 記事一覧(長押しのメニュー) |
 
 ## 読み方
 

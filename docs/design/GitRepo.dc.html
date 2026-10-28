@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Repositoryの選択</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,300..400,0,0&amp;display=block">
+<style>
+body{margin:0}
+.ms{font-family:'Material Symbols Outlined';font-weight:300;font-style:normal;font-size:20px;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;display:inline-block}
+button{font:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width: 520px; height: 480px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: {{t.scrim}}; font-family: 'Noto Sans JP', sans-serif">
+<div role="dialog" aria-labelledby="rp-title" style="width: 440px; box-sizing: border-box; padding: 24px; background: {{t.bg}}; color: {{t.fg}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 16px">
+<h2 id="rp-title" style="margin: 0; font-size: 16px; font-weight: 500">Repositoryを選ぶ</h2>
+<sc-if value="{{has}}" hint-placeholder-val="{{ true }}">
+<div role="radiogroup" aria-labelledby="rp-title" style="border-top: 1px solid {{t.line}}">
+<sc-for list="{{repos}}" as="r" hint-placeholder-count="3">
+<label style="display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid {{t.line}}; font-size: 14px; cursor: pointer">
+<input type="radio" name="repo" checked="{{r.on}}" onChange="{{r.pick}}" style="width: 18px; height: 18px; margin: 0; accent-color: {{t.acc}}">
+<span>{{r.name}}</span>
+</label>
+</sc-for>
+</div>
+</sc-if>
+<sc-if value="{{empty}}" hint-placeholder-val="{{ false }}">
+<p style="margin: 0; font-size: 13px; line-height: 1.7; color: {{t.gray}}">選べるrepositoryがありません。</p>
+</sc-if>
+<div style="display: flex; justify-content: flex-end; gap: 8px">
+<button style="height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 12px; border: 0; background: none; color: {{t.fg}}; font-size: 14px; margin-right: auto"><span class="ms" aria-hidden="true">open_in_new</span>repositoryを追加</button>
+<button style="height: 40px; padding: 0 16px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px">キャンセル</button>
+<sc-if value="{{has}}" hint-placeholder-val="{{ true }}">
+<button style="height: 40px; padding: 0 16px; border: 0; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">選ぶ</button>
+</sc-if>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"empty":{"editor":"boolean","default":false},"$preview":{"width":520,"height":480}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { picked: 'niigo/blog' }; }
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const empty = this.props.empty ?? false;
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', scrim: '#1A1A1A', acc: '#F99D1D' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', scrim: '#D9D9D9', acc: '#D57C00' };
+    const repos = ['niigo/blog', 'niigo/tech-notes', 'niigo/travel-log'].map((name) => ({
+      name,
+      on: name === this.state.picked,
+      pick: () => this.setState({ picked: name })
+    }));
+    return { t, repos, empty, has: !empty };
+  }
+}
+</script>
+</body>
+</html>

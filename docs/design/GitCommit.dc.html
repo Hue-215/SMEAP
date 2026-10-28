@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Commit &amp; Push</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+button{font:inherit;cursor:pointer}
+input{font:inherit}
+</style>
+</helmet>
+<div style="width: 520px; height: 400px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: {{t.scrim}}; font-family: 'Noto Sans JP', sans-serif">
+<div role="dialog" aria-labelledby="cm-title" style="width: 440px; box-sizing: border-box; padding: 24px; background: {{t.bg}}; color: {{t.fg}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 16px">
+<h2 id="cm-title" style="margin: 0; font-size: 16px; font-weight: 500">Commit &amp; Push</h2>
+<div style="display: flex; flex-direction: column; gap: 4px; font-size: 13px; line-height: 1.6">
+<div style="display: flex; gap: 12px">
+<span style="width: 3em; flex-shrink: 0; color: {{t.gray}}">本文</span>
+<span style="flex: 1; min-width: 0">{{md}}</span>
+<span style="color: {{t.gray}}">{{lines}}</span>
+</div>
+<sc-if value="{{hasImages}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 12px">
+<span style="width: 3em; flex-shrink: 0; color: {{t.gray}}">画像</span>
+<span style="flex: 1">{{images}}</span>
+</div>
+</sc-if>
+<sc-if value="{{renamed}}" hint-placeholder-val="{{ false }}">
+<div style="color: {{t.gray}}">Push後、GitHub上の古いbranch blog/first-draft を消します</div>
+</sc-if>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="msg" style="font-size: 13px">Commit message</label>
+<input id="msg" value="{{message}}" style="height: 40px; box-sizing: border-box; padding: 0 12px; border: 1px solid {{t.field}}; outline: 2px solid {{t.acc}}; outline-offset: -2px; background: none; color: {{t.fg}}; font-size: 14px">
+</div>
+<div style="display: flex; justify-content: flex-end; gap: 8px">
+<button style="height: 40px; padding: 0 16px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px">キャンセル</button>
+<button style="height: 40px; padding: 0 16px; border: 0; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">Commit &amp; Push</button>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"kind":{"editor":"enum","options":["2回目以降","初めて","slugを変えた後","本文だけ"],"default":"2回目以降"},"$preview":{"width":520,"height":400}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const kind = this.props.kind ?? '2回目以降';
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', field: '#5A5A5A', scrim: '#1A1A1A', acc: '#F99D1D' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', field: '#8A8A8A', scrim: '#D9D9D9', acc: '#D57C00' };
+    const v = {
+      '2回目以降': { md: 'first-post.md', lines: '+12 −3', images: '追加 1件・削除 1件' },
+      '初めて': { md: 'first-post.md', lines: '+48', images: '追加 2件' },
+      'slugを変えた後': { md: 'first-draft.md → first-post.md', lines: '+1 −1', images: '' },
+      '本文だけ': { md: 'first-post.md', lines: '+5 −2', images: '' }
+    }[kind];
+    return {
+      t, ...v,
+      hasImages: !!v.images,
+      renamed: kind === 'slugを変えた後',
+      message: kind === '初めて' ? 'はじめての記事を追加' : 'はじめての記事を更新'
+    };
+  }
+}
+</script>
+</body>
+</html>

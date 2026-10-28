@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>GitHub Android 編集画面</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;family=Noto+Serif+JP:wght@400&amp;display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0&amp;display=block">
+<style>
+body{margin:0}
+.ms{font-family:'Material Symbols Outlined';font-weight:400;font-style:normal;font-size:24px;line-height:1;letter-spacing:normal;text-transform:none;white-space:nowrap;direction:ltr;font-feature-settings:'liga';-webkit-font-smoothing:antialiased;display:inline-block}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+a{color:inherit;text-decoration:none}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; display: flex; flex-direction: column; background: {{t.bg}}; color: {{t.fg}}; font-family: 'Noto Sans JP', sans-serif; overflow: hidden">
+<div role="toolbar" aria-label="編集" style="height: 56px; flex-shrink: 0; display: flex; align-items: center; padding: 0 4px; border-bottom: 1px solid {{t.line}}">
+<a href="GitAndroidDrawer.dc.html" aria-label="記事一覧を開く" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">menu</span></a>
+<span role="status" style="min-width: 0; padding: 0 4px; font-size: 12px; color: {{t.gray}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">保存済み 14:32</span>
+<sc-if value="{{dirty}}" hint-placeholder-val="{{ true }}">
+<a href="GitCommit.dc.html" aria-label="Commit &amp; Push" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; position: relative"><span class="ms" aria-hidden="true">upload</span><span aria-hidden="true" style="position: absolute; top: 10px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: {{t.acc}}"></span></a>
+</sc-if>
+<sc-if value="{{clean}}" hint-placeholder-val="{{ false }}">
+<button disabled aria-label="Commit &amp; Push(commitしていない変更はありません)" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: {{t.gray}}; cursor: default"><span class="ms" aria-hidden="true">upload</span></button>
+</sc-if>
+<span style="flex: 1"></span>
+<button aria-label="リンクを挿入" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">link</span></button>
+<button aria-label="画像を挿入" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">image</span></button>
+<button aria-label="検索" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">search</span></button>
+</div>
+
+<div style="flex: 1; min-height: 0; overflow-y: auto; padding: 24px 20px 32px">
+<h1 style="margin: 0; font-size: 26px; line-height: 1.4; font-weight: 500">はじめての記事</h1>
+<p style="margin: 6px 0 0; font-family: 'Noto Serif JP', serif; font-size: 14px; line-height: 1.8; color: {{t.gray}}">SMEAPで書いた最初の記事です。</p>
+<div style="margin-top: 16px; padding: 12px 0; border-top: 1px solid {{t.line}}; border-bottom: 1px solid {{t.line}}; font-size: 13.6px; color: {{t.gray}}">公開日 <span style="color: {{t.fg}}; padding-left: 8px">2026/10/22</span></div>
+<div style="margin-top: 24px; font-family: 'Noto Serif JP', serif; font-size: 16px; line-height: 1.9">
+<p style="margin: 0; font-family: 'Noto Sans JP', sans-serif; font-weight: 500; font-size: 20px; line-height: 1.6"><span style="color: {{t.gray}}">## </span>はじめに</p>
+<p style="margin: 0">​</p>
+<p style="margin: 0">この記事は<span style="color: {{t.gray}}">**</span><span style="font-family: 'Noto Sans JP', sans-serif; font-weight: 500">SMEAP</span><span style="color: {{t.gray}}">**</span>で書いています。</p>
+<p style="margin: 0">​</p>
+<p style="margin: 0">ここに本文が続きます。</p>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"dirty":{"editor":"boolean","default":true},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const dirty = this.props.dirty ?? true;
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', acc: '#F99D1D' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', acc: '#D57C00' };
+    return { t, dirty, clean: !dirty };
+  }
+}
+</script>
+</body>
+</html>

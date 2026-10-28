@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>削除・編集をやめる</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500&amp;display=swap">
+<style>
+body{margin:0}
+button{font:inherit;cursor:pointer}
+</style>
+</helmet>
+<div style="width: 520px; height: 300px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: {{t.scrim}}; font-family: 'Noto Sans JP', sans-serif">
+<div role="alertdialog" aria-labelledby="dl-title" aria-describedby="dl-body" style="width: 440px; box-sizing: border-box; padding: 24px; background: {{t.bg}}; color: {{t.fg}}; border: 1px solid {{t.line}}; display: flex; flex-direction: column; gap: 12px">
+<h2 id="dl-title" style="margin: 0; font-size: 16px; font-weight: 500">{{title}}</h2>
+<p id="dl-body" style="margin: 0; font-size: 13px; line-height: 1.7; color: {{t.gray}}">{{body}}<br>{{remote}}</p>
+<div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px">
+<button style="height: 40px; padding: 0 16px; border: 1px solid {{t.line}}; background: none; color: {{t.fg}}; font-size: 14px">キャンセル</button>
+<button style="height: 40px; padding: 0 16px; border: 0; background: {{t.fg}}; color: {{t.bg}}; font-size: 14px">{{action}}</button>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"kind":{"editor":"enum","options":["執筆中の記事を削除","編集をやめる"],"default":"執筆中の記事を削除"},"$preview":{"width":520,"height":300}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const del = (this.props.kind ?? '執筆中の記事を削除') === '執筆中の記事を削除';
+    const t = dark
+      ? { bg: '#000000', fg: '#FAFAFA', gray: '#8C8C8C', line: '#262626', scrim: '#1A1A1A' }
+      : { bg: '#FAFAFA', fg: '#000000', gray: '#707070', line: '#E0E0E0', scrim: '#D9D9D9' };
+    return {
+      t,
+      title: del ? '記事を削除する' : '編集をやめる',
+      body: del
+        ? '「はじめての記事」(first-post)を削除します。'
+        : '「画像の入れ方」(how-to-images)の変更を捨て、公開済みの内容に戻します。',
+      remote: 'GitHub上のbranchも削除されます。',
+      action: del ? '削除する' : '編集をやめる'
+    };
+  }
+}
+</script>
+</body>
+</html>
