@@ -576,9 +576,9 @@ fn body_image_refs(body: &str) -> Vec<&str> {
     let mut rest = body;
     while let Some(start) = rest.find("![") {
         let after_alt = &rest[start + 2..];
+        // `](`が無ければ、後ろの`![`にも無い。探し直すと本文の長さの二乗かかる
         let Some(alt_end) = after_alt.find("](") else {
-            rest = after_alt;
-            continue;
+            break;
         };
         let after_ref = &after_alt[alt_end + 2..];
         let Some(end) = after_ref.find(')') else {
@@ -641,14 +641,18 @@ pub fn wanted_shared_images(
     let Some(shared_assets) = base_shared_assets(&state) else {
         return Ok(Vec::new());
     };
-    let names = store.with_lock(|posts_dir, _| {
+    // 長いmdでもほかのストアの操作を待たせないよう、解析はロックを外してから行う
+    let content = store.with_lock(|posts_dir, _| {
         let path = posts_dir.join(format!("{slug}.md"));
         match std::fs::read(&path) {
-            Ok(content) => Ok(shared_names(slug, &String::from_utf8_lossy(&content))),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+            Ok(content) => Ok(Some(content)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(GithubError::io(&path, error)),
         }
     })?;
+    let names = content
+        .map(|content| shared_names(slug, &String::from_utf8_lossy(&content)))
+        .unwrap_or_default();
     let assets_base = store.assets_base();
     let mut wanted = Vec::new();
     for name in names {
@@ -2836,6 +2840,11 @@ mod tests {
                 "![a](../../assets/a.png \"題\")\n![b](<../../assets/b.png>)\n[c](c.png)\n"
             ),
             ["../../assets/a.png", "../../assets/b.png"]
+        );
+        // `](`の無い`![`が続いても、前の参照は拾う
+        assert_eq!(
+            body_image_refs(&format!("![a](a.png){}", "![".repeat(100_000))),
+            ["a.png"]
         );
     }
 
