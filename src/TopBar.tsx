@@ -89,6 +89,7 @@ export default function TopBar({
           {commit.state.dirty && <span className="commit-button-dirty" aria-hidden="true" />}
         </button>
       )}
+      <span className="topbar-spacer" />
       <button
         type="button"
         className="icon-button"
