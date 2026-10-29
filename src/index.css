@@ -483,13 +483,14 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 2px;
   height: var(--topbar-height);
   padding-inline: 1.25rem 0.5rem;
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
 .sidebar-title {
+  flex: 1;
   font-weight: var(--font-weight-strong);
   font-size: var(--font-size-sm);
 }
