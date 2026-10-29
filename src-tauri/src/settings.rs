@@ -180,7 +180,7 @@ pub fn posts_dir_name(settings: &SettingsState) -> String {
         .lock()
         .posts_dir_name
         .clone()
-        .unwrap_or_else(|| "posts".to_string())
+        .unwrap_or_else(|| "blog".to_string())
 }
 
 #[cfg(target_os = "android")]

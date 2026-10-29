@@ -35,7 +35,7 @@ pub fn run() {
                 let exe_dir = exe
                     .parent()
                     .ok_or("the executable has no parent directory")?;
-                let default_dir = exe_dir.join("src/content/posts");
+                let default_dir = exe_dir.join("src/content/blog");
                 // 設定のディレクトリが使えなくても起動は止めない
                 match settings
                     .posts_dir
@@ -54,7 +54,7 @@ pub fn run() {
             };
             #[cfg(target_os = "android")]
             let (store, local_dir, default_dir) = {
-                let local_dir = data_dir.join("posts/src/content/posts");
+                let local_dir = data_dir.join("posts/src/content/blog");
                 let store = store::Store::new(local_dir.clone(), backup_root)?;
                 (store, local_dir.clone(), local_dir)
             };
