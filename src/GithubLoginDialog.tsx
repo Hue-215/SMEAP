@@ -143,6 +143,7 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
   }
 
   const status = failure ?? phaseStatus(phase)
+  const copyLabel = copied > 0 ? t('github_login.copied') : t('github_login.copy')
 
   return (
     <Dialog labelledBy={headingId} onCancel={cancel}>
@@ -159,8 +160,8 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
             <button
               type="button"
               className="icon-button"
-              aria-label={copied > 0 ? t('github_login.copied') : t('github_login.copy')}
-              title={copied > 0 ? t('github_login.copied') : t('github_login.copy')}
+              aria-label={copyLabel}
+              title={copyLabel}
               onClick={copyCode}
             >
               <Icon name={copied > 0 ? 'check' : 'content_copy'} />
