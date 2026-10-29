@@ -771,7 +771,8 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   overflow-wrap: anywhere;
 }
 
-.commit-lines {
+.commit-lines,
+.commit-message-label {
   color: var(--color-text-secondary);
 }
 

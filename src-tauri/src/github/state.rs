@@ -79,7 +79,7 @@ pub struct Applying {
     pub assets: BTreeMap<String, AssetRecord>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
     pub branch: Option<String>,
@@ -123,7 +123,7 @@ impl State {
     }
 }
 
-pub(crate) fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
+fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
     data_dir.join("github").join(&repo.owner).join(&repo.name)
 }
 

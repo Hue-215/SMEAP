@@ -1,4 +1,4 @@
-// Commit & Pushのダイアログ。Conflictと「branchが既にあります」も同じ状態で切り替える(App.tsx)
+// Commit & Pushのダイアログ。Conflictと「branchが既にあります」も、このダイアログの中で切り替えて出す
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CommitPreview } from './api'
 import Dialog from './Dialog'
@@ -12,7 +12,7 @@ import {
 import { githubErrorText } from './githubError'
 import { t } from './i18n'
 
-// 送った結果のうち、ダイアログを出したまま切り替えるもの。成功とBranchGoneは親が閉じる
+// Conflict・BranchExistsはダイアログを出したまま切り替える。そのほかは親が閉じてpushedを返す
 export type CommitPushResult =
   | { kind: 'pushed' }
   | { kind: 'conflict'; head: string; md: boolean; images: string[] }
@@ -31,6 +31,17 @@ type Phase =
   | { kind: 'edit' }
   | { kind: 'conflict'; head: string; md: boolean; images: string[] }
   | { kind: 'branchExists'; branch: string }
+
+function phaseTitle(phase: Phase): string {
+  switch (phase.kind) {
+    case 'edit':
+      return t('commit.title')
+    case 'conflict':
+      return t('commit.conflict_title')
+    case 'branchExists':
+      return t('commit.branch_exists_title')
+  }
+}
 
 export default function CommitDialog({ preview, onCancel, onCommit, onPull }: CommitDialogProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'edit' })
@@ -60,18 +71,9 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
     setError(null)
     void onCommit(message, overwrite).then(
       (result) => {
-        if (result.kind === 'conflict') {
-          setPhase({
-            kind: 'conflict',
-            head: result.head,
-            md: result.md,
-            images: result.images,
-          })
-          setRunning(false)
-        } else if (result.kind === 'branchExists') {
-          setPhase({ kind: 'branchExists', branch: result.branch })
-          setRunning(false)
-        }
+        if (result.kind === 'pushed') return
+        setPhase(result)
+        setRunning(false)
       },
       fail,
     )
@@ -88,12 +90,6 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
   }
 
   const images = imagesText(preview.imagesAdded, preview.imagesRemoved)
-  const title =
-    phase.kind === 'conflict'
-      ? t('commit.conflict_title')
-      : phase.kind === 'branchExists'
-        ? t('commit.branch_exists_title')
-        : t('commit.title')
 
   return (
     <Dialog
@@ -104,7 +100,7 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
     >
       <div className="dialog-form">
         <h2 id={headingId} className="dialog-title">
-          {title}
+          {phaseTitle(phase)}
         </h2>
         {phase.kind === 'edit' ? (
           <div id={bodyId} className="commit-summary">
@@ -136,7 +132,7 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
         )}
         {phase.kind === 'edit' && (
           <div className="commit-message">
-            <label htmlFor={`${headingId}-message`} className="commit-label">
+            <label htmlFor={`${headingId}-message`} className="commit-message-label">
               {t('commit.message_label')}
             </label>
             <input
@@ -168,7 +164,7 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
           <button type="button" disabled={running} onClick={cancel}>
             {t('common.cancel')}
           </button>
-          {phase.kind === 'edit' ? (
+          {phase.kind === 'edit' && (
             <button
               type="button"
               className="primary"
@@ -177,7 +173,8 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
             >
               {t('commit.send')}
             </button>
-          ) : phase.kind === 'conflict' ? (
+          )}
+          {phase.kind === 'conflict' && (
             <button
               type="button"
               className="primary"
@@ -186,7 +183,7 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
             >
               {t('commit.push')}
             </button>
-          ) : null}
+          )}
         </div>
       </div>
     </Dialog>

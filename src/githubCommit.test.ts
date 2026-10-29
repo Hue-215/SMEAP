@@ -105,7 +105,7 @@ describe('commitButtonState', () => {
   })
 
   it('押せるのは記事を開いていて、変更があって、読み込み中でないとき', () => {
-    // GitHub上の変更のdirty
+    // 保存済みでcommitしていない変更
     const states = statesOf({ changed: { dirty: true }, clean: { dirty: false } })
     expect(commitButtonState(states, 'changed', false, false)).toEqual({
       enabled: true,

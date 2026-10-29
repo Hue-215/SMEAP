@@ -74,26 +74,31 @@ fn md_entries(tree: &Tree, branch: &str, skipped: &mut Vec<Skipped>) -> BTreeMap
     shas
 }
 
-// treeの一覧の1行(名前, sha, mode)
-type FileRow = (String, String, String);
+struct FileRow {
+    name: String,
+    sha: String,
+    mode: String,
+}
 
-// treeの一覧を、slugのディレクトリの下のファイルにする。(名前, sha, mode)。slugはrecursiveの
+// treeの一覧を、slugのディレクトリの下のファイルにする。slugはrecursiveの
 // 応答(パスはそのツリーからの相対)での取り出しの鍵。Noneなら読んだツリーの直下(subの応答)。
 // slugの位置がtreeでない・下のファイルが通常のファイルでなければNone
 fn file_rows(tree: &Tree, slug: Option<&str>) -> Option<Vec<FileRow>> {
-    let prefix = slug.map(|slug| format!("{slug}/"));
     let mut rows = Vec::new();
     for entry in &tree.entries {
-        let rest = match &prefix {
-            Some(prefix) => {
-                if entry.path == prefix.trim_end_matches('/') {
+        let rest = match slug {
+            Some(slug) => {
+                if entry.path == slug {
                     // assets/{slug}の位置がtreeでない
                     if entry.kind != "tree" {
                         return None;
                     }
                     continue;
                 }
-                entry.path.strip_prefix(prefix)
+                entry
+                    .path
+                    .strip_prefix(slug)
+                    .and_then(|rest| rest.strip_prefix('/'))
             }
             None => Some(entry.path.as_str()),
         };
@@ -107,7 +112,11 @@ fn file_rows(tree: &Tree, slug: Option<&str>) -> Option<Vec<FileRow>> {
         if !is_regular_blob(entry) {
             return None;
         }
-        rows.push((name.to_string(), entry.sha.clone(), entry.mode.clone()));
+        rows.push(FileRow {
+            name: name.to_string(),
+            sha: entry.sha.clone(),
+            mode: entry.mode.clone(),
+        });
     }
     Some(rows)
 }
@@ -176,10 +185,10 @@ impl Reader<'_> {
     ) -> Result<Option<BTreeMap<String, String>>, GithubError> {
         Ok(self
             .asset_rows(assets_sha, slug)?
-            .map(|rows| rows.into_iter().map(|(name, sha, _)| (name, sha)).collect()))
+            .map(|rows| rows.into_iter().map(|row| (row.name, row.sha)).collect()))
     }
 
-    // 上のfnと同じ読み取りで、(名前, sha, mode)の三つ組を返す(read_articleのmodes用)
+    // 上のfnと同じ読み取りで、modeも返す(read_articleのmodes用)
     fn asset_rows(
         &mut self,
         assets_sha: Option<&str>,
@@ -399,9 +408,9 @@ pub fn read_article(
     let mut modes = BTreeMap::from([(format!("{}/{name}", basis.posts_path), entry.mode.clone())]);
     let assets = rows
         .into_iter()
-        .map(|(name, sha, mode)| {
-            modes.insert(format!("{assets_dir}/{name}"), mode);
-            (name, sha)
+        .map(|row| {
+            modes.insert(format!("{assets_dir}/{}", row.name), row.mode);
+            (row.name, row.sha)
         })
         .collect();
     Ok(Some(RemoteArticle {

@@ -439,7 +439,7 @@ export default function App() {
     }
   }
 
-  // ConflictとBranchExistsはダイアログに返し、成功とBranchGoneはここで閉じて読み込み直す
+  // ConflictとBranchExistsはダイアログに返し、そのほかはここで閉じる
   const commitPush = async (
     slug: string,
     message: string,
@@ -468,12 +468,13 @@ export default function App() {
         case 'loginRequired':
           if (await recoverGithubLogin()) {
             closeCommit()
+            setNotice({ text: t('common.github_login_required'), error: true })
             return { kind: 'pushed' }
           }
-          throw e
-        default:
-          throw e
+          break
       }
+      console.error('Failed to commit and push', slug, e)
+      throw e
     }
     closeCommit()
     setNotice({ text: t('app.push_done'), error: false })
@@ -495,8 +496,10 @@ export default function App() {
       }
       if (error?.kind === 'loginRequired' && (await recoverGithubLogin())) {
         closeCommit()
+        setNotice({ text: t('common.github_login_required'), error: true })
         return
       }
+      console.error('Failed to pull', slug, e)
       throw e
     }
     closeCommit()
@@ -691,7 +694,7 @@ export default function App() {
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
       <Drawer drawer={drawer}>{sidebar}</Drawer>
       <main
-        inert={drawer.shown || editorLocked || (commitTarget !== null && commitTarget.preview === null)}
+        inert={drawer.shown || editorLocked || commitTarget?.preview === null}
         {...swipeToOpen}
       >
         {isAndroid && findOpen ? (

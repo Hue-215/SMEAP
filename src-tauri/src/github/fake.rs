@@ -291,7 +291,7 @@ fn json_of(request: &Request) -> serde_json::Value {
         .expect("書き込みの本文はJSONのはず")
 }
 
-// base64を解く(#65のテストの道具)。paddingの=は読み飛ばす
+// base64を解く
 pub fn b64_decode(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut buffer: u32 = 0;
@@ -317,20 +317,21 @@ pub fn b64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-// base_treeにエントリを重ねてできる TreeNode 用の道具
 // パスのファイルを外し、その上に空になったディレクトリがあれば消す
-fn remove_path(root: &mut TreeNode, path: &str) {
+// 無いパスならfalse
+fn remove_path(root: &mut TreeNode, path: &str) -> bool {
     let mut components: Vec<&str> = path.split('/').collect();
     let last = components.pop().expect("パスが空");
     let mut node = root;
     for component in components {
         match node.children.get_mut(component) {
             Some(Node::Dir(dir)) => node = dir,
-            _ => return,
+            _ => return false,
         }
     }
-    node.children.remove(last);
+    let removed = node.children.remove(last).is_some();
     prune(node);
+    removed
 }
 
 // 空のディレクトリはgitのツリーに無いので、外す
@@ -745,7 +746,6 @@ impl FakeRepo {
         files
     }
 
-    // branchの先頭のコミットのsha
     pub fn head(&self, branch: &str) -> String {
         self.branches
             .lock()
@@ -864,8 +864,14 @@ impl FakeRepo {
                 .get("sha")
                 .expect("エントリにはshaがあるはず(消すならnull)")
                 .as_str();
+            // GitHubは、無いパスを消すエントリも、知らないSHAを指すエントリも422で断る
             if sha.is_none() {
-                remove_path(&mut node, path);
+                if !remove_path(&mut node, path) {
+                    return Ok(json_response(
+                        422,
+                        serde_json::json!({ "message": "path does not exist" }),
+                    ));
+                }
                 continue;
             }
             let mode = entry["mode"].as_str().unwrap_or("100644").to_string();
@@ -888,11 +894,12 @@ impl FakeRepo {
                     .cloned()
                 {
                     Some(tree) => Node::Dir(tree),
-                    None => Node::Other {
-                        mode,
-                        kind: "commit".to_string(),
-                        sha: shares,
-                    },
+                    None => {
+                        return Ok(json_response(
+                            422,
+                            serde_json::json!({ "message": "unknown sha" }),
+                        ))
+                    }
                 },
             };
             insert_path(&mut node, path, leaf);
