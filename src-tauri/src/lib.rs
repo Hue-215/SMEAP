@@ -109,6 +109,9 @@ pub fn run() {
             github::commands::open_github_page,
             github::commands::github_sync,
             github::commands::github_fetch_images,
+            github::commands::github_commit_preview,
+            github::commands::github_commit_push,
+            github::commands::github_pull,
             github::commands::github_article_states,
             github::commands::github_article_state,
         ])
