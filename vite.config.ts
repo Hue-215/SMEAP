@@ -12,7 +12,9 @@ export default defineConfig({
     strictPort: true,
     // Androidの実機・エミュレーターからは、tauri-cliが渡すアドレスで開発サーバーへつなぐ
     host: process.env.TAURI_DEV_HOST || false,
-    hmr: process.env.TAURI_DEV_HOST ? { protocol: 'ws', host: process.env.TAURI_DEV_HOST, port: 1421 } : undefined,
+    hmr: process.env.TAURI_DEV_HOST
+      ? { protocol: 'ws', host: process.env.TAURI_DEV_HOST, port: 1421 }
+      : undefined,
     watch: { ignored: ['**/src-tauri/**'] },
   },
 })

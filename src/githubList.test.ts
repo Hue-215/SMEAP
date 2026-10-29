@@ -17,7 +17,10 @@ function article(slug: string, pub_date: string): ArticleSummary {
 
 function statesOf(
   articles: Partial<
-    Record<string, { category?: GithubCategory; dirty?: boolean; conflict?: boolean; branch?: boolean }>
+    Record<
+      string,
+      { category?: GithubCategory; dirty?: boolean; conflict?: boolean; branch?: boolean }
+    >
   >,
   rest: Partial<GithubArticleStates> = {},
 ): GithubArticleStates {
@@ -122,18 +125,21 @@ describe('groupArticles', () => {
     const articles = [article('b-post', '2026-01-01'), article('a-post', '2025-12-31')]
 
     const groups = groupArticles(articles, states)
-    expect(groups).toEqual([{ category: null, rows: [
-      { article: articles[0], state: null },
-      { article: articles[1], state: null },
-    ] }])
+    expect(groups).toEqual([
+      {
+        category: null,
+        rows: [
+          { article: articles[0], state: null },
+          { article: articles[1], state: null },
+        ],
+      },
+    ])
   })
 })
 
 describe('fetchLineText', () => {
   it('読めたrepositoryと時刻の行', () => {
-    expect(fetchLineText('owner/repo', NOW, false)).toBe(
-      `owner/repo · ${timeOf(NOW)}に読み込み`,
-    )
+    expect(fetchLineText('owner/repo', NOW, false)).toBe(`owner/repo · ${timeOf(NOW)}に読み込み`)
   })
 
   it('失敗して前の時刻があればそれを出す', () => {

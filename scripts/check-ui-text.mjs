@@ -49,10 +49,16 @@ const texts = []
 const params = []
 for (const path of sourceFiles(SRC)) {
   const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
-  const at = (node) => `${relative(process.cwd(), path)}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`
+  const at = (node) =>
+    `${relative(process.cwd(), path)}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`
   const visit = (node) => {
-    if (TEXT_KINDS.has(node.kind) && JAPANESE.test(node.text)) texts.push(`${at(node)}: ${node.text.trim()}`)
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 't') {
+    if (TEXT_KINDS.has(node.kind) && JAPANESE.test(node.text))
+      texts.push(`${at(node)}: ${node.text.trim()}`)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 't'
+    ) {
       const mismatch = paramMismatch(node)
       if (mismatch) params.push(`${at(node)}: ${mismatch}`)
     }
@@ -62,7 +68,9 @@ for (const path of sourceFiles(SRC)) {
 }
 
 if (texts.length > 0) {
-  console.error('画面の文言は lang/*.json に置いて t() で引き、ログと例外の文は英語で書いてください:')
+  console.error(
+    '画面の文言は lang/*.json に置いて t() で引き、ログと例外の文は英語で書いてください:',
+  )
   for (const line of texts) console.error(`  ${line}`)
 }
 if (params.length > 0) {

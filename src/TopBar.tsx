@@ -31,7 +31,9 @@ function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice 
   if (status?.failed) return { text: t('common.save_failed'), error: true }
   if (status?.dirty)
     return {
-      text: status.savedAt ? t('topbar.unsaved_at', { time: formatSavedTime(status.savedAt) }) : t('topbar.unsaved'),
+      text: status.savedAt
+        ? t('topbar.unsaved_at', { time: formatSavedTime(status.savedAt) })
+        : t('topbar.unsaved'),
       error: false,
     }
   return {
@@ -110,11 +112,7 @@ export default function TopBar({
       >
         <Icon name="image" />
       </button>
-      <ImageFileInput
-        ref={fileInput}
-        multiple
-        onFiles={(files) => onInsertImages?.(files)}
-      />
+      <ImageFileInput ref={fileInput} multiple onFiles={(files) => onInsertImages?.(files)} />
       {isAndroid && (
         <button
           type="button"

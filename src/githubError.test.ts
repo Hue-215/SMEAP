@@ -8,7 +8,9 @@ describe('githubErrorText', () => {
     expect(githubErrorText({ kind: 'slugReserved', slug: 'old' })).toBe(
       t('common.github_slug_reserved'),
     )
-    expect(githubErrorText({ kind: 'slugInUse', slug: 'post' })).toBe(t('common.github_slug_in_use'))
+    expect(githubErrorText({ kind: 'slugInUse', slug: 'post' })).toBe(
+      t('common.github_slug_in_use'),
+    )
     expect(githubErrorText({ kind: 'inBaseBranch' })).toBe(t('common.github_in_base_branch'))
     expect(githubErrorText({ kind: 'conflicted' })).toBe(t('common.github_conflicted'))
   })

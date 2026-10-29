@@ -1,10 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import {
-  githubCancelLogin,
-  githubStartLogin,
-  openGithubPage,
-  type GithubWaitLogin,
-} from './api'
+import { githubCancelLogin, githubStartLogin, openGithubPage, type GithubWaitLogin } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
 import { githubErrorText } from './githubError'

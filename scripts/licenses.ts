@@ -55,7 +55,8 @@ function packageLicense(dir: string, manifest: PackageManifest, name: string) {
   if (files.length === 0) throw new Error(`ライセンス文のファイルが見つかりません: ${name}`)
   const mitFiles = files.filter((file) => /(^|[^a-z])mit([^a-z0-9-]|$)/i.test(file))
   const chooseMIT = / OR /.test(raw) && /(^|[\s(])MIT($|[\s)])/.test(raw) && mitFiles.length > 0
-  const read = (picked: string[]) => picked.map((file) => readFileSync(join(dir, file), 'utf8')).join('\n\n')
+  const read = (picked: string[]) =>
+    picked.map((file) => readFileSync(join(dir, file), 'utf8')).join('\n\n')
   return chooseMIT ? { license: 'MIT', text: read(mitFiles) } : { license: raw, text: read(files) }
 }
 
@@ -103,9 +104,12 @@ async function collectRustLicenses(target: string): Promise<License[]> {
     // 出力のJSONは既定の上限(1MB)を超える
     { cwd: rootDir, maxBuffer: 256 * 1024 * 1024 },
   ).catch((e: unknown) => {
-    throw new Error('cargo aboutを実行できません(入っていなければ: cargo install --locked cargo-about)', {
-      cause: e,
-    })
+    throw new Error(
+      'cargo aboutを実行できません(入っていなければ: cargo install --locked cargo-about)',
+      {
+        cause: e,
+      },
+    )
   })
   const about = JSON.parse(stdout) as AboutJson
   const crates = new Map<string, CrateLicenses>()
@@ -114,7 +118,12 @@ async function collectRustLicenses(target: string): Promise<License[]> {
       // アプリ自身は一覧の先頭に別に載せる
       if (crate.name === 'smeap') continue
       const key = `${crate.name}@${crate.version}`
-      const entry = crates.get(key) ?? { name: crate.name, version: crate.version, ids: [], texts: [] }
+      const entry = crates.get(key) ?? {
+        name: crate.name,
+        version: crate.version,
+        ids: [],
+        texts: [],
+      }
       if (!entry.ids.includes(id)) entry.ids.push(id)
       entry.texts.push(text)
       crates.set(key, entry)
@@ -186,7 +195,11 @@ export default function licenses(): Plugin {
       // クレートは、tauri buildがTAURI_ENV_*を渡したときだけ集める。素のvite build(CIのフロントエンドの
       // ジョブ)と開発サーバーでは集めない
       const target = process.env.TAURI_ENV_TARGET_TRIPLE
-      if (command === 'build' && process.env.TAURI_ENV_PLATFORM !== undefined && target === undefined) {
+      if (
+        command === 'build' &&
+        process.env.TAURI_ENV_PLATFORM !== undefined &&
+        target === undefined
+      ) {
         throw new Error('tauri buildからTAURI_ENV_TARGET_TRIPLEが渡されていません')
       }
       return `export default ${JSON.stringify(

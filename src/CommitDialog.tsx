@@ -70,14 +70,11 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
   const commit = (overwrite: string | null) => {
     setRunning(true)
     setError(null)
-    void onCommit(message, overwrite).then(
-      (result) => {
-        if (result.kind === 'pushed') return
-        setPhase(result)
-        setRunning(false)
-      },
-      fail,
-    )
+    void onCommit(message, overwrite).then((result) => {
+      if (result.kind === 'pushed') return
+      setPhase(result)
+      setRunning(false)
+    }, fail)
   }
 
   const pull = (branch: string | null) => {

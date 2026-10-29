@@ -546,7 +546,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   -webkit-touch-callout: none;
 }
 
-
 .narrow .article-row {
   padding-block: 0.75rem;
 }

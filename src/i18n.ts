@@ -14,7 +14,8 @@ export function t(key: MessageKey, params: Record<string, string | number> = {})
   return text.replace(PLACEHOLDER, (match, name: string) => {
     const value = params[name]
     if (value !== undefined) return String(value)
-    if (import.meta.env.DEV) console.error(`Missing value for the placeholder: {${name}} in "${text}"`)
+    if (import.meta.env.DEV)
+      console.error(`Missing value for the placeholder: {${name}} in "${text}"`)
     return match
   })
 }

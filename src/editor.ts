@@ -1,25 +1,8 @@
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-} from '@codemirror/commands'
-import {
-  HighlightStyle,
-  syntaxHighlighting,
-  syntaxTree,
-} from '@codemirror/language'
-import {
-  GFM,
-  type MarkdownConfig,
-} from '@lezer/markdown'
-import {
-  styleTags,
-  tags,
-} from '@lezer/highlight'
-import {
-  commonmarkLanguage,
-  markdown,
-} from '@codemirror/lang-markdown'
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import { GFM, type MarkdownConfig } from '@lezer/markdown'
+import { styleTags, tags } from '@lezer/highlight'
+import { commonmarkLanguage, markdown } from '@codemirror/lang-markdown'
 import {
   Decoration,
   drawSelection,
@@ -215,11 +198,10 @@ const editorTheme = EditorView.theme({
   '.cm-content ::selection': { background: 'var(--color-selection)' },
   // 選択の塗りと見分けられるよう、一致は塗らずに下線にする
   '.cm-searchMatch': { boxShadow: 'inset 0 -2px 0 var(--color-accent)' },
-  '.cm-heading-1, .cm-heading-2, .cm-heading-3, .cm-heading-4, .cm-heading-5, .cm-heading-6':
-    {
-      fontFamily: 'var(--font-family)',
-      fontWeight: 'var(--font-weight-strong)',
-    },
+  '.cm-heading-1, .cm-heading-2, .cm-heading-3, .cm-heading-4, .cm-heading-5, .cm-heading-6': {
+    fontFamily: 'var(--font-family)',
+    fontWeight: 'var(--font-weight-strong)',
+  },
   '.cm-heading-1': { fontSize: '1.625rem', lineHeight: '1.5' },
   '.cm-heading-2': { fontSize: '1.375rem', lineHeight: '1.6' },
   '.cm-heading-3': { fontSize: '1.125rem', lineHeight: '1.7' },
@@ -292,10 +274,7 @@ function pasteHandler(onPasteImage: (files: File[]) => void): Extension {
 const styleNonce =
   document.querySelector<HTMLMetaElement>('meta[name="style-nonce"]')?.content ?? ''
 
-export function editorExtensions(
-  slug: string,
-  onPasteImage: (files: File[]) => void,
-): Extension[] {
+export function editorExtensions(slug: string, onPasteImage: (files: File[]) => void): Extension[] {
   return [
     pasteHandler(onPasteImage),
     history(),

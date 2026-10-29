@@ -51,7 +51,12 @@ export function groupArticles(
   const rows = { drafting: [], editing: [], published: [] } as Record<GithubCategory, ArticleRow[]>
   for (const article of articles) {
     // 一覧の後に作った記事など、GitHub上の状態がまだ無い記事は、commitしていない変更として扱う
-    const state = states.articles[article.slug] ?? { category: 'drafting', dirty: true, conflict: false, branch: false }
+    const state = states.articles[article.slug] ?? {
+      category: 'drafting',
+      dirty: true,
+      conflict: false,
+      branch: false,
+    }
     rows[state.category].push({ article, state })
   }
   return CATEGORIES.map((category) => ({ category, rows: rows[category] })).filter(
@@ -62,10 +67,7 @@ export function groupArticles(
 export type RowAction = 'rename' | 'delete' | 'discard'
 
 // 分類はRust側でも確かめるので、分からないときは変更と削除を出す
-export function rowMenuActions(
-  states: GithubArticleStates | null,
-  slug: string,
-): RowAction[] {
+export function rowMenuActions(states: GithubArticleStates | null, slug: string): RowAction[] {
   if (states === null || states.stateUnreadable) return ['rename', 'delete']
   const state = states.articles[slug]
   // 一覧の後に作った記事
@@ -87,13 +89,12 @@ export function deletesBranch(states: GithubArticleStates | null, slug: string):
 }
 
 // fetchedAtはunix秒。failedは最後の読み込みが失敗したか
-export function fetchLineText(
-  repo: string,
-  fetchedAt: number | null,
-  failed: boolean,
-): string {
+export function fetchLineText(repo: string, fetchedAt: number | null, failed: boolean): string {
   // まだ読み込んでいないときは、repository名だけを出す
   if (fetchedAt === null) return failed ? t('sidebar.fetch_failed') : repo
-  const time = new Date(fetchedAt * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
+  const time = new Date(fetchedAt * 1000).toLocaleTimeString('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
   return failed ? t('sidebar.fetch_failed_at', { time }) : t('sidebar.fetched_at', { repo, time })
 }
