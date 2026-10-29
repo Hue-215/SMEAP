@@ -31,39 +31,33 @@ impl std::fmt::Debug for TokenSet {
     }
 }
 
-fn io_error(path: &Path, error: impl std::fmt::Display) -> GithubError {
-    GithubError::Io {
-        path: path.display().to_string(),
-        reason: error.to_string(),
-    }
-}
-
 pub fn read(path: &Path) -> Result<Option<TokenSet>, GithubError> {
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(io_error(path, error)),
+        Err(error) => return Err(GithubError::io(path, error)),
     };
-    let tokens: TokenSet =
-        serde_json::from_str(&content).map_err(|_| io_error(path, "not a valid token file"))?;
+    let tokens: TokenSet = serde_json::from_str(&content)
+        .map_err(|_| GithubError::io(path, "not a valid token file"))?;
     Ok(Some(tokens))
 }
 
 pub fn write(path: &Path, tokens: &TokenSet) -> Result<(), GithubError> {
     let dir = path
         .parent()
-        .ok_or_else(|| io_error(path, "no parent directory"))?;
-    fs::create_dir_all(dir).map_err(|error| io_error(dir, error))?;
+        .ok_or_else(|| GithubError::io(path, "no parent directory"))?;
+    fs::create_dir_all(dir).map_err(|error| GithubError::io(dir, error))?;
     let json = serde_json::to_vec(tokens).expect("TokenSet should serialize");
     // write_tempを使わず、NamedTempFile(unixでは0600)で書いて置き換える
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|error| io_error(dir, error))?;
+    let mut tmp =
+        tempfile::NamedTempFile::new_in(dir).map_err(|error| GithubError::io(dir, error))?;
     tmp.write_all(&json)
-        .map_err(|error| io_error(tmp.path(), error))?;
+        .map_err(|error| GithubError::io(tmp.path(), error))?;
     tmp.as_file()
         .sync_all()
-        .map_err(|error| io_error(tmp.path(), error))?;
+        .map_err(|error| GithubError::io(tmp.path(), error))?;
     tmp.persist(path)
-        .map_err(|error| io_error(path, error.error))?;
+        .map_err(|error| GithubError::io(path, error.error))?;
     Ok(())
 }
 
@@ -71,7 +65,7 @@ pub fn delete(path: &Path) -> Result<(), GithubError> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error(path, error)),
+        Err(error) => Err(GithubError::io(path, error)),
     }
 }
 

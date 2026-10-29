@@ -33,6 +33,9 @@ url = "2"
 # GitHubのページをブラウザで開く(src/github/commands.rs)。fsとdialogと同じくRust側からだけ使い、画面に権限は与えない
 tauri-plugin-opener = "2"
 
+# gitと同じblobのSHA-1(src/github/state.rs)
+sha1 = "0.10"
+
 # 貼り付けた画像をクリップボードから読む(src/clipboard.rs)。TauriがLinuxで使っている版にそろえる
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

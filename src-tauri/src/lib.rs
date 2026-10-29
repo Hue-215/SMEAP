@@ -107,6 +107,10 @@ pub fn run() {
             github::commands::validate_branch_format,
             github::commands::validate_posts_path,
             github::commands::open_github_page,
+            github::commands::github_sync,
+            github::commands::github_fetch_images,
+            github::commands::github_article_states,
+            github::commands::github_article_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

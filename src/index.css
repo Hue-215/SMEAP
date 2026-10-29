@@ -483,13 +483,14 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 2px;
   height: var(--topbar-height);
   padding-inline: 1.25rem 0.5rem;
   border-bottom: var(--border-width) solid var(--color-border);
 }
 
 .sidebar-title {
+  flex: 1;
   font-weight: var(--font-weight-strong);
   font-size: var(--font-size-sm);
 }
@@ -548,6 +549,27 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   vertical-align: -0.2em;
 }
 
+/* 行のタイトルの右に置く印(Sidebar.tsx)。commitしていない変更の丸と、GitHub上の内容との食い違い */
+.article-row-dirty {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-inline-start: var(--space-2);
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.article-row-conflict {
+  color: var(--color-error);
+}
+
+.article-row-conflict .icon {
+  margin-inline-start: var(--space-1);
+  width: 1.125rem;
+  height: 1.125rem;
+  vertical-align: -0.25em;
+}
+
 .article-row-broken {
   color: var(--color-text-secondary);
 }
@@ -556,6 +578,47 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   display: block;
   width: 100%;
   text-align: left;
+}
+
+/* GitHub連携の1行(Sidebar.tsx)。見出しの行の下に出す、リポジトリと読み込みの時刻。 */
+.sidebar-github {
+  display: block;
+  width: 100%;
+  padding: var(--space-3) 1.25rem 0;
+  font-size: var(--font-size-xs);
+  text-align: left;
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.sidebar-github.error {
+  color: var(--color-error);
+}
+
+/* 一覧の分類の見出し(Sidebar.tsx)。上の塊との間を空ける */
+.sidebar-group {
+  margin: 0;
+  padding: var(--space-4) 1.25rem var(--space-1);
+  font-weight: var(--font-weight-strong);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* 読み込み中の更新ボタンのアイコン(Sidebar.tsx) */
+.icon-spinning {
+  animation: icon-spin 1s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-spinning {
+    animation: none;
+  }
 }
 
 .visually-hidden {

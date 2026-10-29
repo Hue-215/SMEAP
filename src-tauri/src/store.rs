@@ -7,6 +7,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 
 #[cfg(unix)]
@@ -282,6 +283,8 @@ pub struct Store {
     backup_root: PathBuf,
     // コマンドはasyncで別スレッドから並んで呼ばれるので、書き換えの間は排他する
     lock: Mutex<()>,
+    // ログイン・Repositoryの切り替えを、GitHub読み込みの通信の間に検出するための世代
+    generation: AtomicU64,
 }
 
 struct Dirs {
@@ -305,6 +308,7 @@ impl Store {
             dirs: RwLock::new(dirs),
             backup_root,
             lock: Mutex::new(()),
+            generation: AtomicU64::new(0),
         })
     }
 
@@ -313,7 +317,18 @@ impl Store {
         let dirs = dirs_of(&posts_dir, &self.backup_root)?;
         let _guard = self.lock_guard();
         *self.dirs.write().unwrap_or_else(PoisonError::into_inner) = dirs;
+        self.generation.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn with_lock<T>(&self, f: impl FnOnce(&Path, &Path) -> T) -> T {
+        let _guard = self.lock_guard();
+        let dirs = self.dirs.read().unwrap_or_else(PoisonError::into_inner);
+        f(&dirs.posts_dir, &dirs.assets_base)
     }
 
     fn lock_guard(&self) -> MutexGuard<'_, ()> {
@@ -3026,6 +3041,27 @@ mod tests {
         assert!(tmp.path().join("b/src/content/blog/moved.md").exists());
         assert!(tmp.path().join("b/src/assets/moved").is_dir());
         assert_eq!(slugs(&store.list_articles().unwrap().articles), ["moved"]);
+    }
+
+    // 向き先が同じでもログインやRepositoryは替わり得るので、世代はset_posts_dirの回数だけ進める
+    #[test]
+    fn set_posts_dirで世代が進む() {
+        let tmp = TempDir::new().unwrap();
+        let posts = tmp.path().join("a/src/content/posts");
+        let store = Store::new(posts.clone(), tmp.path().join("backup")).unwrap();
+        assert_eq!(store.generation(), 0);
+
+        store.set_posts_dir(posts.clone()).unwrap();
+        assert_eq!(store.generation(), 1);
+        // 同じディレクトリに替えても進む
+        store.set_posts_dir(posts).unwrap();
+        assert_eq!(store.generation(), 2);
+        // 失敗したら進めない(2つ上の親が無いパスは使えない)
+        assert!(matches!(
+            store.set_posts_dir(PathBuf::from("/a")),
+            Err(StoreError::InvalidPostsDir { .. })
+        ));
+        assert_eq!(store.generation(), 2);
     }
 
     #[test]

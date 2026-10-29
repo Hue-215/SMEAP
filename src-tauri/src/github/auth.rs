@@ -114,14 +114,31 @@ pub fn poll_until_done(
     cancelled: &AtomicBool,
 ) -> Result<LoginOutcome, GithubError> {
     let mut interval = code.interval;
+    // 通信がつながらないまま期限が来たら、承認が遅れたのではないので、期限切れでなく通信の失敗で終える
+    let mut last_network_error = None;
     loop {
         if cancelled.load(Ordering::SeqCst) {
             return Ok(LoginOutcome::Cancelled);
         }
         if now() >= started_at + code.expires_in as i64 {
-            return Ok(LoginOutcome::Expired);
+            return match last_network_error {
+                Some(error) => Err(error),
+                None => Ok(LoginOutcome::Expired),
+            };
         }
-        match poll_once(transport, client_id, &code.device_code, interval, now())? {
+        let polled = match poll_once(transport, client_id, &code.device_code, interval, now()) {
+            // Androidでは、認可のためにブラウザへ移っている間、OSがこのアプリの通信を止めたり接続を切ったりする
+            Err(error @ GithubError::Network { .. }) => {
+                eprintln!("Failed to poll the GitHub login, retrying: {error}");
+                last_network_error = Some(error);
+                Poll::Pending
+            }
+            other => {
+                last_network_error = None;
+                other?
+            }
+        };
+        match polled {
             Poll::Pending => {}
             Poll::SlowDown { interval: next } => interval = next,
             Poll::Expired => return Ok(LoginOutcome::Expired),
@@ -553,13 +570,42 @@ mod tests {
     }
 
     #[test]
-    fn 通信の失敗はエラーで終わる() {
-        let transport = FakeTransport::new(vec![Err(GithubError::Network {
-            reason: "closed".to_string(),
-        })]);
+    fn 通信の失敗では打ち切らずに問い合わせ直す() {
+        let transport = FakeTransport::new(vec![
+            Err(GithubError::Network {
+                reason: "closed".to_string(),
+            }),
+            Ok(json_response(200, token_json())),
+        ]);
+        let time = FakeTime::new();
+        let outcome = time.poll(&transport, &AtomicBool::new(false)).unwrap();
+        assert_eq!(outcome, LoginOutcome::Token(token_set_received_at(NOW + 5)));
+        assert_eq!(time.waited(), vec![5]);
+    }
+
+    #[test]
+    fn 期限まで通信に失敗し続けたら通信のエラーで終わる() {
+        // 900秒の期限を5秒おきに問い合わせるので、180回
+        let transport = FakeTransport::new(
+            (0..180)
+                .map(|_| {
+                    Err(GithubError::Network {
+                        reason: "closed".to_string(),
+                    })
+                })
+                .collect(),
+        );
         let time = FakeTime::new();
         let outcome = time.poll(&transport, &AtomicBool::new(false));
-        assert!(outcome.is_err());
+        assert!(matches!(outcome, Err(GithubError::Network { .. })));
+    }
+
+    #[test]
+    fn 応答が5xxならエラーで終わる() {
+        let transport = FakeTransport::new(vec![Ok(json_response(500, json!({})))]);
+        let time = FakeTime::new();
+        let outcome = time.poll(&transport, &AtomicBool::new(false));
+        assert!(matches!(outcome, Err(GithubError::Status { status: 500 })));
     }
 
     #[test]
