@@ -1,0 +1,6 @@
+# Tauriが作る
+src-tauri/gen/
+# Claude Designから書き出したもの
+docs/design/
+# 表の桁揃えで、表を1行替えるたびに全行が変わる
+*.md
