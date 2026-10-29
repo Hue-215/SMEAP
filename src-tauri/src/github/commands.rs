@@ -560,8 +560,7 @@ pub fn github_fetch_images(
     let Some(linked) = linked(&app, &store)? else {
         return Ok(0);
     };
-    if sync::wanted_images(&linked.data_dir, &linked.repo, &linked.basis, &store, &slug)?.is_empty()
-    {
+    if !sync::has_wanted_images(&linked.data_dir, &linked.repo, &linked.basis, &store, &slug)? {
         return Ok(0);
     }
     let failed = with_sync_input(&app, &github, &store, None, |input| {

@@ -95,13 +95,21 @@ pub struct Article {
     pub warnings: Vec<Warning>,
 }
 
+// sharedがtrueなら、assetsの直下の画像
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeroImage {
+    pub name: String,
+    pub shared: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArticleFields {
     pub title: Option<String>,
     pub description: Option<String>,
     pub pub_date: Option<String>,
-    pub hero_image: Option<String>,
+    pub hero_image: Option<HeroImage>,
     pub body: String,
 }
 
@@ -195,15 +203,28 @@ fn is_valid_date(date: &str) -> bool {
 }
 
 // 本文とheroImageから画像を指すときの、記事ファイルからの相対パス。
-// mdから2つ上の`assets/{slug}/`を指す。assetsの置き場所はこれに合わせて決める(assets_base_of)
+// mdから2つ上の`assets/`を指す。assetsの置き場所はこれに合わせて決める(assets_base_of)
+const SHARED_ASSETS_REF: &str = "../../assets/";
+
 fn assets_ref(slug: &str) -> String {
-    format!("../../assets/{slug}/")
+    format!("{SHARED_ASSETS_REF}{slug}/")
 }
 
-fn image_name_from_ref<'a>(slug: &str, reference: &'a str) -> Option<&'a str> {
+pub(crate) fn shared_image_name(reference: &str) -> Option<&str> {
+    reference
+        .strip_prefix(SHARED_ASSETS_REF)
+        .filter(|name| is_filename(name))
+}
+
+// 参照を画像の名前と、共有の画像かにする。記事の画像でも共有の画像でもない参照はNone
+fn image_ref_from<'a>(slug: &str, reference: &'a str) -> Option<(&'a str, bool)> {
+    if let Some(name) = shared_image_name(reference) {
+        return Some((name, true));
+    }
     reference
         .strip_prefix(&assets_ref(slug))
         .filter(|name| is_filename(name))
+        .map(|name| (name, false))
 }
 
 fn image_extension(data: &[u8]) -> Option<&'static str> {
@@ -518,15 +539,19 @@ impl Store {
         Ok(parse_md(slug, &content))
     }
 
-    // referenceは本文に書いた参照(`../../assets/{slug}/01.png`)
+    // referenceは本文に書いた参照(`../../assets/{slug}/01.png`か共有の画像の`../../assets/01.png`)
     pub fn read_image(&self, slug: &str, reference: &str) -> Result<Vec<u8>, StoreError> {
         validate_slug(slug)?;
-        let name = image_name_from_ref(slug, reference).ok_or_else(|| {
-            StoreError::InvalidImageReference {
+        let (name, shared) =
+            image_ref_from(slug, reference).ok_or_else(|| StoreError::InvalidImageReference {
                 reference: reference.to_string(),
-            }
-        })?;
-        let path = self.assets_dir(slug).join(name);
+            })?;
+        let dir = if shared {
+            self.assets_base()
+        } else {
+            self.assets_dir(slug)
+        };
+        let path = dir.join(name);
         fs::read(&path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 StoreError::ImageNotFound {
@@ -556,20 +581,24 @@ impl Store {
         let (dir, ext) = self.prepare_import(slug, data)?;
         let name = format!("hero.{ext}");
         let mut article = self.read_article(slug)?;
-        let old = article.fields.hero_image.replace(name.clone());
+        let old = article.fields.hero_image.replace(HeroImage {
+            name: name.clone(),
+            shared: false,
+        });
         let path = dir.join(&name);
+        let existed = path.exists();
         let tmp = write_temp(&dir, data)?;
         tmp.persist(&path)
             .map_err(|error| StoreError::io(&path, error))?;
         if let Err(error) = self.write_md(&article) {
             // mdは前のheroImageを指したままなので、参照されない画像を残さない
-            if old.as_deref() != Some(name.as_str()) {
+            if !existed {
                 let _ = fs::remove_file(&path);
             }
             return Err(error);
         }
-        if let Some(old) = old.filter(|old| *old != name) {
-            self.remove_hero_file(slug, &old, &article.fields.body);
+        if let Some(old) = old.filter(|old| !old.shared && old.name != name) {
+            self.remove_hero_file(slug, &old.name, &article.fields.body);
         }
         Ok(name)
     }
@@ -592,7 +621,7 @@ impl Store {
         }
     }
 
-    // mdの行に加えてファイルも消す
+    // mdの行に加えてファイルも消す(共有の画像は消さない)
     pub fn remove_hero_image(&self, slug: &str) -> Result<(), StoreError> {
         let _guard = self.lock_guard();
         validate_slug(slug)?;
@@ -601,7 +630,9 @@ impl Store {
             return Ok(());
         };
         self.write_md(&article)?;
-        self.remove_hero_file(slug, &old, &article.fields.body);
+        if !old.shared {
+            self.remove_hero_file(slug, &old.name, &article.fields.body);
+        }
         Ok(())
     }
 
@@ -716,7 +747,7 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(StoreError::io(&new_assets, error)),
         }
-        // heroImageはファイル名で持つので、書くときに新しいslugで組み立て直される
+        // 記事の画像のheroImageはファイル名で持つので、書くときに新しいslugで組み立て直される
         article.slug = new.to_string();
         article.fields.body = article
             .fields
@@ -986,7 +1017,11 @@ fn render_md(article: &Article) -> String {
         written.push("pubDate");
     }
     if let Some(hero_image) = &fields.hero_image {
-        let path = format!("{}{hero_image}", assets_ref(&article.slug));
+        let path = if hero_image.shared {
+            format!("{SHARED_ASSETS_REF}{}", hero_image.name)
+        } else {
+            format!("{}{}", assets_ref(&article.slug), hero_image.name)
+        };
         md.push_str(&format!("heroImage: {}\n", json_string(&path)));
         written.push("heroImage");
     }
@@ -1187,21 +1222,32 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
             warnings.push(warn_unreadable(key, value));
             continue;
         }
-        let parsed = match key {
-            "title" | "description" => read_string(value),
-            "pubDate" => read_string(value).filter(|date| is_valid_date(date)),
-            "heroImage" => read_string(value)
-                .and_then(|path| image_name_from_ref(slug, &path).map(str::to_string)),
-            _ => None,
-        };
-        if let Some(parsed) = parsed {
-            match key {
-                "title" => fields.title = Some(parsed),
-                "description" => fields.description = Some(parsed),
-                "pubDate" => fields.pub_date = Some(parsed),
-                "heroImage" => fields.hero_image = Some(parsed),
-                _ => {}
+        // 重複したkeyは飛ばしたので、どの項目も書くのは1回だけ
+        let read = match key {
+            "title" => {
+                fields.title = read_string(value);
+                fields.title.is_some()
             }
+            "description" => {
+                fields.description = read_string(value);
+                fields.description.is_some()
+            }
+            "pubDate" => {
+                fields.pub_date = read_string(value).filter(|date| is_valid_date(date));
+                fields.pub_date.is_some()
+            }
+            "heroImage" => {
+                fields.hero_image = read_string(value).and_then(|path| {
+                    image_ref_from(slug, &path).map(|(name, shared)| HeroImage {
+                        name: name.to_string(),
+                        shared,
+                    })
+                });
+                fields.hero_image.is_some()
+            }
+            _ => false,
+        };
+        if read {
             consumed[i] = true;
         } else {
             warnings.push(warn_unreadable(key, value));
@@ -1234,6 +1280,7 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
     }
 }
 #[cfg(test)]
+#[allow(non_snake_case)]
 mod tests {
     use super::*;
 
@@ -1278,7 +1325,10 @@ mod tests {
                 title: fields.title.clone(),
                 description: fields.description.clone(),
                 pub_date: fields.pub_date.clone(),
-                hero_image: hero_image.map(str::to_string),
+                hero_image: hero_image.map(|name| HeroImage {
+                    name: name.to_string(),
+                    shared: false,
+                }),
                 body: fields.body.clone(),
             },
             warnings: Vec::new(),
@@ -1443,6 +1493,8 @@ mod tests {
             "01.png".to_string(),
             "../../assets/other/01.png".to_string(),
             "https://example.com/01.png".to_string(),
+            "../../assets/a/b.png".to_string(),
+            "../../assets/..".to_string(),
             reference(""),
             reference("../up.png"),
             reference("a/b.png"),
@@ -1692,7 +1744,14 @@ mod tests {
         let renamed = store.rename_article("old-slug", "new-slug").unwrap();
         assert_eq!(renamed.slug, "new-slug");
         assert_eq!(renamed.fields.title.as_deref(), Some("改訂"));
-        assert_eq!(renamed.fields.hero_image.as_deref(), Some("hero.png"));
+        assert_eq!(
+            renamed
+                .fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.png")
+        );
 
         assert!(!store.md_path("old-slug").exists());
         assert!(!store.assets_dir("old-slug").exists());
@@ -1912,7 +1971,23 @@ mod tests {
         assert_eq!(article.fields.title.as_deref(), title);
         assert_eq!(article.fields.description.as_deref(), description);
         assert_eq!(article.fields.pub_date.as_deref(), pub_date);
-        assert_eq!(article.fields.hero_image.as_deref(), hero_image);
+        assert_eq!(
+            article
+                .fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            hero_image
+        );
+    }
+
+    // heroImageの名前と、共有の画像か
+    fn hero_of(article: &Article) -> Option<(&str, bool)> {
+        article
+            .fields
+            .hero_image
+            .as_ref()
+            .map(|hero| (hero.name.as_str(), hero.shared))
     }
 
     #[test]
@@ -2361,7 +2436,13 @@ mod tests {
         assert_eq!(store.import_hero_image("hero", &png()).unwrap(), "hero.png");
         assert_eq!(fs::read(dir.join("hero.png")).unwrap(), png());
         let read = store.read_article("hero").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.png")
+        );
 
         assert_eq!(
             store.import_hero_image("hero", &jpeg()).unwrap(),
@@ -2370,7 +2451,13 @@ mod tests {
         assert!(!dir.join("hero.png").exists());
         assert_eq!(fs::read(dir.join("hero.jpg")).unwrap(), jpeg());
         let read = store.read_article("hero").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.jpg"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.jpg")
+        );
     }
 
     #[test]
@@ -2392,7 +2479,13 @@ mod tests {
         // 前のheroImage以外は消さない
         assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
         let read = store.read_article("post").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.png")
+        );
 
         // 前のファイルが既に無くても取り込める
         fs::remove_file(dir.join("hero.png")).unwrap();
@@ -2415,7 +2508,13 @@ mod tests {
         store.save_article("swap", edited(&opened)).unwrap();
 
         let read = store.read_article("swap").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.jpg"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.jpg")
+        );
         let dir = store.assets_dir("swap");
         assert!(dir.join("hero.jpg").is_file());
         assert!(!dir.join("hero.png").exists());
@@ -2437,7 +2536,13 @@ mod tests {
         assert_eq!(store.import_hero_image("post", &png()).unwrap(), "hero.png");
         assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
         let read = store.read_article("post").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.png")
+        );
     }
 
     #[test]
@@ -2525,7 +2630,13 @@ mod tests {
         );
         assert_eq!(fs::read(dir.join("hero.png")).unwrap(), second);
         let read = store.read_article("same-format").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.png")
+        );
     }
 
     #[test]
@@ -2543,7 +2654,13 @@ mod tests {
         );
         // 項目は読めていないまま、後から画面で入れる
         let read = store.read_article("broken").unwrap();
-        assert_eq!(read.fields.hero_image.as_deref(), Some("hero.png"));
+        assert_eq!(
+            read.fields
+                .hero_image
+                .as_ref()
+                .map(|hero| hero.name.as_str()),
+            Some("hero.png")
+        );
         assert_eq!(read.fields.title, None);
         assert_eq!(read.fields.body, "フロントマターの無いmd");
     }
@@ -3220,5 +3337,224 @@ mod tests {
         let dest = tmp.path().join("post.zip");
         store.write_zip("post", "blog", &dest).unwrap();
         assert_eq!(zip_names(&dest), ["src/content/blog/post.md".to_string()]);
+    }
+
+    // 共有の画像をheroImageで指すmd
+    const SHARED_HERO_MD: &str = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/blog-placeholder-3.jpg\"\n---\n本文\n";
+
+    #[test]
+    fn heroImageに共有の画像を指す参照を読める() {
+        let (_tmp, store) = setup();
+        let article = md_article(&store, "post", SHARED_HERO_MD);
+        assert_eq!(hero_of(&article), Some(("blog-placeholder-3.jpg", true)));
+        assert!(article.warnings.is_empty());
+        assert!(article.extra.is_empty());
+    }
+
+    #[test]
+    fn heroImageの記事の画像と共有の画像を区別する() {
+        let (_tmp, store) = setup();
+        let article = md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/hero.png\"\n---\n",
+        );
+        assert_eq!(hero_of(&article), Some(("hero.png", false)));
+
+        let article = md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/hero.png\"\n---\n",
+        );
+        assert_eq!(hero_of(&article), Some(("hero.png", true)));
+    }
+
+    #[test]
+    fn heroImageの読めない参照は今までどおり警告になる() {
+        let (_tmp, store) = setup();
+        for reference in ["../../assets/a/b/c.png", "../../assets/", "../../assets/.."] {
+            let content = format!(
+                "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"{reference}\"\n---\n"
+            );
+            let article = md_article(&store, "post", &content);
+            assert_eq!(hero_of(&article), None, "{reference} は読めないはず");
+            assert_eq!(extra_md(&article), format!("heroImage: \"{reference}\""));
+            assert_eq!(
+                warn_messages(&article.warnings),
+                [format!("heroImageを読めません: \"{reference}\"")]
+            );
+        }
+    }
+
+    #[test]
+    fn 共有の画像のheroImageは保存しても同じ参照で書き戻す() {
+        let (_tmp, store) = setup();
+        let article = md_article(&store, "post", SHARED_HERO_MD);
+        let mut fields = edited(&article);
+        fields.title = Some("新しいタイトル".to_string());
+        store.save_article("post", fields).unwrap();
+
+        let md = fs::read_to_string(store.md_path("post")).unwrap();
+        assert!(md.contains("heroImage: \"../../assets/blog-placeholder-3.jpg\""));
+        assert!(md.contains("title: \"新しいタイトル\""));
+        let read = store.read_article("post").unwrap();
+        assert_eq!(hero_of(&read), Some(("blog-placeholder-3.jpg", true)));
+        assert!(read.extra.is_empty());
+    }
+
+    #[test]
+    fn 共有の画像を読む() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        fs::write(store.assets_base().join("shared.png"), [4u8, 5, 6]).unwrap();
+        assert_eq!(
+            store.read_image("post", "../../assets/shared.png").unwrap(),
+            vec![4, 5, 6]
+        );
+    }
+
+    #[test]
+    fn 共有の画像が無ければImageNotFound() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        assert!(matches!(
+            store.read_image("post", "../../assets/shared.png"),
+            Err(StoreError::ImageNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn 共有の画像のheroImageを差し替えても共有の画像は消さない() {
+        let (_tmp, store) = setup();
+        md_article(&store, "post", SHARED_HERO_MD);
+        let assets = store.assets_base();
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("blog-placeholder-3.jpg"), b"shared").unwrap();
+        // 記事に取り込む画像と同じ名前の共有の画像
+        fs::write(assets.join("hero.png"), b"same-name").unwrap();
+        // 前のheroImageと同じ名前の記事の画像。共有の画像を指していたので消さない
+        fs::create_dir_all(store.assets_dir("post")).unwrap();
+        fs::write(
+            store.assets_dir("post").join("blog-placeholder-3.jpg"),
+            b"article",
+        )
+        .unwrap();
+
+        assert_eq!(store.import_hero_image("post", &png()).unwrap(), "hero.png");
+        let read = store.read_article("post").unwrap();
+        assert_eq!(hero_of(&read), Some(("hero.png", false)));
+        // 前の参照の行は残らない
+        assert!(read.warnings.is_empty());
+        assert!(read.extra.is_empty());
+        assert_eq!(
+            fs::read(store.assets_dir("post").join("hero.png")).unwrap(),
+            png()
+        );
+        assert_eq!(fs::read(assets.join("hero.png")).unwrap(), b"same-name");
+        assert_eq!(
+            fs::read(assets.join("blog-placeholder-3.jpg")).unwrap(),
+            b"shared"
+        );
+        assert!(store
+            .assets_dir("post")
+            .join("blog-placeholder-3.jpg")
+            .exists());
+    }
+
+    #[test]
+    fn 共有の画像のheroImageを外しても共有の画像は消さない() {
+        let (_tmp, store) = setup();
+        md_article(&store, "post", SHARED_HERO_MD);
+        let shared = store.assets_base().join("blog-placeholder-3.jpg");
+        fs::create_dir_all(store.assets_base()).unwrap();
+        fs::write(&shared, b"shared").unwrap();
+        let same_name = store.assets_dir("post").join("blog-placeholder-3.jpg");
+        fs::create_dir_all(store.assets_dir("post")).unwrap();
+        fs::write(&same_name, b"article").unwrap();
+
+        store.remove_hero_image("post").unwrap();
+        let md = fs::read_to_string(store.md_path("post")).unwrap();
+        assert!(!md.contains("heroImage"));
+        assert!(shared.exists());
+        assert!(same_name.exists());
+    }
+
+    #[test]
+    fn 記事の画像のheroImageを外したとき同じ名前の共有の画像は消さない() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/hero.png\"\n---\n",
+        );
+        let assets = store.assets_base();
+        fs::create_dir_all(store.assets_dir("post")).unwrap();
+        fs::write(store.assets_dir("post").join("hero.png"), b"article").unwrap();
+        fs::write(assets.join("hero.png"), b"shared").unwrap();
+
+        store.remove_hero_image("post").unwrap();
+        assert!(!store.assets_dir("post").join("hero.png").exists());
+        assert_eq!(fs::read(assets.join("hero.png")).unwrap(), b"shared");
+    }
+
+    #[test]
+    fn renameしても共有の画像への参照は変わらない() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "old",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/hero.png\"\n---\n![共有](../../assets/pic.png)\n![記事](../../assets/old/01.png)\n",
+        );
+        let assets = store.assets_base();
+        fs::create_dir_all(store.assets_dir("old")).unwrap();
+        fs::write(store.assets_dir("old").join("01.png"), b"article").unwrap();
+        fs::write(assets.join("hero.png"), b"hero").unwrap();
+        fs::write(assets.join("pic.png"), b"pic").unwrap();
+
+        store.rename_article("old", "new").unwrap();
+        let read = store.read_article("new").unwrap();
+        // 記事の画像の参照は今までどおり新しいslugになる
+        assert_eq!(
+            read.fields.body,
+            "![共有](../../assets/pic.png)\n![記事](../../assets/new/01.png)\n"
+        );
+        assert_eq!(hero_of(&read), Some(("hero.png", true)));
+        let md = fs::read_to_string(store.md_path("new")).unwrap();
+        assert!(md.contains("heroImage: \"../../assets/hero.png\""));
+        // 共有の画像のファイルは元の場所に残る
+        assert_eq!(fs::read(assets.join("hero.png")).unwrap(), b"hero");
+        assert_eq!(fs::read(assets.join("pic.png")).unwrap(), b"pic");
+    }
+
+    #[test]
+    fn 削除しても共有の画像は残る() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let shared = store.assets_base().join("shared.png");
+        fs::write(&shared, b"shared").unwrap();
+
+        store.delete_article("post").unwrap();
+        assert!(!store.assets_dir("post").exists());
+        assert!(shared.exists());
+    }
+
+    #[test]
+    fn zipに共有の画像は入らない() {
+        let (tmp, store) = setup();
+        md_article(&store, "post", SHARED_HERO_MD);
+        store.import_body_image("post", &png()).unwrap();
+        let assets = store.assets_base();
+        fs::write(assets.join("blog-placeholder-3.jpg"), b"shared").unwrap();
+        fs::write(assets.join("pic.png"), b"pic").unwrap();
+
+        let dest = tmp.path().join("post.zip");
+        store.write_zip("post", "posts", &dest).unwrap();
+        assert_eq!(
+            zip_names(&dest),
+            [
+                "src/content/posts/post.md".to_string(),
+                "src/assets/post/01.png".to_string(),
+            ]
+        );
     }
 }

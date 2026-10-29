@@ -47,6 +47,9 @@ pub struct ArticleFiles {
 pub struct BaseSnapshot {
     pub commit: String,
     pub articles: BTreeMap<String, ArticleFiles>,
+    // assets/の直下のファイル名 -> SHA。前のバージョンのstate.jsonではNoneで、次の読み込みで取り直す
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_assets: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,6 +498,10 @@ mod tests {
         state.remote.base = Some(BaseSnapshot {
             commit: "commit-base".to_string(),
             articles: BTreeMap::from([("post".to_string(), article.clone())]),
+            shared_assets: Some(BTreeMap::from([(
+                "shared.png".to_string(),
+                "sha-shared".to_string(),
+            )])),
         });
         state.remote.branches = BTreeMap::from([(
             "blog/post".to_string(),
@@ -529,6 +536,12 @@ mod tests {
             value["articles"]["post"]["assets"]["01.png"]["fetched"],
             true
         );
+        // 共有の画像の一覧も鍵はsharedAssetsで、版番号は1のまま
+        assert_eq!(
+            value["remote"]["base"]["sharedAssets"]["shared.png"],
+            "sha-shared"
+        );
+        assert_eq!(value["version"], 1);
     }
 
     #[test]
@@ -565,6 +578,7 @@ mod tests {
         state.remote.base = Some(BaseSnapshot {
             commit: "commit-base".to_string(),
             articles: BTreeMap::from([("post".to_string(), files_of("sha-md-a", &[]))]),
+            shared_assets: None,
         });
         state
             .articles
@@ -805,6 +819,21 @@ mod tests {
     }
 
     #[test]
+    fn sharedAssetsの無いstate_jsonを読める() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"basis":{"baseBranch":"main","branchFormat":"blog/{slug}","postsPath":"src/content/blog"},"fetchedAt":null,"remote":{"base":{"commit":"commit-base","articles":{}},"branches":{}},"articles":{},"conflicts":[],"skipped":[]}"#,
+        )
+        .unwrap();
+
+        let state = read_state(&path, &basis()).unwrap();
+        let base = state.remote.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(base.shared_assets, None);
+    }
+
+    #[test]
     fn renamedFromの無い古いstate_jsonを読める() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
@@ -856,6 +885,7 @@ mod tests {
                     ("only-base".to_string(), article.clone()),
                     ("other".to_string(), article.clone()),
                 ]),
+                shared_assets: None,
             }),
             branches: BTreeMap::from([
                 (

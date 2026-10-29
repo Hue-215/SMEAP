@@ -19,6 +19,7 @@ import {
   removeHeroImage,
   type Article,
   type EditedFields,
+  type HeroImage,
   type StoreError,
   type Warning,
 } from './api'
@@ -146,7 +147,10 @@ export default function ArticleEditor({
     pubDate: article.pubDate,
   }))
   // サムネイルの表示。保存の入力には含まれないので、fieldsとは別に持つ
-  const [hero, setHero] = useState({ name: article.heroImage, version: 0 })
+  const [hero, setHero] = useState<{ image: HeroImage | null; version: number }>({
+    image: article.heroImage,
+    version: 0,
+  })
   // 値を変えた項目。そのkeyの警告は出さない
   const [edited, setEdited] = useState<Set<HeaderKey>>(() => new Set())
   // 保存のときに読む。stateは描き直すまで前の値なので、入力を受けたときにこちらも書き換える
@@ -184,7 +188,7 @@ export default function ArticleEditor({
 
   // 取り込みや外す操作が並んで走ると、mdと表示が別の画像を指すことがあるので、終わるまで次を受けない
   const [heroBusy, setHeroBusy] = useState(false)
-  // runは新しいheroImageを返す。failedはエラーから知らせる文言を作る。subjectはログに残す対象
+  // runは新しいheroImageのファイル名を返す。failedはエラーから知らせる文言を作る。subjectはログに残す対象
   const changeHero = async (
     run: () => Promise<string | null>,
     failed: (e: unknown) => string,
@@ -195,7 +199,10 @@ export default function ArticleEditor({
       // 前の画像を消すかはmdの本文が参照しているかで決めるので、本文の変更を先に保存する
       if (!(await saver.save())) throw new Error('Failed to save the article')
       const name = await run()
-      setHero((prev) => ({ name, version: prev.version + 1 }))
+      setHero((prev) => ({
+        image: name === null ? null : { name, shared: false },
+        version: prev.version + 1,
+      }))
     } catch (e) {
       console.error('Failed to change the hero image', subject, e)
       callbacks.current.onNotice(failed(e))
@@ -345,9 +352,12 @@ export default function ArticleEditor({
         warnings={warnings}
         onChange={updateFields}
         hero={
-          hero.name === null
+          hero.image === null
             ? null
-            : { name: hero.name, url: heroImageUrl(slug, hero.name, hero.version) }
+            : {
+                name: hero.image.name,
+                url: heroImageUrl(slug, hero.image, hero.version),
+              }
         }
         heroBusy={heroBusy}
         onPickHeroImage={pickHeroImage}

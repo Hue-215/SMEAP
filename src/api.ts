@@ -42,13 +42,19 @@ export interface Warning {
   kept: boolean
 }
 
+// sharedがtrueならassetsの直下の画像
+export interface HeroImage {
+  // ファイル名だけ。本文の画像のような参照ではない
+  name: string
+  shared: boolean
+}
+
 export interface Article {
   slug: string
   title: string | null
   description: string | null
   pubDate: string | null
-  // ファイル名だけ。本文の画像のような参照ではない
-  heroImage: string | null
+  heroImage: HeroImage | null
   body: string
   warnings: Warning[]
 }
@@ -153,12 +159,14 @@ export function articleImageUrl(slug: string, reference: string): string {
   return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
 }
 
-// 記事ファイルから画像を指すときの相対パス。Rust側のassets_ref(src-tauri/src/store.rs)とそろえる
-const assetsRef = (slug: string) => `../../assets/${slug}/`
+// 記事ファイルから画像を指すときの相対パス。Rust側のSHARED_ASSETS_REFとassets_ref(src-tauri/src/store.rs)とそろえる
+const sharedAssetsRef = '../../assets/'
+const assetsRef = (slug: string) => `${sharedAssetsRef}${slug}/`
 
 // 差し替えても同じ名前のことがあるので、versionを変えて読み直させる。独自プロトコルはクエリを見ない
-export function heroImageUrl(slug: string, name: string, version: number): string {
-  return `${articleImageUrl(slug, assetsRef(slug) + name)}?v=${version}`
+export function heroImageUrl(slug: string, hero: HeroImage, version: number): string {
+  const reference = (hero.shared ? sharedAssetsRef : assetsRef(slug)) + hero.name
+  return `${articleImageUrl(slug, reference)}?v=${version}`
 }
 
 // GitHub連携。Rust側はsrc-tauri/src/github/の下

@@ -935,6 +935,8 @@ mod tests {
     const PNG: &[u8] = b"png-1\n";
     const PNG2: &[u8] = b"png-2\n";
     const PNG3: &[u8] = b"png-3\n";
+    // assetsの直下の共有の画像
+    const SHARED_PNG: &[u8] = b"shared-1\n";
 
     // リポジトリのルートからの場所 -> 中身のファイル一覧
     type Files = &'static [(&'static str, &'static [u8])];
@@ -946,6 +948,14 @@ mod tests {
         ("src/assets/other/02.png", PNG2),
         ("src/content/blog/a.md", A_SYNCED),
         ("src/assets/a/01.png", PNG),
+    ];
+    const SHARED_MAIN_FILES: Files = &[
+        ("README.md", README),
+        ("src/content/blog/other.md", OTHER_MD),
+        ("src/assets/other/02.png", PNG2),
+        ("src/content/blog/a.md", A_SYNCED),
+        ("src/assets/a/01.png", PNG),
+        ("src/assets/shared.png", SHARED_PNG),
     ];
     // 記事aが無いmain
     const NO_A_MAIN: Files = &[
@@ -3040,5 +3050,62 @@ mod tests {
         assert_eq!(test.delete_count(&test.ref_url(BRANCH)), 1);
         test.sync();
         assert!(!test.article_state(NEW_SLUG).dirty);
+    }
+
+    // 共有の画像 -----------------------------------------------------------------
+
+    #[test]
+    fn 共有の画像はCommitとPushで送らない() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", SHARED_MAIN_FILES);
+        test.sync();
+        repo.accept_writes(&test.transport);
+        // 手元の共有の画像を書き換えても、記事のファイルではない
+        test.write_image("shared.png", PNG3);
+        test.write_md(A_LOCAL);
+
+        test.commit_push(SLUG, "共有の画像は送らない", None)
+            .unwrap();
+        let entries = test.post_bodies("/git/trees")[0]["tree"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry["path"] == "src/assets/shared.png"),
+            "{entries:?}"
+        );
+    }
+
+    #[test]
+    fn Pullのバックアップに共有の画像は入らず共有の画像は残る() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", SHARED_MAIN_FILES);
+        let _head = repo.branch(&test.transport, BRANCH, SHARED_MAIN_FILES);
+        test.sync();
+        test.write_image("shared.png", PNG3);
+        test.write_md(A_LOCAL);
+
+        test.pull(SLUG, None, BACKUP_NAME).unwrap();
+        // バックアップに写すのは記事のファイルだけ
+        let backup = test.backup_path(BACKUP_NAME, "");
+        assert!(backup.join("src/content/blog/a.md").exists());
+        let mut shared = Vec::new();
+        let mut dirs = vec![backup];
+        while let Some(dir) = dirs.pop() {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.ends_with("shared.png") {
+                    shared.push(path);
+                }
+            }
+        }
+        assert!(shared.is_empty(), "{shared:?}");
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), PNG3);
     }
 }

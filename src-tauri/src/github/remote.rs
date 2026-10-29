@@ -121,6 +121,21 @@ fn file_rows(tree: &Tree, slug: Option<&str>) -> Option<Vec<FileRow>> {
     Some(rows)
 }
 
+// assetsの直下の通常のファイル(共有の画像)。シンボリックリンクとサブモジュールは除く
+fn shared_rows(tree: &Tree) -> BTreeMap<String, String> {
+    tree.entries
+        .iter()
+        .filter(|entry| !entry.path.contains('/') && is_regular_blob(entry))
+        .map(|entry| (entry.path.clone(), entry.sha.clone()))
+        .collect()
+}
+
+#[derive(Default)]
+struct BaseEntries {
+    articles: BTreeMap<String, ArticleFiles>,
+    shared_assets: BTreeMap<String, String>,
+}
+
 // 1回の読み込みの通信。同じコミット・ツリーは取り直さない
 struct Reader<'a> {
     t: &'a dyn Transport,
@@ -215,6 +230,21 @@ impl Reader<'_> {
         Ok(file_rows(&sub, None))
     }
 
+    // 読んだassetsツリーから、直下の共有の画像を組み立てる。recursiveがtruncatedなら直下のツリーを取り直す
+    fn shared_assets(
+        &mut self,
+        assets_sha: Option<&str>,
+    ) -> Result<BTreeMap<String, String>, GithubError> {
+        let Some(sha) = assets_sha else {
+            return Ok(BTreeMap::new());
+        };
+        let mut tree = self.tree(sha, true)?;
+        if tree.truncated {
+            tree = self.tree(sha, false)?;
+        }
+        Ok(shared_rows(&tree))
+    }
+
     // コミットのpostsツリーとassetsの位置。記事のディレクトリが無ければNone
     fn read_positions(
         &mut self,
@@ -230,15 +260,15 @@ impl Reader<'_> {
         Ok(Some((posts_tree, assets_sha)))
     }
 
-    // ベースの記事の一覧。読めないものはskippedに入れる
+    // ベースの記事と共有の画像の一覧。読めないものはskippedに入れる
     fn read_base(
         &mut self,
         basis: &Basis,
         commit: &str,
         skipped: &mut Vec<Skipped>,
-    ) -> Result<BTreeMap<String, ArticleFiles>, GithubError> {
+    ) -> Result<BaseEntries, GithubError> {
         let Some((posts_tree, assets_sha)) = self.read_positions(commit, basis)? else {
-            return Ok(BTreeMap::new());
+            return Ok(BaseEntries::default());
         };
         let mut articles = BTreeMap::new();
         for (slug, md) in md_entries(&posts_tree, &basis.base_branch, skipped) {
@@ -249,7 +279,10 @@ impl Reader<'_> {
                 None => skipped.push(unreadable(&slug, &basis.base_branch)),
             }
         }
-        Ok(articles)
+        Ok(BaseEntries {
+            articles,
+            shared_assets: self.shared_assets(assets_sha.as_deref())?,
+        })
     }
 
     // 記事のディレクトリやslugのmdが無ければ、このブランチに記事は無い
@@ -301,10 +334,16 @@ pub fn read_remote(
     let base_commit = git::branch_head(t, token, now, repo, &basis.base_branch)?
         .ok_or(GithubError::BaseBranchNotFound)?;
     let previous_base = previous.base.as_ref();
-    let base = match previous_base.filter(|base| base.commit == base_commit) {
+    // 前のバージョンのstate.jsonにはsharedAssetsが無いので、先頭が同じでもツリーを取り直す
+    let base = match previous_base
+        .filter(|base| base.commit == base_commit && base.shared_assets.is_some())
+    {
         Some(kept) => kept.clone(),
         None => {
-            let mut articles = reader.read_base(basis, &base_commit, &mut skipped)?;
+            let BaseEntries {
+                mut articles,
+                shared_assets,
+            } = reader.read_base(basis, &base_commit, &mut skipped)?;
             // 読めない記事は前回の様子のままにする
             for unreadable in &skipped {
                 if let Some(files) =
@@ -316,6 +355,7 @@ pub fn read_remote(
             BaseSnapshot {
                 commit: base_commit,
                 articles,
+                shared_assets: Some(shared_assets),
             }
         }
     };
@@ -1048,6 +1088,7 @@ mod tests {
             "main",
             &[
                 ("src/content/blog/post.md", MD),
+                ("src/assets/shared.png", PNG),
                 ("src/assets/post/01.png", PNG),
             ],
         );
@@ -1068,6 +1109,7 @@ mod tests {
             base: Some(BaseSnapshot {
                 commit: base_commit.clone(),
                 articles: BTreeMap::from([("post".to_string(), article.clone())]),
+                shared_assets: Some(BTreeMap::from([("shared.png".to_string(), blob_sha(PNG))])),
             }),
             branches: BTreeMap::from([(
                 "blog/post".to_string(),
@@ -1102,6 +1144,7 @@ mod tests {
             base: Some(BaseSnapshot {
                 commit: "commit-old".to_string(),
                 articles: BTreeMap::from([("post".to_string(), article.clone())]),
+                shared_assets: None,
             }),
             branches: BTreeMap::from([(
                 "blog/post".to_string(),
@@ -1146,5 +1189,258 @@ mod tests {
         assert_eq!(base.articles, previous_base.articles);
         assert_eq!(read.snapshot.branches, previous.branches);
         assert_eq!(base.commit, base_commit);
+    }
+
+    #[test]
+    fn ベースのassetsの直下のファイルをsharedAssetsに入れる() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(
+            &transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/assets/shared.png", PNG),
+                ("src/assets/post/01.png", PNG),
+            ],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(
+            base.shared_assets,
+            Some(BTreeMap::from([("shared.png".to_string(), blob_sha(PNG),)]))
+        );
+        // 共有の画像は記事のassetsには入らない
+        assert_eq!(keys_of(&base.articles["post"].assets), ["01.png"]);
+    }
+
+    #[test]
+    fn sharedAssetsに通常のファイルでないものは入れず記事は読める() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch_with_entries(
+            &transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/assets/shared.png", PNG),
+            ],
+            &[
+                // 実行できるファイル(中身は空)と、シンボリックリンクとサブモジュール
+                ("src/assets/run.png", "100755", "blob"),
+                ("src/assets/link.png", "120000", "blob"),
+                ("src/assets/locked.png", "160000", "commit"),
+            ],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(
+            base.shared_assets,
+            Some(BTreeMap::from([
+                ("run.png".to_string(), blob_sha(b"")),
+                ("shared.png".to_string(), blob_sha(PNG)),
+            ]))
+        );
+        assert!(read.skipped.is_empty());
+        assert_eq!(base_keys(&read), ["post"]);
+    }
+
+    #[test]
+    fn 記事用のブランチのsharedAssetsは持たない() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(&transport, "main", &[("src/content/blog/post.md", MD)]);
+        // 記事用のブランチにだけある共有の画像
+        repo.branch(
+            &transport,
+            "blog/post",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/assets/branch-only.png", PNG),
+            ],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(base.shared_assets, Some(BTreeMap::new()));
+        assert!(read.snapshot.branches.contains_key("blog/post"));
+    }
+
+    #[test]
+    fn assetsが無ければsharedAssetsは空() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(&transport, "main", &[("src/content/blog/post.md", MD)]);
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(base.shared_assets, Some(BTreeMap::new()));
+    }
+
+    #[test]
+    fn 再帰のassetsがtruncatedでも直下のツリーからsharedAssetsを取る() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(
+            &transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/content/blog/second.md", OTHER_MD),
+                ("src/assets/shared.png", PNG),
+                ("src/assets/post/01.png", PNG),
+                ("src/assets/second/01.png", PNG),
+            ],
+        );
+
+        let _first = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        // assetsのrecursiveの応答をtruncatedに上書きする
+        let urls = request_urls(&transport);
+        let assets_url = tree_urls(&urls, true);
+        assert_eq!(assets_url.len(), 1, "{urls:?}");
+        transport.json(
+            Method::Get,
+            &assets_url[0],
+            200,
+            serde_json::json!({
+                "sha": "sha-ignored",
+                // 切り詰められて共有の画像が入っていない
+                "tree": [
+                    {"path": "post/01.png", "mode": "100644", "type": "blob", "sha": blob_sha(PNG)},
+                    {"path": "second/01.png", "mode": "100644", "type": "blob", "sha": blob_sha(PNG)},
+                ],
+                "truncated": true,
+            }),
+        );
+        let before = transport.requests().len();
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(
+            base.shared_assets,
+            Some(BTreeMap::from([("shared.png".to_string(), blob_sha(PNG),)]))
+        );
+        let assets_immediate = assets_url[0].split('?').next().unwrap().to_string();
+        let urls = request_urls(&transport);
+        assert!(urls[before..].contains(&assets_immediate), "{urls:?}");
+    }
+
+    #[test]
+    fn assetsの直下のツリーもtruncatedなら読み込みを止める() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        // 記事が無いので、assetsの直下のツリーを読むのは共有の画像の一覧だけ
+        repo.branch(
+            &transport,
+            "main",
+            &[
+                ("src/content/blog/README.txt", MD),
+                ("src/assets/shared.png", PNG),
+                ("src/assets/post/01.png", PNG),
+            ],
+        );
+
+        let _first = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        // assetsのrecursiveの応答をtruncatedにする
+        let urls = request_urls(&transport);
+        let assets_url = tree_urls(&urls, true);
+        assert_eq!(assets_url.len(), 1, "{urls:?}");
+        transport.json(
+            Method::Get,
+            &assets_url[0],
+            200,
+            serde_json::json!({
+                "sha": "sha-ignored",
+                "tree": [
+                    {"path": "shared.png", "mode": "100644", "type": "blob", "sha": blob_sha(PNG)},
+                    {"path": "post/01.png", "mode": "100644", "type": "blob", "sha": blob_sha(PNG)},
+                ],
+                "truncated": true,
+            }),
+        );
+        // 直下のツリーの応答もtruncatedにする
+        let assets_immediate = assets_url[0]
+            .split('?')
+            .next()
+            .expect("assetsのツリーのURLはあるはず")
+            .to_string();
+        transport.json(
+            Method::Get,
+            &assets_immediate,
+            200,
+            serde_json::json!({
+                "sha": "sha-ignored",
+                "tree": [
+                    {"path": "shared.png", "mode": "100644", "type": "blob", "sha": blob_sha(PNG)},
+                ],
+                "truncated": true,
+            }),
+        );
+
+        let before = transport.requests().len();
+
+        assert_stopped(read(&transport, &basis(), &RemoteSnapshot::default()));
+        let urls = request_urls(&transport);
+        assert!(urls[before..].contains(&assets_immediate), "{urls:?}");
+    }
+
+    #[test]
+    fn 前回のsharedAssetsが無ければ先頭が同じでもツリーを取り直す() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base_commit = repo.branch(
+            &transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/assets/shared.png", PNG),
+            ],
+        );
+        let previous = RemoteSnapshot {
+            base: Some(BaseSnapshot {
+                commit: base_commit.clone(),
+                articles: BTreeMap::new(),
+                shared_assets: None,
+            }),
+            branches: BTreeMap::new(),
+        };
+
+        let read = read(&transport, &basis(), &previous).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(base.commit, base_commit);
+        assert_eq!(
+            base.shared_assets,
+            Some(BTreeMap::from([("shared.png".to_string(), blob_sha(PNG),)]))
+        );
+        let urls = request_urls(&transport);
+        assert!(
+            urls.iter().any(|url| url.contains("/git/trees/")),
+            "{urls:?}"
+        );
+    }
+
+    #[test]
+    fn 記事のディレクトリがcontent_blogならassetsの直下を読む() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(
+            &transport,
+            "main",
+            &[("content/blog/post.md", MD), ("assets/shared.png", PNG)],
+        );
+        let basis = Basis {
+            base_branch: "main".to_string(),
+            branch_format: "blog/{slug}".to_string(),
+            posts_path: "content/blog".to_string(),
+        };
+
+        let read = read(&transport, &basis, &RemoteSnapshot::default()).unwrap();
+        let base = read.snapshot.base.as_ref().expect("ベースの様子はあるはず");
+        assert_eq!(
+            base.shared_assets,
+            Some(BTreeMap::from([("shared.png".to_string(), blob_sha(PNG),)]))
+        );
     }
 }
