@@ -35,6 +35,8 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
   const [phase, setPhase] = useState<Phase>('starting')
   const [code, setCode] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  // コピーできた回数。続けて押したときに、チェックを出す2秒を数え直すため
+  const [copied, setCopied] = useState(0)
   // 始め直した試行より前の応答は捨てる
   const attempt = useRef(0)
   // 外に出た後に待ちを始めない(取り消される当ても無い待ちが残る)
@@ -89,6 +91,12 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
     }
   }, [])
 
+  useEffect(() => {
+    if (copied === 0) return
+    const timer = setTimeout(() => setCopied(0), 2000)
+    return () => clearTimeout(timer)
+  }, [copied])
+
   // やり直す
   const retry = () => {
     setPhase('starting')
@@ -105,7 +113,21 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
 
   const copyCode = () => {
     if (code === null) return
-    navigator.clipboard.writeText(code).catch((e) => console.error('Failed to copy the code', e))
+    const id = attempt.current
+    const copyFailed = t('github_login.copy_failed')
+    navigator.clipboard
+      .writeText(code)
+      .then(() => {
+        if (id !== attempt.current || !alive.current) return
+        setFailure((f) => (f === copyFailed ? null : f))
+        setCopied((n) => n + 1)
+      })
+      .catch((e) => {
+        console.error('Failed to copy the code', e)
+        if (id !== attempt.current || !alive.current) return
+        setCopied(0)
+        setFailure(copyFailed)
+      })
   }
 
   const openBrowser = () => {
@@ -116,6 +138,7 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
   }
 
   const status = failure ?? phaseStatus(phase)
+  const copyLabel = copied > 0 ? t('github_login.copied') : t('github_login.copy')
 
   return (
     <Dialog labelledBy={headingId} onCancel={cancel}>
@@ -132,11 +155,11 @@ export default function GithubLoginDialog({ onWait, onDone, onCancel }: GithubLo
             <button
               type="button"
               className="icon-button"
-              aria-label={t('github_login.copy')}
-              title={t('github_login.copy')}
+              aria-label={copyLabel}
+              title={copyLabel}
               onClick={copyCode}
             >
-              <Icon name="content_copy" />
+              <Icon name={copied > 0 ? 'check' : 'content_copy'} />
             </button>
           </div>
         )}

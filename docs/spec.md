@@ -332,7 +332,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 #### ログイン・Repositoryの選択
 
 - 設定画面の「GitHubにログイン」を押すと、ログインのダイアログを出す
-  - 8文字のコードと、コードのコピー、`github.com/login/device`を開くボタン、キャンセル
+  - 8文字のコードと、コードのコピー(コピーしたら2秒だけアイコンをチェックにする)、`github.com/login/device`を開くボタン、キャンセル
   - 認可されるまで、Rust側が指定された間隔で問い合わせる(`slow_down`なら間隔を延ばす)。コードの期限が切れたらそのことを出し、やり直せるようにする
 - ログインした後、Repositoryの選択のダイアログを出す。一覧には、SMEAPのGitHub Appを入れたrepositoryだけが出る(Appを入れるときに、全部か選んだものだけかを決める)。一覧の下の説明は置かず、Appのインストールのページを開くボタンを「repositoryを追加」の名前で置く(インストールのページでrepositoryを選び足せるため)。一覧が空なら「選べるrepositoryがありません。」とだけ出す
 
