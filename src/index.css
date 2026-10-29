@@ -775,13 +775,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-text-secondary);
 }
 
-/* Commit & Pushの、送っている間の段階。文言が替わってもボタンを動かさないよう、ボタンは縮めずに
-   段階の側で残りの幅を使う。狭い窓では、ボタンと並べると残りの幅が足りず読めないので、ボタンの上の行に
-   置く */
-.dialog-buttons:has(> .commit-progress) {
-  flex-wrap: wrap;
-}
-
+/* Commit & Pushの、送っている間の段階。ボタンは縮めずに段階の側で残りの幅を使い、収まらなければ末尾を切る */
 .commit-progress {
   display: flex;
   flex: 1;
@@ -802,10 +796,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 
 .commit-progress ~ button {
   flex-shrink: 0;
-}
-
-.narrow .commit-progress {
-  flex-basis: 100%;
 }
 
 .commit-message {

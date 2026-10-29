@@ -181,25 +181,29 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
           </div>
         )}
         <div className="dialog-buttons">
-          {progress !== null && (
+          {/* 送っている間は押せないPullとキャンセルを外し、空いた幅に段階を出す */}
+          {progress !== null ? (
             <p role="status" className="commit-progress">
               <Icon name="progress_activity" className="icon-spinning" />
               <span>{progressText(progress)}</span>
             </p>
+          ) : (
+            <>
+              {phase.kind !== 'edit' && (
+                <button
+                  type="button"
+                  className="left"
+                  disabled={running}
+                  onClick={() => pull(phase.kind === 'branchExists' ? phase.branch : null)}
+                >
+                  {t('commit.pull')}
+                </button>
+              )}
+              <button type="button" disabled={running} onClick={cancel}>
+                {t('common.cancel')}
+              </button>
+            </>
           )}
-          {phase.kind !== 'edit' && (
-            <button
-              type="button"
-              className="left"
-              disabled={running}
-              onClick={() => pull(phase.kind === 'branchExists' ? phase.branch : null)}
-            >
-              {t('commit.pull')}
-            </button>
-          )}
-          <button type="button" disabled={running} onClick={cancel}>
-            {t('common.cancel')}
-          </button>
           {phase.kind === 'edit' && (
             <button
               type="button"
