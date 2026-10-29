@@ -1,6 +1,6 @@
 // Commit & Pushのダイアログ。Conflictと「branchが既にあります」も、このダイアログの中で切り替えて出す
 import { useEffect, useId, useRef, useState } from 'react'
-import type { CommitPreview } from './api'
+import type { CommitPreview, PushProgress } from './api'
 import Dialog from './Dialog'
 import {
   canSendMessage,
@@ -9,8 +9,10 @@ import {
   imagesText,
   linesText,
   mdNameText,
+  progressText,
 } from './githubCommit'
 import { githubErrorText } from './githubError'
+import Icon from './Icon'
 import { t } from './i18n'
 
 // Conflict・BranchExistsはダイアログを出したまま切り替える。そのほかは親が閉じてpushedを返す
@@ -23,7 +25,11 @@ interface CommitDialogProps {
   preview: CommitPreview
   onCancel: () => void
   // overwriteは、Conflictで「Push」を選んだときのリモートの先頭
-  onCommit: (message: string, overwrite: string | null) => Promise<CommitPushResult>
+  onCommit: (
+    message: string,
+    overwrite: string | null,
+    onProgress: (progress: PushProgress) => void,
+  ) => Promise<CommitPushResult>
   // branchがnullなら記録のbranch(無ければベース)
   onPull: (branch: string | null) => Promise<void>
 }
@@ -49,9 +55,12 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
   const [message, setMessage] = useState(() => defaultCommitMessage(preview.kind, preview.title))
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<PushProgress | null>(null)
   const headingId = useId()
   const bodyId = useId()
   const input = useRef<HTMLInputElement>(null)
+  // 今のcommit()の番号。古い呼び出しの知らせを捨てる
+  const call = useRef(0)
 
   // 開いたときにCommit messageを選んだ状態にする。Dialogが開いてから選ぶ
   useEffect(() => {
@@ -68,13 +77,29 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
   }
 
   const commit = (overwrite: string | null) => {
+    const current = ++call.current
     setRunning(true)
     setError(null)
-    void onCommit(message, overwrite).then((result) => {
-      if (result.kind === 'pushed') return
-      setPhase(result)
-      setRunning(false)
-    }, fail)
+    setProgress({ step: 'checking' })
+    // 終わった後に届いた知らせも捨てる。古い呼び出しならfalse
+    const finish = () => {
+      if (call.current !== current) return false
+      call.current += 1
+      setProgress(null)
+      return true
+    }
+    void onCommit(message, overwrite, (next) => {
+      if (call.current === current) setProgress(next)
+    }).then(
+      (result) => {
+        if (!finish() || result.kind === 'pushed') return
+        setPhase(result)
+        setRunning(false)
+      },
+      (e) => {
+        if (finish()) fail(e)
+      },
+    )
   }
 
   const pull = (branch: string | null) => {
@@ -156,19 +181,29 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
           </div>
         )}
         <div className="dialog-buttons">
-          {phase.kind !== 'edit' && (
-            <button
-              type="button"
-              className="left"
-              disabled={running}
-              onClick={() => pull(phase.kind === 'branchExists' ? phase.branch : null)}
-            >
-              {t('commit.pull')}
-            </button>
+          {/* 送っている間は押せないPullとキャンセルを外し、空いた幅に段階を出す */}
+          {progress !== null ? (
+            <p role="status" className="commit-progress">
+              <Icon name="progress_activity" className="icon-spinning" />
+              <span>{progressText(progress)}</span>
+            </p>
+          ) : (
+            <>
+              {phase.kind !== 'edit' && (
+                <button
+                  type="button"
+                  className="left"
+                  disabled={running}
+                  onClick={() => pull(phase.kind === 'branchExists' ? phase.branch : null)}
+                >
+                  {t('commit.pull')}
+                </button>
+              )}
+              <button type="button" disabled={running} onClick={cancel}>
+                {t('common.cancel')}
+              </button>
+            </>
           )}
-          <button type="button" disabled={running} onClick={cancel}>
-            {t('common.cancel')}
-          </button>
           {phase.kind === 'edit' && (
             <button
               type="button"

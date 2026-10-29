@@ -592,12 +592,16 @@ pub fn github_commit_push(
     slug: String,
     message: String,
     overwrite: Option<String>,
+    on_progress: tauri::ipc::Channel<super::push::PushProgress>,
 ) -> Result<super::push::PushResult, CommandError> {
     crate::store::validate_slug(&slug)?;
     with_sync_input(&app, &github, &store, None, |input| {
-        github
-            .sync_lock
-            .run(|| super::push::commit_push(input, &slug, &message, overwrite.as_deref()))
+        github.sync_lock.run(|| {
+            super::push::commit_push(input, &slug, &message, overwrite.as_deref(), &|progress| {
+                // 画面が閉じているなどで送れなくてもPushは続ける
+                let _ = on_progress.send(progress);
+            })
+        })
     })?
     .ok_or_else(|| GithubError::NotLinked.into())
 }

@@ -28,6 +28,7 @@ import {
   type GithubSyncResult,
   type GithubWaitLogin,
   type PostsDir,
+  type PushProgress,
   type StoreError,
 } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
@@ -456,10 +457,11 @@ export default function App() {
     slug: string,
     message: string,
     overwrite: string | null,
+    onProgress: (progress: PushProgress) => void,
   ): Promise<CommitPushResult> => {
     let keptBranch: string | null = null
     try {
-      keptBranch = (await githubCommitPush(slug, message, overwrite)).keptBranch
+      keptBranch = (await githubCommitPush(slug, message, overwrite, onProgress)).keptBranch
     } catch (e) {
       const error = e as GithubError
       switch (error?.kind) {
@@ -801,7 +803,9 @@ export default function App() {
         <CommitDialog
           preview={commitTarget.preview}
           onCancel={closeCommit}
-          onCommit={(message, overwrite) => commitPush(commitTarget.slug, message, overwrite)}
+          onCommit={(message, overwrite, onProgress) =>
+            commitPush(commitTarget.slug, message, overwrite, onProgress)
+          }
           onPull={(branch) => commitPull(commitTarget.slug, branch)}
         />
       )}
