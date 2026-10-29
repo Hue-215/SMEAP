@@ -114,6 +114,7 @@ pub fn run() {
             github::commands::github_pull,
             github::commands::github_article_states,
             github::commands::github_article_state,
+            github::commands::github_discard_edit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

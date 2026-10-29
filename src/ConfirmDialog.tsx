@@ -8,8 +8,8 @@ interface ConfirmDialogProps {
   confirmLabel: string
   failedText: string
   onCancel: () => void
-  // 成功ならtrue。閉じるのは親が行う
-  onConfirm: () => Promise<boolean>
+  // 成功ならtrue。失敗ならfalseか、ダイアログに出す文言。閉じるのは親が行う
+  onConfirm: () => Promise<boolean | string>
   // キャンセルの左に置くボタン。確定の左にも置かれる
   secondary?: { label: string; onClick: () => void }
 }
@@ -24,15 +24,20 @@ export default function ConfirmDialog({
   secondary,
 }: ConfirmDialogProps) {
   const [state, setState] = useState<'idle' | 'running' | 'failed'>('idle')
+  const [failure, setFailure] = useState<string | null>(null)
   const running = state === 'running'
   const headingId = useId()
   const bodyId = useId()
 
   const confirm = () => {
     setState('running')
+    setFailure(null)
     void onConfirm().then(
-      (ok) => {
-        if (!ok) setState('failed')
+      (result) => {
+        if (result !== true) {
+          setFailure(typeof result === 'string' ? result : null)
+          setState('failed')
+        }
       },
       () => setState('failed'),
     )
@@ -53,7 +58,7 @@ export default function ConfirmDialog({
           <p id={bodyId}>{children}</p>
           {state === 'failed' && (
             <p role="alert" className="confirm-dialog-error">
-              {failedText}
+              {failure ?? failedText}
             </p>
           )}
         </div>

@@ -1,3 +1,4 @@
+pub mod article;
 pub mod auth;
 pub mod commands;
 pub mod config;
@@ -81,6 +82,17 @@ pub enum GithubError {
     PushRetryExceeded,
     #[error("the article is not found on GitHub")]
     ArticleNotFound,
+    #[error("the branch has moved")]
+    BranchMoved,
+    #[error("the slug is reserved by a renamed article")]
+    SlugReserved { slug: String },
+    #[error("the slug is already in use")]
+    SlugInUse { slug: String },
+    #[error("the article is in the base branch")]
+    InBaseBranch,
+    // 記録が無く、前回読み込んだリモートの様子に記事用のブランチがある(手元と食い違っている)
+    #[error("the article conflicts with GitHub")]
+    Conflicted,
 }
 
 impl GithubError {

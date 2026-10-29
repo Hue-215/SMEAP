@@ -509,29 +509,24 @@ pub fn open_github_page(app: AppHandle, page: String) -> Result<(), CommandError
 }
 
 // 連携していなければNone。世代は連携を確かめる前に読み、その後の切り替えをsync.rsで見つける
-fn with_sync_input<T>(
+fn with_sync_input<T, E>(
     app: &AppHandle,
     github: &GitHub,
     store: &Store,
     protect: Option<&str>,
-    run: impl FnOnce(&SyncInput<'_>) -> Result<T, GithubError>,
-) -> Result<Option<T>, CommandError> {
+    run: impl FnOnce(&SyncInput<'_>) -> Result<T, E>,
+) -> Result<Option<T>, CommandError>
+where
+    CommandError: From<E>,
+{
     let generation = store.generation();
     let Some(linked) = linked(app, store)? else {
         return Ok(None);
     };
     let token = github.manager.access_token(now())?;
     let input = SyncInput {
-        transport: github.transport.as_ref(),
-        token: &token,
-        now: now(),
-        data_dir: &linked.data_dir,
-        repo: &linked.repo,
-        basis: &linked.basis,
-        store,
-        generation,
-        posts_dir: &linked.posts_dir,
         protect,
+        ..input_of(&linked, github, &token, store, generation)
     };
     Ok(Some(run(&input)?))
 }
@@ -661,6 +656,112 @@ struct Linked {
     repo: RepoRef,
     basis: Basis,
     posts_dir: PathBuf,
+}
+
+fn input_of<'a>(
+    linked: &'a Linked,
+    github: &'a GitHub,
+    token: &'a str,
+    store: &'a Store,
+    generation: u64,
+) -> SyncInput<'a> {
+    SyncInput {
+        transport: github.transport.as_ref(),
+        token,
+        now: now(),
+        data_dir: &linked.data_dir,
+        repo: &linked.repo,
+        basis: &linked.basis,
+        store,
+        generation,
+        posts_dir: &linked.posts_dir,
+        protect: None,
+    }
+}
+
+pub(crate) fn create_article(
+    app: &AppHandle,
+    github: &GitHub,
+    store: &Store,
+    slug: &str,
+) -> Result<crate::store::Article, CommandError> {
+    match linked(app, store)? {
+        Some(linked) => super::article::create(
+            &linked.data_dir,
+            &linked.repo,
+            &linked.basis,
+            store,
+            &github.sync_lock,
+            slug,
+        ),
+        None => Ok(store.create_article(slug)?),
+    }
+}
+
+pub(crate) fn rename_article(
+    app: &AppHandle,
+    github: &GitHub,
+    store: &Store,
+    old: &str,
+    new: &str,
+) -> Result<crate::store::Article, CommandError> {
+    match linked(app, store)? {
+        Some(linked) => super::article::rename(
+            &linked.data_dir,
+            &linked.repo,
+            &linked.basis,
+            store,
+            &github.sync_lock,
+            old,
+            new,
+        ),
+        None => Ok(store.rename_article(old, new)?),
+    }
+}
+
+// 記事用のブランチが無ければ、トークンを取らない(期限切れの更新で通信し、オフラインで失敗するため)
+pub(crate) fn delete_article(
+    app: &AppHandle,
+    github: &GitHub,
+    store: &Store,
+    slug: &str,
+) -> Result<(), CommandError> {
+    let generation = store.generation();
+    let Some(linked) = linked(app, store)? else {
+        store.delete_article(slug)?;
+        return Ok(());
+    };
+    let state = super::state::read_state(
+        &super::state::state_path(&linked.data_dir, &linked.repo),
+        &linked.basis,
+    )?;
+    let token = if super::state::article_branch(&state, slug).is_some() {
+        Some(github.manager.access_token(now())?)
+    } else {
+        None
+    };
+    let input = input_of(
+        &linked,
+        github,
+        token.as_deref().unwrap_or_default(),
+        store,
+        generation,
+    );
+    super::article::delete(&input, &github.sync_lock, slug)
+}
+
+#[tauri::command(async)]
+pub fn github_discard_edit(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<(), CommandError> {
+    crate::store::validate_slug(&slug)?;
+    with_sync_input(&app, &github, &store, None, |input| {
+        super::article::discard(input, &github.sync_lock, &slug)
+    })?
+    .ok_or_else(|| GithubError::NotLinked.into())
 }
 
 // Repositoryを選んでいて、token.jsonがあり、保存層の向き先がそのRepositoryの記事のディレクトリのとき

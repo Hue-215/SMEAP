@@ -8,9 +8,14 @@ const formatRetryAt = (seconds: number) =>
 // 失敗の文言。開いている記事の保存に失敗したときと、GitHubとの通信の種類ごとに選ぶ。
 // どちらでもなければ、既存の失敗の文言
 export function githubErrorText(error: unknown): string {
+  return githubFailureText(error) ?? t('common.change_failed')
+}
+
+// githubErrorTextのうち、種類ごとの文言があるものだけ。無ければnull(呼び出し側の文言を使う)
+export function githubFailureText(error: unknown): string | null {
   if (error instanceof UnsavedArticleError) return t('settings.unsaved_article')
   const e = error as GithubError | undefined
-  if (e === undefined || typeof e.kind !== 'string') return t('common.change_failed')
+  if (e === undefined || typeof e.kind !== 'string') return null
   switch (e.kind) {
     case 'network':
       return t('common.github_network')
@@ -32,6 +37,18 @@ export function githubErrorText(error: unknown): string {
       return t('common.github_push_retry_exceeded')
     case 'articleNotFound':
       return t('common.github_article_not_found')
+    case 'branchMoved':
+      return t('common.github_branch_moved')
+    case 'slugReserved':
+      return t('common.github_slug_reserved')
+    case 'slugInUse':
+      return t('common.github_slug_in_use')
+    case 'inBaseBranch':
+      return t('common.github_in_base_branch')
+    case 'syncBusy':
+      return t('common.github_sync_busy')
+    case 'conflicted':
+      return t('common.github_conflicted')
     case 'nothingToCommit':
       return t('common.github_nothing_to_commit')
     case 'status':
@@ -40,6 +57,6 @@ export function githubErrorText(error: unknown): string {
     case 'urlNotAllowed':
       return t('common.github_failed')
     default:
-      return t('common.change_failed')
+      return null
   }
 }

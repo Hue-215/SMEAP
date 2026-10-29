@@ -293,6 +293,13 @@ struct Dirs {
     backup_dir: PathBuf,
 }
 
+// 改名の結果。失敗したときに元へ戻すための元の記事と(元, 先)の組も持つ
+struct RenamedArticle {
+    article: Article,
+    original: Article,
+    renames: Vec<(PathBuf, PathBuf)>,
+}
+
 fn dirs_of(posts_dir: &Path, backup_root: &Path) -> Result<Dirs, StoreError> {
     Ok(Dirs {
         posts_dir: posts_dir.to_path_buf(),
@@ -649,11 +656,43 @@ impl Store {
     }
 
     pub fn rename_article(&self, old: &str, new: &str) -> Result<Article, StoreError> {
-        validate_slug(new)?;
         let _guard = self.lock_guard();
+        self.rename_files(old, new).map(|renamed| renamed.article)
+    }
+
+    // 改名した後、ロックを持ったままafterを呼ぶ。afterが失敗したら改名を戻す
+    pub(crate) fn rename_article_then<T, E: From<StoreError>>(
+        &self,
+        old: &str,
+        new: &str,
+        after: impl FnOnce(&Article, &Path, &Path) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let _guard = self.lock_guard();
+        let renamed = self.rename_files(old, new).map_err(E::from)?;
+        let dirs = self.dirs.read().unwrap_or_else(PoisonError::into_inner);
+        match after(&renamed.article, &dirs.posts_dir, &dirs.assets_base) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                undo_renames(&renamed.renames);
+                // mdは新しいslugの参照に書き換わっているので、元の内容に戻す
+                if let Err(error) = self.write_md(&renamed.original) {
+                    eprintln!("Failed to restore the article after a failed rename: {error}");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn rename_files(&self, old: &str, new: &str) -> Result<RenamedArticle, StoreError> {
+        validate_slug(new)?;
         let mut article = self.read_article(old)?;
+        let original = article.clone();
         if old == new {
-            return Ok(article);
+            return Ok(RenamedArticle {
+                article,
+                original,
+                renames: Vec::new(),
+            });
         }
         let dest = self.md_path(new);
         check_absent(&dest, new)?;
@@ -705,13 +744,27 @@ impl Store {
             undo_renames(&renames);
             return Err(error);
         }
-        Ok(article)
+        Ok(RenamedArticle {
+            article,
+            original,
+            renames,
+        })
     }
 
     // 読めないmdの記事も消せるよう、read_articleはしない
     pub fn delete_article(&self, slug: &str) -> Result<(), StoreError> {
+        self.delete_article_with(slug, |_| Ok::<(), StoreError>(()))
+    }
+
+    // 消す前に、ロックを持ったままbeforeを呼ぶ(引数はmdを置くディレクトリ)。beforeが失敗したら消さない
+    pub(crate) fn delete_article_with<E: From<StoreError>>(
+        &self,
+        slug: &str,
+        before: impl FnOnce(&Path) -> Result<(), E>,
+    ) -> Result<(), E> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
+        before(&self.posts_dir())?;
         // 保存をしたことのない記事にはバックアップが無い
         let backup = self.backup_path(slug);
         remove_ignoring_not_found(fs::remove_file(&backup), &backup)?;
@@ -883,7 +936,9 @@ fn rename_all(renames: &[(PathBuf, PathBuf)]) -> Result<(), StoreError> {
 // 済んだrenameを逆順に戻す。戻しの失敗は無視する
 fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
     for (from, to) in renames.iter().rev() {
-        let _ = fs::rename(to, from);
+        if let Err(error) = fs::rename(to, from) {
+            eprintln!("Failed to restore {}: {error}", from.display());
+        }
     }
 }
 

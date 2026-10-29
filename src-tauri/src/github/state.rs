@@ -87,6 +87,8 @@ pub struct Record {
     pub md: String,
     pub assets: BTreeMap<String, AssetRecord>,
     pub applying: Option<Applying>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renamed_from: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +123,22 @@ impl State {
             skipped: Vec::new(),
         }
     }
+}
+
+// 記事用のブランチと、消してよいか確かめる先頭のコミット。記録にブランチが無くても、前回読み込んだ
+// リモートの様子にあればそれを使う(手元と食い違って記録を作らなかった記事)
+pub fn article_branch(state: &State, slug: &str) -> Option<(String, String)> {
+    if let Some(record) = state.articles.get(slug) {
+        if let Some(branch) = &record.branch {
+            return Some((branch.clone(), record.commit.clone()));
+        }
+    }
+    state
+        .remote
+        .branches
+        .iter()
+        .find(|(_, branch)| branch.slug == slug)
+        .map(|(name, branch)| (name.clone(), branch.commit.clone()))
 }
 
 fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
@@ -431,6 +449,7 @@ mod tests {
             md: "sha-md-a".to_string(),
             assets: asset_map(assets),
             applying: None,
+            renamed_from: None,
         }
     }
 
@@ -783,6 +802,47 @@ mod tests {
         // 置き換え(applyingのmdがSome)の途中でmdが無ければ変更あり
         let local = local_of(None, &[("01.png", "sha-png-c")]);
         assert!(is_dirty(Some(&record), &local));
+    }
+
+    #[test]
+    fn renamedFromの無い古いstate_jsonを読める() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"basis":{"baseBranch":"main","branchFormat":"blog/{slug}","postsPath":"src/content/blog"},"fetchedAt":null,"remote":{"base":null,"branches":{}},"articles":{"post":{"branch":null,"commit":"commit-1","md":"sha-md-a","assets":{},"applying":null}},"conflicts":[],"skipped":[]}"#,
+        )
+        .unwrap();
+
+        let state = read_state(&path, &basis()).unwrap();
+        let record = &state.articles["post"];
+        assert_eq!(record.commit, "commit-1");
+        assert_eq!(record.renamed_from, None);
+    }
+
+    #[test]
+    fn renamedFromは読み書きの往復で残り鍵はrenamedFrom() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        let mut state = State::empty(basis());
+        let mut record = record_of(Some("blog/new"), &[]);
+        record.renamed_from = Some("old".to_string());
+        state.articles = BTreeMap::from([("new".to_string(), record.clone())]);
+
+        write_state(&path, &state).unwrap();
+        assert_eq!(read_state(&path, &basis()).unwrap(), state);
+
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["articles"]["new"]["renamedFrom"], "old");
+        // 無いときは鍵を出さない
+        let mut plain = record;
+        plain.renamed_from = None;
+        assert!(
+            serde_json::to_value(&plain).unwrap()["renamedFrom"]
+                .as_str()
+                .is_none(),
+            "renamedFromの鍵は無いはず"
+        );
     }
 
     #[test]

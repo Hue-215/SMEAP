@@ -23,7 +23,7 @@ pub struct Remote<'a> {
 }
 
 // RemoteSnapshotから記事のリモートの内容を選ぶ(記事用のブランチ→ベース)
-pub fn remote_of<'a>(snapshot: &'a RemoteSnapshot, slug: &str) -> Option<Remote<'a>> {
+fn remote_of<'a>(snapshot: &'a RemoteSnapshot, slug: &str) -> Option<Remote<'a>> {
     for (name, branch) in &snapshot.branches {
         if branch.slug == slug {
             return Some(Remote {
@@ -39,6 +39,31 @@ pub fn remote_of<'a>(snapshot: &'a RemoteSnapshot, slug: &str) -> Option<Remote<
             commit: &base.commit,
             files,
         })
+    })
+}
+
+// 記録の記事のリモートの内容。slugを変えた記事は元のslugの記事を記録のブランチからだけ選び、
+// ベースは見ない(古いブランチが消えたときにベースへ戻さないため)
+fn remote_for<'a>(
+    snapshot: &'a RemoteSnapshot,
+    record: Option<&Record>,
+    slug: &str,
+) -> Option<Remote<'a>> {
+    let Some(record) = record else {
+        return remote_of(snapshot, slug);
+    };
+    let Some(renamed_from) = &record.renamed_from else {
+        return remote_of(snapshot, slug);
+    };
+    let branch_name = record.branch.as_deref()?;
+    let (name, branch) = snapshot.branches.get_key_value(branch_name)?;
+    if &branch.slug != renamed_from {
+        return None;
+    }
+    Some(Remote {
+        branch: Some(name.as_str()),
+        commit: &branch.commit,
+        files: &branch.article,
     })
 }
 
@@ -70,12 +95,17 @@ fn same_content(record: &Record, files: &ArticleFiles) -> bool {
 }
 
 // リモートの内容を、元にする記録にする。fetchedは、手元にある画像のうちSHAが同じものだけにする
-fn make_record(remote: Remote<'_>, local: Option<&LocalFiles>) -> Record {
+fn make_record(
+    remote: Remote<'_>,
+    local: Option<&LocalFiles>,
+    renamed_from: Option<String>,
+) -> Record {
     Record {
         branch: remote.branch.map(str::to_string),
         commit: remote.commit.to_string(),
         md: remote.files.md.clone(),
         applying: None,
+        renamed_from,
         assets: remote
             .files
             .assets
@@ -96,15 +126,16 @@ fn make_record(remote: Remote<'_>, local: Option<&LocalFiles>) -> Record {
 
 pub fn decide(record: Option<&Record>, remote: Option<Remote<'_>>, local: &LocalFiles) -> Decision {
     let local_empty = local.md.is_none() && local.assets.is_empty();
+    let renamed_from = record.and_then(|record| record.renamed_from.clone());
     match (record, remote) {
         (None, None) => Decision::Nothing,
         (None, Some(remote)) => {
             if local_empty {
                 // 手元に記事が無いので、取り込む
-                Decision::Replace(make_record(remote, None))
+                Decision::Replace(make_record(remote, None, None))
             } else if state::same_as_remote(None, local, remote.files) {
                 // 手元の内容がリモートと同じなら、記録を作る
-                Decision::Record(make_record(remote, Some(local)))
+                Decision::Record(make_record(remote, Some(local), None))
             } else {
                 Decision::Conflict
             }
@@ -112,11 +143,11 @@ pub fn decide(record: Option<&Record>, remote: Option<Remote<'_>>, local: &Local
         (Some(record), Some(remote)) => {
             // 取り込みの途中で落ち、手元にまだ何も無い
             if record.applying.is_some() && local_empty {
-                return Decision::Replace(make_record(remote, None));
+                return Decision::Replace(make_record(remote, None, renamed_from));
             }
             if record.branch.is_some() && remote.branch.is_none() {
                 // 元にした記事用のブランチが消えてベースに戻った。手元に変更があれば編集中のまま残す
-                let new_record = make_record(remote, Some(local));
+                let new_record = make_record(remote, Some(local), renamed_from);
                 return if state::is_dirty(Some(record), local) {
                     Decision::Record(new_record)
                 } else {
@@ -137,12 +168,12 @@ pub fn decide(record: Option<&Record>, remote: Option<Remote<'_>>, local: &Local
             if state::is_dirty(Some(record), local) {
                 if state::same_as_remote(Some(record), local, remote.files) {
                     // 手元はリモートと同じなので、記録だけ直す
-                    Decision::Record(make_record(remote, Some(local)))
+                    Decision::Record(make_record(remote, Some(local), renamed_from))
                 } else {
                     Decision::Conflict
                 }
             } else {
-                Decision::Replace(make_record(remote, Some(local)))
+                Decision::Replace(make_record(remote, Some(local), renamed_from))
             }
         }
         (Some(record), None) => {
@@ -209,12 +240,31 @@ pub fn sync(input: &SyncInput<'_>) -> Result<SyncResult, GithubError> {
     )?;
 
     // 読めない記事はこの回は何も替えない(リモートに無いと見なして手元を消さないため)
-    let skipped_slugs: BTreeSet<String> = read
+    let mut skipped_slugs: BTreeSet<String> = read
         .skipped
         .iter()
         .map(|skipped| skipped.slug.clone())
         .collect();
-    // 扱いを決める記事のslug。リモートに有るものと、覚えた記録のあるもの
+    // 元のslugの記事が読めなければ、slugを変えた記事もこの回は扱わない(記録を消さないため)
+    let renamed_skipped: Vec<String> = state
+        .articles
+        .iter()
+        .filter(|(_, record)| {
+            record
+                .renamed_from
+                .as_ref()
+                .is_some_and(|old| skipped_slugs.contains(old))
+        })
+        .map(|(slug, _)| slug.clone())
+        .collect();
+    skipped_slugs.extend(renamed_skipped);
+    // 扱いを決める記事のslug。リモートに有るものと、覚えた記録のあるもの。
+    // ほかの記録の元のslug(renamedFrom)は手元に作らない
+    let reserved: BTreeSet<String> = state
+        .articles
+        .values()
+        .filter_map(|record| record.renamed_from.clone())
+        .collect();
     let slugs: BTreeSet<String> = read
         .snapshot
         .branches
@@ -227,13 +277,13 @@ pub fn sync(input: &SyncInput<'_>) -> Result<SyncResult, GithubError> {
                 .flat_map(|base| base.articles.keys().cloned()),
         )
         .chain(state.articles.keys().cloned())
-        .filter(|slug| !skipped_slugs.contains(slug))
+        .filter(|slug| !skipped_slugs.contains(slug) && !reserved.contains(slug))
         .collect();
 
     // 記録と違うmdの中身を取り出す(この時点では、置き換えるかどうかは決めない)
     let mut md_bodies: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for slug in &slugs {
-        let Some(item) = remote_of(&read.snapshot, slug) else {
+        let Some(item) = remote_for(&read.snapshot, state.articles.get(slug), slug) else {
             continue;
         };
         // 置き換えの途中で落ちた記事は、手元が記録のmdと違うことがあるので取り直す
@@ -266,8 +316,8 @@ pub fn sync(input: &SyncInput<'_>) -> Result<SyncResult, GithubError> {
         let mut deferred = Vec::new();
         for slug in &slugs {
             let local = state::local_files(posts_dir, assets_base, slug)?;
-            let remote = remote_of(&read.snapshot, slug);
             let record = state.articles.get(slug);
+            let remote = remote_for(&read.snapshot, record, slug);
             let mut decision = decide(record, remote, &local);
             if input.protect == Some(slug.as_str())
                 && matches!(decision, Decision::Replace(_) | Decision::RemoveLocal)
@@ -432,11 +482,11 @@ pub(crate) fn write_synced(
     write_file(&state::synced_path(input.data_dir, input.repo, slug), body)
 }
 
-fn remove_synced(input: &SyncInput<'_>, slug: &str) -> Result<(), GithubError> {
+pub(crate) fn remove_synced(input: &SyncInput<'_>, slug: &str) -> Result<(), GithubError> {
     remove_file(&state::synced_path(input.data_dir, input.repo, slug))
 }
 
-fn remove_file(path: &Path) -> Result<(), GithubError> {
+pub(crate) fn remove_file(path: &Path) -> Result<(), GithubError> {
     if let Err(error) = std::fs::remove_file(path) {
         if error.kind() != std::io::ErrorKind::NotFound {
             return Err(GithubError::io(path, error));
@@ -446,7 +496,7 @@ fn remove_file(path: &Path) -> Result<(), GithubError> {
 }
 
 // 手元の画像を、リモートの記録に合わせて残す・消す。下のディレクトリのファイルは手元で扱わない
-fn rewrite_assets(
+pub(crate) fn rewrite_assets(
     assets_base: &Path,
     slug: &str,
     local: &LocalFiles,
@@ -486,8 +536,11 @@ fn remove_article(
 pub struct SyncLock(Mutex<()>);
 
 impl SyncLock {
-    pub fn run<T>(&self, f: impl FnOnce() -> Result<T, GithubError>) -> Result<T, GithubError> {
-        let _guard = self.0.try_lock().map_err(|_| GithubError::SyncBusy)?;
+    pub fn run<T, E: From<GithubError>>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        let _guard = self
+            .0
+            .try_lock()
+            .map_err(|_| E::from(GithubError::SyncBusy))?;
         f()
     }
 }
@@ -567,6 +620,7 @@ pub struct ArticleState {
     pub category: Category,
     pub dirty: bool,
     pub conflict: bool,
+    pub branch: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -582,11 +636,15 @@ pub struct ArticleStates {
 }
 
 fn article_state_of(state: &State, slug: &str, local: &LocalFiles) -> ArticleState {
-    let dirty = state::is_dirty(state.articles.get(slug), local);
+    let record = state.articles.get(slug);
+    // 元のslugを持つ記事は、中身が記録と同じでもcommitしていない変更があるものとして扱う
+    let dirty = state::is_dirty(record, local)
+        || record.is_some_and(|record| record.renamed_from.is_some());
     ArticleState {
         category: state::category(&state.remote, slug, dirty),
         dirty,
         conflict: state.conflicts.contains(slug),
+        branch: state::article_branch(state, slug).is_some(),
     }
 }
 
@@ -679,6 +737,7 @@ mod tests {
         RouteTransport,
     };
     use crate::github::http::{Method, Response};
+    use crate::github::push;
     use crate::github::state::{AssetRecord, BaseSnapshot, BranchSnapshot, Skipped, State};
     use crate::store::Store;
 
@@ -719,7 +778,7 @@ mod tests {
         _tmp: TempDir,
         data_dir: PathBuf,
         store: Arc<Store>,
-        transport: RouteTransport,
+        transport: Arc<RouteTransport>,
         repo_of: RepoRef,
         basis_of: Basis,
         posts_dir: PathBuf,
@@ -745,7 +804,7 @@ mod tests {
                 synced_dir: data_dir.join(repo_part).join("synced"),
                 data_dir,
                 store,
-                transport: RouteTransport::new(),
+                transport: Arc::new(RouteTransport::new()),
                 repo_of,
                 basis_of,
             }
@@ -758,7 +817,7 @@ mod tests {
         // syncとfetch_imagesに渡す入力
         fn input(&self) -> SyncInput<'_> {
             SyncInput {
-                transport: &self.transport,
+                transport: self.transport.as_ref(),
                 token: TOKEN,
                 now: NOW,
                 data_dir: &self.data_dir,
@@ -883,6 +942,7 @@ mod tests {
                 })
                 .collect(),
             applying: None,
+            renamed_from: None,
         }
     }
 
@@ -2620,6 +2680,7 @@ mod tests {
                 md: blob_sha(b"post\n"),
                 assets: BTreeMap::new(),
                 applying: None,
+                renamed_from: None,
             },
         );
         state.articles.insert(
@@ -2630,6 +2691,7 @@ mod tests {
                 md: blob_sha(b"base\n"),
                 assets: BTreeMap::new(),
                 applying: None,
+                renamed_from: None,
             },
         );
         state.conflicts.insert("edit".to_string());
@@ -2695,7 +2757,317 @@ mod tests {
                 category: Category::Drafting,
                 dirty: true,
                 conflict: false,
+                branch: false,
             }
         );
+    }
+
+    #[test]
+    fn renamedFromのある記録は中身が同じでも変更ありに見える() {
+        let test = SyncTest::new();
+        let _repo = test.post_synced();
+        test.edit_state(|state| {
+            state["articles"]["post"]["renamedFrom"] = Value::String("old".to_string());
+        });
+        let state = state::read_state(&test.state_path, &test.basis_of).unwrap();
+        let record = &state.articles["post"];
+        let local = state::local_files(&test.posts_dir, &test.assets_base, "post").unwrap();
+        // is_dirtyは中身だけで決まる
+        assert!(!state::is_dirty(Some(record), &local));
+        assert!(test.article_state("post").unwrap().dirty);
+    }
+
+    #[test]
+    fn 記事の状態は記事用のブランチのある記録だけbranchをtrueにする() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", &[("src/content/blog/post.md", MD)]);
+        repo.branch(
+            &test.transport,
+            "blog/post",
+            &[("src/content/blog/post.md", BRANCH_MD)],
+        );
+        test.sync().unwrap();
+        assert!(test.article_state("post").unwrap().branch);
+        // 手元だけの記事
+        fs::write(test.md_path("draft"), "draft\n").unwrap();
+        assert!(!test.article_state("draft").unwrap().branch);
+        // 記録のブランチがNone
+        let test = SyncTest::new();
+        let _repo = test.post_synced();
+        assert!(!test.article_state("post").unwrap().branch);
+    }
+
+    // #66: slugの変更 ----------------------------------------------------------
+
+    const README: &[u8] = b"readme\n";
+    impl SyncTest {
+        // ベースに記事が無く、記事用のブランチ blog/{slug} にだけ記事がある。読み込み済み
+        fn branch_article_synced(
+            &self,
+            slug: &str,
+            md: &[u8],
+            images: &[(&str, &[u8])],
+        ) -> FakeRepo {
+            let repo = self.new_repo();
+            repo.branch(&self.transport, "main", &[("README.md", README)]);
+            let md_path = format!("{POSTS_PATH}/{slug}.md");
+            let mut files: Vec<(String, &[u8])> = vec![(md_path, md)];
+            for (name, content) in images {
+                files.push((format!("src/assets/{slug}/{name}"), *content));
+            }
+            let borrowed: Vec<(&str, &[u8])> = files
+                .iter()
+                .map(|(path, body)| (path.as_str(), *body))
+                .collect();
+            repo.branch(&self.transport, &format!("blog/{slug}"), &borrowed);
+            self.sync().unwrap();
+            repo
+        }
+
+        // slugを変えた後の記録と手元を作る(renameの実装に頼らず、記録と手元を直接動かす)
+        fn rename_local(&self, old: &str, new: &str) {
+            fs::rename(self.md_path(old), self.md_path(new)).unwrap();
+            let old_assets = self.assets_dir(old);
+            if old_assets.exists() {
+                fs::rename(old_assets, self.assets_dir(new)).unwrap();
+            }
+            if self.synced_path(old).exists() {
+                fs::rename(self.synced_path(old), self.synced_path(new)).unwrap();
+            }
+            self.edit_state(|state| {
+                let mut record = state["articles"][old].clone();
+                record["renamedFrom"] = Value::String(old.to_string());
+                state["articles"][new] = record;
+                state["articles"].as_object_mut().unwrap().remove(old);
+            });
+        }
+
+        fn post_bodies(&self, url_part: &str) -> Vec<Value> {
+            self.transport
+                .requests()
+                .iter()
+                .filter(|request| request.method == Method::Post && request.url.contains(url_part))
+                .map(|request| serde_json::from_slice(request.body.as_deref().unwrap()).unwrap())
+                .collect()
+        }
+    }
+
+    #[test]
+    fn renamedFromのある記録は古いslugの記事と比べてcommitだけ進める() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[("01.png", PNG)]);
+        test.rename_local("old", "new");
+        let md_before = fs::read(test.md_path("new")).unwrap();
+        // ほかの端末が、中身は同じまま古いブランチにコミットを足す
+        repo.branch(
+            &test.transport,
+            "blog/old",
+            &[
+                ("src/content/blog/old.md", BRANCH_MD),
+                ("src/assets/old/01.png", PNG),
+            ],
+        );
+        let head = repo.head("blog/old");
+
+        test.sync().unwrap();
+
+        let state = test.state();
+        let record = &state["articles"]["new"];
+        assert_eq!(record["commit"], head);
+        assert_eq!(record["branch"], "blog/old");
+        assert_eq!(record["md"], blob_sha(BRANCH_MD));
+        // 元のslugを持ち続け、手元は書き換えない
+        assert_eq!(record["renamedFrom"], "old");
+        assert_eq!(fs::read(test.md_path("new")).unwrap(), md_before);
+    }
+
+    #[test]
+    fn 元のslugの記事は記録のブランチにあっても手元に作らない() {
+        let test = SyncTest::new();
+        let _repo = test.branch_article_synced("old", BRANCH_MD, &[]);
+        test.rename_local("old", "new");
+
+        test.sync().unwrap();
+
+        assert!(!test.md_path("old").exists());
+        assert!(test.state()["articles"]["old"].is_null());
+        assert!(test.md_path("new").exists());
+    }
+
+    #[test]
+    fn 元のslugの記事はベースにあっても手元に作らない() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[]);
+        test.rename_local("old", "new");
+        // ベースにも元のslugの記事がある
+        repo.branch(
+            &test.transport,
+            "main",
+            &[("README.md", README), ("src/content/blog/old.md", MD)],
+        );
+
+        test.sync().unwrap();
+
+        assert!(!test.md_path("old").exists());
+        assert!(test.state()["articles"]["old"].is_null());
+        assert!(test.md_path("new").exists());
+    }
+
+    #[test]
+    fn 記録のブランチが消えたら記録とsyncedを消し新しいslugの記事は残す() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[]);
+        test.rename_local("old", "new");
+        repo.delete_branch("blog/old");
+
+        test.sync().unwrap();
+
+        assert_eq!(fs::read(test.md_path("new")).unwrap(), BRANCH_MD);
+        assert!(test.state()["articles"]["new"].is_null());
+        assert!(!test.synced_path("new").exists());
+    }
+
+    #[test]
+    fn 古いブランチが進み手元が記録と同じなら新しいslugに置き換える() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[]);
+        test.rename_local("old", "new");
+        // ほかの端末が古いブランチのmdを替える
+        repo.branch(
+            &test.transport,
+            "blog/old",
+            &[("src/content/blog/old.md", MD2)],
+        );
+
+        test.sync().unwrap();
+
+        assert_eq!(fs::read(test.md_path("new")).unwrap(), MD2);
+        assert_eq!(fs::read(test.synced_path("new")).unwrap(), MD2);
+        assert!(!test.md_path("old").exists());
+        let record = &test.state()["articles"]["new"];
+        assert_eq!(record["md"], blob_sha(MD2));
+        assert_eq!(record["renamedFrom"], "old");
+    }
+
+    #[test]
+    fn 古いブランチが進み手元も変えていれば食い違いの印を付けて書き換えない() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[]);
+        test.rename_local("old", "new");
+        fs::write(test.md_path("new"), "edited by user\n").unwrap();
+        let record_before = test.state()["articles"]["new"].clone();
+        repo.branch(
+            &test.transport,
+            "blog/old",
+            &[("src/content/blog/old.md", MD2)],
+        );
+
+        test.sync().unwrap();
+
+        assert_eq!(
+            fs::read_to_string(test.md_path("new")).unwrap(),
+            "edited by user\n"
+        );
+        let state = test.state();
+        assert_eq!(state["articles"]["new"], record_before);
+        assert!(state["conflicts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|slug| slug == "new"));
+    }
+
+    #[test]
+    fn ブランチが消えた後のCommitとPushはベースを親に新しいslugのブランチを作る() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[("01.png", PNG)]);
+        test.rename_local("old", "new");
+        repo.delete_branch("blog/old");
+        test.sync().unwrap();
+        assert!(test.state()["articles"]["new"].is_null());
+        // 手元に画像を置いてからPushする
+        test.write_image("new/01.png", PNG);
+        repo.accept_writes(&test.transport);
+        let base = repo.head("main");
+
+        let result = push::commit_push(&test.input(), "new", "更新", None).unwrap();
+
+        assert_eq!(result.branch, "blog/new");
+        // 親はベースの先頭
+        let commits = test.post_bodies("/git/commits");
+        assert_eq!(commits[0]["parents"], serde_json::json!([base]));
+        // ツリーには新しいslugのファイルだけが入り、古いslugのパスは足さない
+        let entries = test.post_bodies("/git/trees")[0]["tree"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let paths: Vec<&str> = entries
+            .iter()
+            .filter(|entry| !entry["sha"].is_null())
+            .map(|entry| entry["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            paths
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["src/assets/new/01.png", "src/content/blog/new.md"])
+        );
+        assert!(
+            !entries.iter().any(|entry| entry["path"]
+                .as_str()
+                .is_some_and(|path| path.contains("/old"))),
+            "{entries:?}"
+        );
+        // GitHub上にも古いslugのパスは無い
+        let files = repo.tree_files("blog/new");
+        assert!(files.contains_key("src/content/blog/new.md"));
+        assert!(files.contains_key("src/assets/new/01.png"));
+        assert!(!files.contains_key("src/content/blog/old.md"));
+        // 続く読み込みで変更無し
+        test.sync().unwrap();
+        assert!(!test.article_state("new").unwrap().dirty);
+    }
+
+    #[test]
+    fn renamedFromのある記録は同じslugのベースの記事があってもベースを見ない() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[]);
+        test.rename_local("old", "new");
+        // ベースに、新しいslugと同じslugの記事ができる
+        repo.branch(
+            &test.transport,
+            "main",
+            &[("README.md", README), ("src/content/blog/new.md", MD2)],
+        );
+        repo.delete_branch("blog/old");
+
+        test.sync().unwrap();
+
+        // ベースの内容に戻さず、記録を消して手元を残す
+        assert_eq!(fs::read(test.md_path("new")).unwrap(), BRANCH_MD);
+        assert!(test.state()["articles"]["new"].is_null());
+    }
+
+    #[test]
+    fn 元のslugの記事が読めなければslugを変えた記事の記録を残す() {
+        let test = SyncTest::new();
+        let repo = test.branch_article_synced("old", BRANCH_MD, &[("01.png", PNG)]);
+        test.rename_local("old", "new");
+        let record_before = test.state()["articles"]["new"].clone();
+        // 古いブランチのmdがblobでなくなる(サブモジュール)
+        repo.branch_with_entries(
+            &test.transport,
+            "blog/old",
+            &[("src/assets/old/01.png", PNG)],
+            &[("src/content/blog/old.md", "160000", "commit")],
+        );
+
+        test.sync().unwrap();
+
+        assert_eq!(test.state()["articles"]["new"], record_before);
+        assert!(test.md_path("new").exists());
+        assert!(!test.md_path("old").exists());
     }
 }

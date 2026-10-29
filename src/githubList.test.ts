@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ArticleSummary } from './api'
 import {
+  deletesBranch,
   fetchLineText,
   groupArticles,
+  rowMenuActions,
   type GithubArticleStates,
   type GithubCategory,
 } from './githubList'
@@ -14,7 +16,9 @@ function article(slug: string, pub_date: string): ArticleSummary {
 }
 
 function statesOf(
-  articles: Partial<Record<string, { category?: GithubCategory; dirty?: boolean; conflict?: boolean }>>,
+  articles: Partial<
+    Record<string, { category?: GithubCategory; dirty?: boolean; conflict?: boolean; branch?: boolean }>
+  >,
   rest: Partial<GithubArticleStates> = {},
 ): GithubArticleStates {
   return {
@@ -28,6 +32,7 @@ function statesOf(
           category: item?.category ?? 'drafting',
           dirty: item?.dirty ?? false,
           conflict: item?.conflict ?? false,
+          branch: item?.branch ?? false,
         },
       ]),
     ) as GithubArticleStates['articles'],
@@ -99,7 +104,7 @@ describe('groupArticles', () => {
         rows: [
           {
             article: articles[0],
-            state: { category: 'drafting', dirty: true, conflict: false },
+            state: { category: 'drafting', dirty: true, conflict: false, branch: false },
           },
         ],
       },
@@ -139,5 +144,47 @@ describe('fetchLineText', () => {
 
   it('一度も読めていなければ読み込めなかったことだけを出す', () => {
     expect(fetchLineText('owner/repo', null, true)).toBe('読み込めませんでした')
+  })
+})
+
+describe('rowMenuActions', () => {
+  it('連携していなければslugの変更と削除', () => {
+    expect(rowMenuActions(null, 'a-post')).toEqual(['rename', 'delete'])
+  })
+
+  it('分類ごとのメニュー', () => {
+    const states = statesOf({
+      draft: { category: 'drafting' },
+      edit: { category: 'editing' },
+      published: { category: 'published' },
+    })
+    expect(rowMenuActions(states, 'draft')).toEqual(['rename', 'delete'])
+    expect(rowMenuActions(states, 'edit')).toEqual(['discard'])
+    expect(rowMenuActions(states, 'published')).toEqual([])
+  })
+
+  it('state.jsonが読めないときと状態の無い記事は変更と削除を出す', () => {
+    const unreadable = statesOf({ published: { category: 'published' } }, { stateUnreadable: true })
+    expect(rowMenuActions(unreadable, 'published')).toEqual(['rename', 'delete'])
+    // 一覧の後に作った記事。分類が分からないのでRust側に断らせる
+    expect(rowMenuActions(statesOf({}), 'unknown')).toEqual(['rename', 'delete'])
+  })
+})
+
+describe('deletesBranch', () => {
+  it('記事用のbranchがあればtrue', () => {
+    const states = statesOf({
+      drafted: { category: 'drafting', branch: true },
+      edited: { category: 'editing', branch: true },
+    })
+    expect(deletesBranch(states, 'drafted')).toBe(true)
+    expect(deletesBranch(states, 'edited')).toBe(true)
+  })
+
+  it('連携していない・状態の無い記事・branchの無い記事はfalse', () => {
+    const states = statesOf({ published: { category: 'published', branch: false } })
+    expect(deletesBranch(null, 'published')).toBe(false)
+    expect(deletesBranch(states, 'published')).toBe(false)
+    expect(deletesBranch(states, 'unknown')).toBe(false)
   })
 })

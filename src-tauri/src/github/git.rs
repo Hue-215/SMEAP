@@ -284,6 +284,28 @@ pub fn update_ref(
     Ok(())
 }
 
+// ブランチを消す。無いrefの削除は422になることがあるので、204以外はStatusとして返し、
+// 消えたかどうかは呼び出し側が先頭を読み直して決める
+pub fn delete_ref(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    branch: &str,
+) -> Result<(), GithubError> {
+    let mut path = vec!["refs", "heads"];
+    path.extend(branch.split('/'));
+    let url = git_url(repo, &path, &[])?;
+    let request = api_request(Method::Delete, &url, token, None)?;
+    let response = send_raw(t, &request, now)?;
+    if response.status != 204 {
+        return Err(GithubError::Status {
+            status: response.status,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
@@ -739,6 +761,63 @@ mod tests {
             create_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a", "sha-c"),
             Err(GithubError::Status { status: 422 })
         ));
+    }
+
+    #[test]
+    fn delete_refはbranchをsegmentごとにエンコードしてDELETEを送る() {
+        // /はsegmentの区切りのままで、#のような文字はpercentエンコードされる
+        let target = url_of(
+            &[
+                "repos", "owner", "blog", "git", "refs", "heads", "blog", "a#b",
+            ],
+            &[],
+        );
+        let transport = RouteTransport::new();
+        transport.on(
+            Method::Delete,
+            &target,
+            Box::new(|_| {
+                Ok(Response {
+                    status: 204,
+                    headers: Vec::new(),
+                    body: Vec::new(),
+                })
+            }),
+        );
+
+        delete_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a#b").unwrap();
+
+        let request = last_request(&transport);
+        assert_eq!(request.method, Method::Delete);
+        assert_eq!(request.url, target);
+        assert!(request.body.is_none());
+    }
+
+    #[test]
+    fn delete_refは204以外をStatusにする() {
+        // 無いrefの削除は422になることがあり、404もあり得る
+        for status in [422, 404] {
+            let target = url_of(
+                &[
+                    "repos", "owner", "blog", "git", "refs", "heads", "blog", "a",
+                ],
+                &[],
+            );
+            let transport = RouteTransport::new();
+            transport.json(
+                Method::Delete,
+                &target,
+                status,
+                serde_json::json!({ "message": "Reference does not exist" }),
+            );
+            assert!(
+                matches!(
+                    delete_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a"),
+                    Err(GithubError::Status { status: error }) if error == status
+                ),
+                "Statusのはず: {status}"
+            );
+        }
     }
 
     #[test]

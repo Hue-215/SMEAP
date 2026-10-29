@@ -31,6 +31,12 @@ const failureMessages = new Map<string, MessageKey>([
   ['alreadyExists', 'slug_dialog.already_exists'],
   ['invalidSlug', 'slug_dialog.invalid'],
   ['notFound', 'slug_dialog.not_found'],
+  ['slugReserved', 'common.github_slug_reserved'],
+  ['slugInUse', 'common.github_slug_in_use'],
+  ['syncBusy', 'common.github_sync_busy'],
+  ['stateUnreadable', 'common.github_state_unreadable'],
+  ['inBaseBranch', 'common.github_in_base_branch'],
+  ['conflicted', 'common.github_conflicted'],
 ])
 
 export default function SlugDialog({ mode, destination, onDone, onCancel }: SlugDialogProps) {
