@@ -570,22 +570,145 @@ pub fn wanted_images(
         .collect())
 }
 
-// 取れなかった件数を返す。記録が無い記事では0。ログインの切れ・通信の失敗などは、残りも取れないのでErrにする
+// 本文の`![...](参照)`の参照を順に返す。`![a](x "題")`の題と、`![a](<x>)`の`<>`は除く
+fn body_image_refs(body: &str) -> Vec<&str> {
+    let mut refs = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("![") {
+        let after_alt = &rest[start + 2..];
+        // `](`が無ければ、後ろの`![`にも無い。探し直すと本文の長さの二乗かかる
+        let Some(alt_end) = after_alt.find("](") else {
+            break;
+        };
+        let after_ref = &after_alt[alt_end + 2..];
+        let Some(end) = after_ref.find(')') else {
+            break;
+        };
+        let target = &after_ref[..end];
+        let reference = match target.strip_prefix('<') {
+            Some(rest) => rest.split('>').next().unwrap_or(""),
+            None => target.split_whitespace().next().unwrap_or(""),
+        };
+        refs.push(reference);
+        rest = &after_ref[end + 1..];
+    }
+    refs
+}
+
+// mdが参照している共有の画像の名前(heroImageと本文)
+fn shared_names(slug: &str, content: &str) -> BTreeSet<String> {
+    let article = crate::store::parse_md(slug, content);
+    let mut names = BTreeSet::new();
+    if let Some(hero) = &article.fields.hero_image {
+        if hero.shared {
+            names.insert(hero.name.clone());
+        }
+    }
+    for reference in body_image_refs(&article.fields.body) {
+        if let Some(name) = crate::store::shared_image_name(reference) {
+            names.insert(name.to_string());
+        }
+    }
+    names
+}
+
+fn base_shared_assets(state: &state::State) -> Option<&BTreeMap<String, String>> {
+    state
+        .remote
+        .base
+        .as_ref()
+        .and_then(|base| base.shared_assets.as_ref())
+}
+
+// pathに中身のSHAがshaのファイルがあるか
+fn has_blob(path: &Path, sha: &str) -> Result<bool, GithubError> {
+    match std::fs::read(path) {
+        Ok(content) => Ok(state::blob_sha(&content) == sha),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(GithubError::io(path, error)),
+    }
+}
+
+// 参照している共有の画像のうち、ベースにあって手元に無いかSHAが違うもの。名前とSHA
+pub fn wanted_shared_images(
+    data_dir: &Path,
+    repo: &RepoRef,
+    basis: &Basis,
+    store: &Store,
+    slug: &str,
+) -> Result<Vec<(String, String)>, GithubError> {
+    let state = state::read_state(&state::state_path(data_dir, repo), basis)?;
+    let Some(shared_assets) = base_shared_assets(&state) else {
+        return Ok(Vec::new());
+    };
+    // 長いmdでもほかのストアの操作を待たせないよう、解析はロックを外してから行う
+    let content = store.with_lock(|posts_dir, _| {
+        let path = posts_dir.join(format!("{slug}.md"));
+        match std::fs::read(&path) {
+            Ok(content) => Ok(Some(content)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(GithubError::io(&path, error)),
+        }
+    })?;
+    let names = content
+        .map(|content| shared_names(slug, &String::from_utf8_lossy(&content)))
+        .unwrap_or_default();
+    let assets_base = store.assets_base();
+    let mut wanted = Vec::new();
+    for name in names {
+        let Some(sha) = shared_assets.get(&name) else {
+            continue;
+        };
+        if !has_blob(&assets_base.join(&name), sha)? {
+            wanted.push((name, sha.clone()));
+        }
+    }
+    Ok(wanted)
+}
+
+// 記事の画像か共有の画像を取りに行くものがあるか
+pub fn has_wanted_images(
+    data_dir: &Path,
+    repo: &RepoRef,
+    basis: &Basis,
+    store: &Store,
+    slug: &str,
+) -> Result<bool, GithubError> {
+    Ok(
+        !wanted_images(data_dir, repo, basis, store, slug)?.is_empty()
+            || !wanted_shared_images(data_dir, repo, basis, store, slug)?.is_empty(),
+    )
+}
+
+// 取れなければNone。ログインの切れ・通信の失敗などは、残りも取れないのでErrにする
+fn fetch_blob(
+    input: &SyncInput<'_>,
+    sha: &str,
+    what: &str,
+    slug: &str,
+    name: &str,
+) -> Result<Option<Vec<u8>>, GithubError> {
+    match super::git::blob(input.transport, input.token, input.now, input.repo, sha) {
+        Ok(content) => Ok(Some(content)),
+        Err(error @ (GithubError::Status { .. } | GithubError::InvalidResponse { .. })) => {
+            eprintln!("Failed to fetch {what} of {slug}: {name}: {error}");
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+// 取れなかった件数を返す。記録が無い記事では共有の画像だけを取る。ログインの切れ・通信の失敗などは、
+// 残りも取れないのでErrにする
 pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubError> {
     let state_path = state::state_path(input.data_dir, input.repo);
     let wanted = wanted_images(input.data_dir, input.repo, input.basis, input.store, slug)?;
     let mut failed = 0;
     for (name, sha) in wanted {
-        let content =
-            match super::git::blob(input.transport, input.token, input.now, input.repo, &sha) {
-                Ok(content) => content,
-                Err(error @ (GithubError::Status { .. } | GithubError::InvalidResponse { .. })) => {
-                    eprintln!("Failed to fetch an image of {slug}: {name}: {error}");
-                    failed += 1;
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
+        let Some(content) = fetch_blob(input, &sha, "an image", slug, &name)? else {
+            failed += 1;
+            continue;
+        };
         // 書くときにロックを取り、記録がまだ同じSHAで取ってきていないことと、手元にまだ無いことを
         // 確かめてから書く。どちらかが替わっていれば、取る必要が無くなっただけなので数えない
         input.store.with_lock(|posts_dir, assets_base| {
@@ -609,6 +732,29 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
             write_file(&path, &content)?;
             asset.fetched = true;
             state::write_state(&state_path, &state)
+        })?;
+    }
+
+    // 共有の画像は記録に入れず、assetsの直下に書く
+    let wanted = wanted_shared_images(input.data_dir, input.repo, input.basis, input.store, slug)?;
+    for (name, sha) in wanted {
+        let Some(content) = fetch_blob(input, &sha, "a shared image", slug, &name)? else {
+            failed += 1;
+            continue;
+        };
+        // 通信の間に読み込みでベースの画像が替わっていれば、古い画像なので書かない
+        input.store.with_lock(|posts_dir, assets_base| {
+            check_unchanged(input, posts_dir)?;
+            let state = state::read_state(&state_path, input.basis)?;
+            let current = base_shared_assets(&state).and_then(|shared| shared.get(&name));
+            if current != Some(&sha) || !crate::store::is_filename(&name) {
+                return Ok(());
+            }
+            let path = assets_base.join(&name);
+            if has_blob(&path, &sha)? {
+                return Ok(());
+            }
+            write_file(&path, &content)
         })?;
     }
     Ok(failed)
@@ -752,6 +898,15 @@ mod tests {
     const PNG: &[u8] = b"png1\n";
     const PNG2: &[u8] = b"png2\n";
     const PNG3: &[u8] = b"png3\n";
+    // 共有の画像を参照するmd。heroImageと本文で、assetsの直下の画像を指す
+    const SHARED_MD: &[u8] = b"---\ntitle: \"shared\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/shared.png\"\n---\n![about](../../assets/about.png)\n";
+    const SHARED_MD2: &[u8] = b"---\ntitle: \"shared2\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/shared.png\"\n---\n![about](../../assets/about.png)\n";
+    const SHARED_PNG: &[u8] = b"shared-1\n";
+    const ABOUT_PNG: &[u8] = b"about-1\n";
+    const UNUSED_PNG: &[u8] = b"unused-1\n";
+    const MISSING_MD: &[u8] = b"---\ntitle: \"missing\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/missing.png\"\n---\n![about](../../assets/about.png)\n";
+    const DOTDOT_MD: &[u8] = b"---\ntitle: \"dotdot\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n![x](../../assets/..)\n![about](../../assets/about.png)\n";
+    const DRAFT_MD: &[u8] = b"---\ntitle: \"draft\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/shared.png\"\n---\n";
 
     fn basis() -> Basis {
         Basis {
@@ -1440,6 +1595,23 @@ mod tests {
                 ],
             );
             self.sync().unwrap();
+            repo
+        }
+
+        // 共有の画像を参照する記事があり、初回の読み込みと共有の画像の取得が済んでいる
+        fn shared_synced(&self) -> FakeRepo {
+            let repo = self.new_repo();
+            repo.branch(
+                &self.transport,
+                "main",
+                &[
+                    ("src/content/blog/post.md", SHARED_MD),
+                    ("src/assets/shared.png", SHARED_PNG),
+                    ("src/assets/about.png", ABOUT_PNG),
+                ],
+            );
+            self.sync().unwrap();
+            self.fetch_images("post").unwrap();
             repo
         }
     }
@@ -2639,6 +2811,335 @@ mod tests {
         assert!(test.transport.requests().is_empty());
     }
 
+    // 共有の画像の取得 -----------------------------------------------------------
+
+    #[test]
+    fn 参照している共有の画像を取ってくる() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+        assert_eq!(fs::read(test.image_path("about.png")).unwrap(), ABOUT_PNG);
+    }
+
+    #[test]
+    fn 本文の画像の参照から題と山括弧を除く() {
+        assert_eq!(
+            body_image_refs(
+                "![a](../../assets/a.png \"題\")\n![b](<../../assets/b.png>)\n[c](c.png)\n"
+            ),
+            ["../../assets/a.png", "../../assets/b.png"]
+        );
+        // `](`の無い`![`が続いても、前の参照は拾う
+        assert_eq!(
+            body_image_refs(&format!("![a](a.png){}", "![".repeat(100_000))),
+            ["a.png"]
+        );
+    }
+
+    #[test]
+    fn 参照していない共有の画像は取らない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+                ("src/assets/unused.png", UNUSED_PNG),
+            ],
+        );
+        test.sync().unwrap();
+
+        let before = test.transport.requests().len();
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        let urls: Vec<String> = test.transport.requests()[before..]
+            .iter()
+            .map(|r| r.url.clone())
+            .collect();
+        assert!(
+            !urls.iter().any(|url| url.contains(&blob_sha(UNUSED_PNG))),
+            "参照していない共有の画像のblobを取らないはず: {urls:?}"
+        );
+        assert!(!test.image_path("unused.png").exists());
+    }
+
+    #[test]
+    fn 手元に同じSHAの共有の画像があれば取らない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        test.write_image("shared.png", SHARED_PNG);
+
+        let before = test.transport.requests().len();
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        let urls: Vec<String> = test.transport.requests()[before..]
+            .iter()
+            .map(|r| r.url.clone())
+            .collect();
+        assert!(
+            !urls.iter().any(|url| url.contains(&blob_sha(SHARED_PNG))),
+            "同じSHAの共有の画像のblobを取らないはず: {urls:?}"
+        );
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+        // 手元に無いほうは取る
+        assert_eq!(fs::read(test.image_path("about.png")).unwrap(), ABOUT_PNG);
+    }
+
+    #[test]
+    fn 手元の共有の画像のSHAが違えば上書きする() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        test.write_image("shared.png", b"old\n");
+
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+    }
+
+    #[test]
+    fn sharedAssetsに無い共有の画像の参照は取らず件数に数えない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MISSING_MD),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert!(!test.image_path("missing.png").exists());
+        // 一覧にあるほうは取る
+        assert_eq!(fs::read(test.image_path("about.png")).unwrap(), ABOUT_PNG);
+    }
+
+    #[test]
+    fn ファイル名でない名前の共有の画像は取らない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", DOTDOT_MD),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        // ファイル名でない名前を、共有の画像の一覧に手で入れる
+        test.edit_state(|state| {
+            state["remote"]["base"]["sharedAssets"][".."] = Value::String(blob_sha(SHARED_PNG));
+        });
+
+        let before = test.transport.requests().len();
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        let urls: Vec<String> = test.transport.requests()[before..]
+            .iter()
+            .map(|r| r.url.clone())
+            .collect();
+        assert!(
+            !urls.iter().any(|url| url.contains(&blob_sha(SHARED_PNG))),
+            "{urls:?}"
+        );
+        assert_eq!(fs::read(test.image_path("about.png")).unwrap(), ABOUT_PNG);
+    }
+
+    #[test]
+    fn 共有の画像を取れなければ件数に数える() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        // shared.pngのblobだけ404にする
+        let sha = blob_sha(SHARED_PNG);
+        test.transport.on(
+            Method::Get,
+            &url_of(
+                &["repos", "owner", "blog", "git", "blobs", sha.as_str()],
+                &[],
+            ),
+            Box::new(|_| {
+                Ok(json_response(
+                    404,
+                    serde_json::json!({"message": "not found"}),
+                ))
+            }),
+        );
+
+        assert_eq!(test.fetch_images("post").unwrap(), 1);
+        assert!(!test.image_path("shared.png").exists());
+        // ほかの共有の画像は取る
+        assert_eq!(fs::read(test.image_path("about.png")).unwrap(), ABOUT_PNG);
+    }
+
+    #[test]
+    fn 共有の画像は記録に入らず変更にならない() {
+        let test = SyncTest::new();
+        let _repo = test.shared_synced();
+        let record = &test.state()["articles"]["post"];
+        assert!(record["assets"]["shared.png"].is_null());
+        assert!(record["assets"]["about.png"].is_null());
+        assert!(!test.article_state("post").unwrap().dirty);
+        // 取ってきたうえで、記録に入っていない
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+
+        // 手元の共有の画像を書き換えても変更にならない
+        test.write_image("shared.png", b"other\n");
+        assert!(!test.article_state("post").unwrap().dirty);
+    }
+
+    #[test]
+    fn 共有の画像だけが足りない記事も取りに行く() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        let has_wanted = || {
+            has_wanted_images(
+                &test.data_dir,
+                &test.repo_of,
+                &test.basis_of,
+                test.store.as_ref(),
+                "post",
+            )
+            .unwrap()
+        };
+        assert!(has_wanted());
+        test.fetch_images("post").unwrap();
+        assert!(!has_wanted());
+    }
+
+    #[test]
+    fn 通信の間にベースの共有の画像が替わっていたら書かない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD),
+                ("src/assets/shared.png", SHARED_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        let sha = blob_sha(SHARED_PNG);
+        let state_path = test.state_path.clone();
+        test.transport.on(
+            Method::Get,
+            &url_of(
+                &["repos", "owner", "blog", "git", "blobs", sha.as_str()],
+                &[],
+            ),
+            Box::new(move |_| {
+                // 通信の間に、読み込みでベースの共有の画像が替わる
+                let mut state: Value =
+                    serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+                state["remote"]["base"]["sharedAssets"]["shared.png"] =
+                    Value::String(blob_sha(PNG2));
+                fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+                Ok(raw_response(200, SHARED_PNG.to_vec()))
+            }),
+        );
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert!(!test.image_path("shared.png").exists());
+    }
+
+    #[test]
+    fn 記録の無い記事もベースのsharedAssetsから取る() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/assets/shared.png", SHARED_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        // 手元で作った、まだcommitしていない記事
+        fs::write(test.md_path("draft"), DRAFT_MD).unwrap();
+
+        assert_eq!(test.fetch_images("draft").unwrap(), 0);
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+    }
+
+    #[test]
+    fn 読み込みで記事を置き換えても消しても共有の画像は残る() {
+        let test = SyncTest::new();
+        let repo = test.shared_synced();
+        assert!(test.image_path("shared.png").exists());
+
+        // ベースのmdが替わって置き換える
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", SHARED_MD2),
+                ("src/assets/shared.png", SHARED_PNG),
+                ("src/assets/about.png", ABOUT_PNG),
+            ],
+        );
+        test.sync().unwrap();
+        assert_eq!(fs::read(test.md_path("post")).unwrap(), SHARED_MD2);
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+
+        // ベースから記事が消えて、手元からも消える
+        repo.branch(&test.transport, "main", &[]);
+        test.sync().unwrap();
+        assert!(!test.md_path("post").exists());
+        assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), SHARED_PNG);
+    }
+
     // 記事ごとの状態: 分類と印
     #[test]
     fn 記事ごとの状態は手元の記事ごとに分類と印を返す() {
@@ -2663,6 +3164,7 @@ mod tests {
                     files_of(blob_sha(b"base\n").as_str(), &[]),
                 ),
             ]),
+            shared_assets: None,
         });
         state.remote.branches = BTreeMap::from([(
             "blog/post".to_string(),
