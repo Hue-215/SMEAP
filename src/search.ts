@@ -1,15 +1,6 @@
 import { SearchQuery } from '@codemirror/search'
-import {
-  EditorState,
-  StateEffect,
-  StateField,
-  type SelectionRange,
-} from '@codemirror/state'
-import {
-  Decoration,
-  EditorView,
-  type DecorationSet,
-} from '@codemirror/view'
+import { EditorState, StateEffect, StateField, type SelectionRange } from '@codemirror/state'
+import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 
 // 記事内検索の照合と下線。DOMに触れないので、テストはnodeで動く
 

@@ -1,7 +1,13 @@
 import { Fragment, useId, useState, type MouseEvent, type ReactNode } from 'react'
 import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
 import { githubErrorText } from './githubError'
-import { fetchLineText, groupArticles, rowMenuActions, type ArticleRow, type GithubArticleStates } from './githubList'
+import {
+  fetchLineText,
+  groupArticles,
+  rowMenuActions,
+  type ArticleRow,
+  type GithubArticleStates,
+} from './githubList'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Dialog from './Dialog'
 import Icon from './Icon'
@@ -10,8 +16,7 @@ import { isAndroid } from './platform'
 
 // 一覧の行。brokenは読めない記事(BrokenArticle)
 export type ArticleRef =
-  | { kind: 'article'; slug: string; title: string }
-  | { kind: 'broken'; slug: string }
+  { kind: 'article'; slug: string; title: string } | { kind: 'broken'; slug: string }
 
 export type ArticlesState =
   | { status: 'loading' }
@@ -191,9 +196,7 @@ export default function Sidebar({
         )}
       </span>
       <span className="article-row-detail">
-        {article.pubDate === null
-          ? article.slug
-          : `${article.slug} · ${article.pubDate}`}
+        {article.pubDate === null ? article.slug : `${article.slug} · ${article.pubDate}`}
       </span>
     </button>
   )
@@ -210,7 +213,11 @@ export default function Sidebar({
     }
     if (github.failed !== null) {
       return (
-        <button type="button" className="sidebar-github error" onClick={() => setSyncFailedOpen(true)}>
+        <button
+          type="button"
+          className="sidebar-github error"
+          onClick={() => setSyncFailedOpen(true)}
+        >
           {fetchLineText(github.states.repo, github.states.fetchedAt, true)}
         </button>
       )
@@ -320,7 +327,10 @@ export default function Sidebar({
         </DialogDetail>
       )}
       {unreadableOpen && articles.status === 'loaded' && (
-        <DialogDetail title={t('sidebar.unreadable_title')} onClose={() => setUnreadableOpen(false)}>
+        <DialogDetail
+          title={t('sidebar.unreadable_title')}
+          onClose={() => setUnreadableOpen(false)}
+        >
           {articles.unreadable.map((entry, index) => (
             <p key={`${entry.path} ${index}`}>
               {entry.path}
@@ -345,7 +355,12 @@ export default function Sidebar({
         </DialogDetail>
       )}
       {rowMenu && (
-        <ContextMenu x={rowMenu.x} y={rowMenu.y} items={rowMenuItems(rowMenu)} onClose={() => setRowMenu(null)} />
+        <ContextMenu
+          x={rowMenu.x}
+          y={rowMenu.y}
+          items={rowMenuItems(rowMenu)}
+          onClose={() => setRowMenu(null)}
+        />
       )}
     </>
   )

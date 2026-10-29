@@ -1,10 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import {
-  githubListRepositories,
-  openGithubPage,
-  repoFullName,
-  type GithubRepoRef,
-} from './api'
+import { githubListRepositories, openGithubPage, repoFullName, type GithubRepoRef } from './api'
 import Dialog from './Dialog'
 import Icon from './Icon'
 import { githubErrorText } from './githubError'

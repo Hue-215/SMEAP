@@ -85,9 +85,10 @@ export default function App() {
   const [syncError, setSyncError] = useState<{ error: unknown } | null>(null)
   const syncingRef = useRef(false)
   // Commit & Pushの対象。previewがnullの間は概略を読んでいる
-  const [commitTarget, setCommitTarget] = useState<{ slug: string; preview: CommitPreview | null } | null>(
-    null,
-  )
+  const [commitTarget, setCommitTarget] = useState<{
+    slug: string
+    preview: CommitPreview | null
+  } | null>(null)
   // 概略を読み始めてからダイアログを閉じるまで、記事の切り替えと読み込みをさせない
   const commitOpenRef = useRef(false)
   // 読み込み中に頼まれた読み込み(Repositoryの切り替えの後など)。終わった後にもう一度読み込む
@@ -98,7 +99,12 @@ export default function App() {
   const selectedSlug = article.status === 'none' ? null : article.slug
   const loaded = article.status === 'loaded' ? article : null
   // 連携していなければnull
-  const commitButton = commitButtonState(githubStates, loaded?.slug ?? null, syncing, saveStatus.dirty)
+  const commitButton = commitButtonState(
+    githubStates,
+    loaded?.slug ?? null,
+    syncing,
+    saveStatus.dirty,
+  )
   // 読み込みの間に開いている記事が替わっても、読み込み後の処理を今の記事に合わせるため
   const selectedSlugRef = useRef<string | null>(null)
 
@@ -241,7 +247,8 @@ export default function App() {
   const openFindRef = useRef<(target: EventTarget | null) => void>(() => {})
   const openFind = (target: EventTarget | null) => {
     if (!loaded) return
-    if (saveConfirm || deleteTarget || discardTarget || slugDialog || settingsOpen || drawer.shown) return
+    if (saveConfirm || deleteTarget || discardTarget || slugDialog || settingsOpen || drawer.shown)
+      return
     if (target instanceof HTMLElement && target.closest('[role="menu"]')) return
     // 検索の箱・行の中にフォーカスがあるなら、文字を入れ直さず入力欄を選び直すだけ
     if (findFor === loaded.article && document.activeElement?.closest('[data-find]')) {
@@ -295,7 +302,10 @@ export default function App() {
   const proceed = (action: PendingAction) => {
     setSaveConfirm(null)
     if (action.kind === 'switch') openArticle(action.slug)
-    else getCurrentWindow().destroy().catch((e) => console.error('Failed to close the window', e))
+    else
+      getCurrentWindow()
+        .destroy()
+        .catch((e) => console.error('Failed to close the window', e))
   }
 
   useEffect(() => {
@@ -481,7 +491,8 @@ export default function App() {
     }
     closeCommit()
     setNotice({
-      text: keptBranch === null ? t('app.push_done') : t('app.push_done_kept', { name: keptBranch }),
+      text:
+        keptBranch === null ? t('app.push_done') : t('app.push_done_kept', { name: keptBranch }),
       error: false,
     })
     void runGithubSyncRef.current()
@@ -732,10 +743,7 @@ export default function App() {
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
       <Drawer drawer={drawer}>{sidebar}</Drawer>
-      <main
-        inert={drawer.shown || editorLocked || commitTarget?.preview === null}
-        {...swipeToOpen}
-      >
+      <main inert={drawer.shown || editorLocked || commitTarget?.preview === null} {...swipeToOpen}>
         {isAndroid && findOpen ? (
           findBar('bar')
         ) : (
@@ -746,7 +754,11 @@ export default function App() {
             saveStatus={loaded ? saveStatus : null}
             notice={notice}
             onFind={loaded ? () => openFindRef.current(null) : null}
-            commit={commitButton === null ? null : { state: commitButton, onClick: () => void openCommit() }}
+            commit={
+              commitButton === null
+                ? null
+                : { state: commitButton, onClick: () => void openCommit() }
+            }
           />
         )}
         <div className="editor-area">
@@ -831,7 +843,8 @@ export default function App() {
           onConfirm={() => discardConfirmed(discardTarget)}
         >
           {t('app.discard_message', {
-            title: (discardTarget.kind === 'article' && discardTarget.title) || t('common.untitled'),
+            title:
+              (discardTarget.kind === 'article' && discardTarget.title) || t('common.untitled'),
             slug: discardTarget.slug,
           })}
           {branchNote(discardTarget.slug)}

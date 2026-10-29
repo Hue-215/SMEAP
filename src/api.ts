@@ -135,9 +135,7 @@ export function setPostsDirName(name: string): Promise<void> {
 
 // Rust側のExportOutcome(src-tauri/src/export.rs)とそろえる
 export type ExportOutcome =
-  | { kind: 'saved' }
-  | { kind: 'cancelled' }
-  | { kind: 'leftIncomplete'; reason: string }
+  { kind: 'saved' } | { kind: 'cancelled' } | { kind: 'leftIncomplete'; reason: string }
 
 export function exportZip(slug: string): Promise<ExportOutcome> {
   return invoke<ExportOutcome>('export_zip', { slug })

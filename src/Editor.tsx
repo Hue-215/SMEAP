@@ -36,7 +36,11 @@ export default function Editor({
         editorExtensions(slug, (files) => callbacks.current.onPasteImage(files)),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) callbacks.current.onChange()
-          if (update.docChanged || update.selectionSet || update.transactions.some((tr) => tr.effects.length > 0))
+          if (
+            update.docChanged ||
+            update.selectionSet ||
+            update.transactions.some((tr) => tr.effects.length > 0)
+          )
             callbacks.current.onUpdate(update.state)
         }),
       ],

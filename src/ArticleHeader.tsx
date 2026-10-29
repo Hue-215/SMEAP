@@ -105,9 +105,7 @@ export default function ArticleHeader({
             {warnings.map((warning, index) => (
               <p key={index}>{warning.message}</p>
             ))}
-            {warnings.some((warning) => warning.kept) && (
-              <p>{t('article_header.kept_note')}</p>
-            )}
+            {warnings.some((warning) => warning.kept) && <p>{t('article_header.kept_note')}</p>}
           </div>
         </div>
       )}
@@ -173,8 +171,7 @@ export default function ArticleHeader({
               if (pubDate && e.target.validity.valid) onChange({ pubDate })
             }}
             onBlur={(e) => {
-              if (!e.target.value || !e.target.validity.valid)
-                e.target.value = fields.pubDate ?? ''
+              if (!e.target.value || !e.target.validity.valid) e.target.value = fields.pubDate ?? ''
             }}
           />
         </label>

@@ -283,9 +283,7 @@ export default function Settings({
                     )}
                   </div>
                 )}
-                {githubFailure !== null && (
-                  <p className="settings-failure">{githubFailure}</p>
-                )}
+                {githubFailure !== null && <p className="settings-failure">{githubFailure}</p>}
                 {showPostsLocation && (
                   <>
                     <h2 className="settings-h2">{t('settings.posts_location')}</h2>
@@ -757,7 +755,8 @@ function LicenseList({ narrow, onShow }: { narrow: boolean; onShow: (shown: Show
     return duplicated
   }, [licenses])
 
-  if (licenses === 'failed') return <p className="editor-message">{t('settings.licenses_load_failed')}</p>
+  if (licenses === 'failed')
+    return <p className="editor-message">{t('settings.licenses_load_failed')}</p>
   if (licenses === null) return null
 
   const query = filter.toLowerCase()
@@ -781,11 +780,15 @@ function LicenseList({ narrow, onShow }: { narrow: boolean; onShow: (shown: Show
           onChange={(e) => setFilter(e.target.value)}
         />
       </label>
-      <p className="settings-count settings-note">{t('settings.licenses_count', { count: rows.length })}</p>
+      <p className="settings-count settings-note">
+        {t('settings.licenses_count', { count: rows.length })}
+      </p>
       <div className="settings-rows">
         {rows.map((license) => {
           const key = `${license.name}@${license.version}`
-          const title = duplicated.has(license.name) ? `${license.name} ${license.version}` : license.name
+          const title = duplicated.has(license.name)
+            ? `${license.name} ${license.version}`
+            : license.name
           const open = !narrow && expanded.has(key)
           return (
             <div key={key}>
@@ -798,7 +801,9 @@ function LicenseList({ narrow, onShow }: { narrow: boolean; onShow: (shown: Show
                 <span className="settings-row-name">{title}</span>
                 <span className="settings-note">{license.license}</span>
                 <Icon
-                  name={narrow ? 'chevron_right' : open ? 'keyboard_arrow_up' : 'keyboard_arrow_down'}
+                  name={
+                    narrow ? 'chevron_right' : open ? 'keyboard_arrow_up' : 'keyboard_arrow_down'
+                  }
                 />
               </button>
               {open && <pre className="settings-text">{license.text}</pre>}

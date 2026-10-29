@@ -207,7 +207,12 @@ export default function ArticleEditor({
   const pickHeroImage = (file: File) =>
     void changeHero(
       async () => importHeroImage(slug, new Uint8Array(await file.arrayBuffer())),
-      (e) => t(isUnsupportedImage(e) ? 'article_editor.hero_unsupported' : 'article_editor.hero_import_failed'),
+      (e) =>
+        t(
+          isUnsupportedImage(e)
+            ? 'article_editor.hero_unsupported'
+            : 'article_editor.hero_import_failed',
+        ),
       file.name,
     )
 
