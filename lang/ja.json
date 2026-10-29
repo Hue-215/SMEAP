@@ -79,7 +79,7 @@
   "commit.progress_uploading": "送信中({current}/{total})",
   "commit.pull": "Pull",
   "commit.push": "Push",
-  "commit.send": "Commit & Push",
+  "commit.send": "Commit",
   "commit.title": "Commit & Push",
   "editor.body_label": "本文",
   "editor.image_unreadable": "画像の読み込みに失敗しました: {reference}",

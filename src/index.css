@@ -775,20 +775,28 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-text-secondary);
 }
 
-/* Commit & Pushの、送っている間の段階 */
+/* Commit & Pushの、送っている間の段階。文言が替わってもボタンの幅を変えないよう、ボタンは縮めずに
+   段階の側で残りの幅を使い、収まらなければ末尾を切る */
 .commit-progress {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: var(--space-2);
-  margin: 0 auto 0 0;
+  margin: 0;
   font-size: var(--font-size-xs);
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-secondary);
 }
 
-/* Conflictの画面では段階の右にPullを並べる */
-.dialog-buttons .commit-progress + .left {
-  margin-right: 0;
+.commit-progress span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.commit-progress ~ button {
+  flex-shrink: 0;
 }
 
 .commit-message {
