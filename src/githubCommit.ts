@@ -1,5 +1,5 @@
 // Commit & Pushのための判断(docs/spec.mdの「Commit & Push」)
-import type { CommitKind } from './api'
+import type { CommitKind, CommitPreview } from './api'
 import type { GithubArticleStates } from './githubList'
 import { t } from './i18n'
 
@@ -35,6 +35,12 @@ export function imagesText(added: number, removed: number): string | null {
 export interface CommitButton {
   enabled: boolean
   dirty: boolean
+}
+
+// 本文の行。slugを変えた記事は元の名前も出す
+export function mdNameText(preview: CommitPreview): string {
+  if (preview.oldMdName === null) return preview.mdName
+  return `${preview.oldMdName} → ${preview.mdName}`
 }
 
 // statesがnullなら連携していないのでnull。slugは読み込み済みの記事(無ければnull)。

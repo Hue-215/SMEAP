@@ -8,6 +8,7 @@ import {
   githubArticleStates,
   githubCommitPreview,
   githubCommitPush,
+  githubDiscardEdit,
   githubFetchImages,
   githubLogout,
   githubPull,
@@ -35,8 +36,8 @@ import CommitDialog, { type CommitPushResult } from './CommitDialog'
 import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
 import { commitButtonState } from './githubCommit'
-import { githubErrorText } from './githubError'
-import type { GithubArticleStates } from './githubList'
+import { githubErrorText, githubFailureText } from './githubError'
+import { deletesBranch, type GithubArticleStates } from './githubList'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
@@ -74,6 +75,7 @@ export default function App() {
   const [saveConfirm, setSaveConfirm] = useState<PendingAction | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
+  const [discardTarget, setDiscardTarget] = useState<ArticleRef | null>(null)
   // 同じ文言が続いても出し直すよう、包んで持つ
   const [notice, setNotice] = useState<Notice | null>(null)
   // GitHub連携の記事ごとの状態。nullは連携していない
@@ -239,7 +241,7 @@ export default function App() {
   const openFindRef = useRef<(target: EventTarget | null) => void>(() => {})
   const openFind = (target: EventTarget | null) => {
     if (!loaded) return
-    if (saveConfirm || deleteTarget || slugDialog || settingsOpen || drawer.shown) return
+    if (saveConfirm || deleteTarget || discardTarget || slugDialog || settingsOpen || drawer.shown) return
     if (target instanceof HTMLElement && target.closest('[role="menu"]')) return
     // 検索の箱・行の中にフォーカスがあるなら、文字を入れ直さず入力欄を選び直すだけ
     if (findFor === loaded.article && document.activeElement?.closest('[data-find]')) {
@@ -445,8 +447,9 @@ export default function App() {
     message: string,
     overwrite: string | null,
   ): Promise<CommitPushResult> => {
+    let keptBranch: string | null = null
     try {
-      await githubCommitPush(slug, message, overwrite)
+      keptBranch = (await githubCommitPush(slug, message, overwrite)).keptBranch
     } catch (e) {
       const error = e as GithubError
       switch (error?.kind) {
@@ -477,7 +480,10 @@ export default function App() {
       throw e
     }
     closeCommit()
-    setNotice({ text: t('app.push_done'), error: false })
+    setNotice({
+      text: keptBranch === null ? t('app.push_done') : t('app.push_done_kept', { name: keptBranch }),
+      error: false,
+    })
     void runGithubSyncRef.current()
     return { kind: 'pushed' }
   }
@@ -612,8 +618,37 @@ export default function App() {
       return true
     } catch (e) {
       console.error('Failed to delete the article', slug, e)
-      return false
+      return githubFailureText(e) ?? false
     } finally {
+      reloadArticles()
+    }
+  }
+
+  const branchNote = (slug: string) =>
+    deletesBranch(githubStates, slug) && (
+      <>
+        <br />
+        {t('app.delete_branch_note')}
+      </>
+    )
+
+  // 開いている記事なら編集欄を止めて、未保存の入力を捨てる。成功したら開き直す
+  const discardConfirmed = async (target: ArticleRef) => {
+    const slug = target.slug
+    const open = slug === selectedSlug
+    try {
+      if (open) setEditorLocked(true)
+      await whenSaved()
+      await githubDiscardEdit(slug)
+      setDiscardTarget(null)
+      if (open) openArticle(slug)
+      return true
+    } catch (e) {
+      console.error('Failed to discard the edits', slug, e)
+      return githubFailureText(e) ?? false
+    } finally {
+      if (open) setEditorLocked(false)
+      // 失敗してもブランチを消し終えていることがあるので、状態を読み直す
       reloadArticles()
     }
   }
@@ -641,6 +676,10 @@ export default function App() {
       onDelete={(target) => {
         drawer.close()
         setDeleteTarget(target)
+      }}
+      onDiscard={(target) => {
+        drawer.close()
+        setDiscardTarget(target)
       }}
     />
   )
@@ -718,7 +757,13 @@ export default function App() {
                   key={article.slug}
                   ref={editor}
                   article={article.article}
-                  paused={saveConfirm !== null || deleteTarget !== null || syncing || commitTarget !== null}
+                  paused={
+                    saveConfirm !== null ||
+                    deleteTarget !== null ||
+                    discardTarget !== null ||
+                    syncing ||
+                    commitTarget !== null
+                  }
                   onSaveStatus={setSaveStatus}
                   onSaved={onSaved}
                   onNotice={(text) => setNotice({ text, error: true })}
@@ -774,6 +819,22 @@ export default function App() {
                 title: deleteTarget.title || t('common.untitled'),
                 slug: deleteTarget.slug,
               })}
+          {branchNote(deleteTarget.slug)}
+        </ConfirmDialog>
+      )}
+      {discardTarget && (
+        <ConfirmDialog
+          title={t('app.discard_title')}
+          confirmLabel={t('app.discard_confirm')}
+          failedText={t('app.discard_failed')}
+          onCancel={() => setDiscardTarget(null)}
+          onConfirm={() => discardConfirmed(discardTarget)}
+        >
+          {t('app.discard_message', {
+            title: (discardTarget.kind === 'article' && discardTarget.title) || t('common.untitled'),
+            slug: discardTarget.slug,
+          })}
+          {branchNote(discardTarget.slug)}
         </ConfirmDialog>
       )}
       {settingsOpen && (

@@ -9,6 +9,8 @@ export interface GithubArticleState {
   category: GithubCategory
   dirty: boolean
   conflict: boolean
+  // 記録か、前回読み込んだGitHub上の様子に記事用のbranchがあるか
+  branch: boolean
 }
 
 export interface GithubSkipped {
@@ -49,12 +51,39 @@ export function groupArticles(
   const rows = { drafting: [], editing: [], published: [] } as Record<GithubCategory, ArticleRow[]>
   for (const article of articles) {
     // 一覧の後に作った記事など、GitHub上の状態がまだ無い記事は、commitしていない変更として扱う
-    const state = states.articles[article.slug] ?? { category: 'drafting', dirty: true, conflict: false }
+    const state = states.articles[article.slug] ?? { category: 'drafting', dirty: true, conflict: false, branch: false }
     rows[state.category].push({ article, state })
   }
   return CATEGORIES.map((category) => ({ category, rows: rows[category] })).filter(
     (group) => group.rows.length > 0,
   )
+}
+
+export type RowAction = 'rename' | 'delete' | 'discard'
+
+// 分類はRust側でも確かめるので、分からないときは変更と削除を出す
+export function rowMenuActions(
+  states: GithubArticleStates | null,
+  slug: string,
+): RowAction[] {
+  if (states === null || states.stateUnreadable) return ['rename', 'delete']
+  const state = states.articles[slug]
+  // 一覧の後に作った記事
+  if (state === undefined) return ['rename', 'delete']
+  switch (state.category) {
+    case 'drafting':
+      return ['rename', 'delete']
+    case 'editing':
+      return ['discard']
+    case 'published':
+      return []
+  }
+}
+
+// 削除・編集の取りやめでGitHub上のbranchも消えるか
+export function deletesBranch(states: GithubArticleStates | null, slug: string): boolean {
+  if (states === null || states.stateUnreadable) return false
+  return states.articles[slug]?.branch === true
 }
 
 // fetchedAtはunix秒。failedは最後の読み込みが失敗したか

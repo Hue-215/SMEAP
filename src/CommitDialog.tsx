@@ -8,6 +8,7 @@ import {
   defaultCommitMessage,
   imagesText,
   linesText,
+  mdNameText,
 } from './githubCommit'
 import { githubErrorText } from './githubError'
 import { t } from './i18n'
@@ -106,9 +107,16 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
           <div id={bodyId} className="commit-summary">
             <div className="commit-row">
               <span className="commit-label">{t('commit.md_label')}</span>
-              <span className="commit-value">{preview.mdName}</span>
+              <span className="commit-value">{mdNameText(preview)}</span>
               <span className="commit-lines">{linesText(preview.added, preview.removed)}</span>
             </div>
+            {preview.oldBranch !== null && (
+              <div className="commit-row">
+                <span className="commit-value">
+                  {t('commit.old_branch_deleted', { name: preview.oldBranch })}
+                </span>
+              </div>
+            )}
             {images !== null && (
               <div className="commit-row">
                 <span className="commit-label">{t('commit.images_label')}</span>

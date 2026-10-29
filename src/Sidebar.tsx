@@ -1,7 +1,7 @@
 import { Fragment, useId, useState, type MouseEvent, type ReactNode } from 'react'
 import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
 import { githubErrorText } from './githubError'
-import { fetchLineText, groupArticles, type ArticleRow, type GithubArticleStates } from './githubList'
+import { fetchLineText, groupArticles, rowMenuActions, type ArticleRow, type GithubArticleStates } from './githubList'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Dialog from './Dialog'
 import Icon from './Icon'
@@ -42,6 +42,7 @@ interface SidebarProps {
   onRenameSlug: (slug: string) => void
   onExportZip: (slug: string) => void
   onDelete: (target: ArticleRef) => void
+  onDiscard: (target: ArticleRef) => void
 }
 
 const categoryLabel = {
@@ -91,6 +92,7 @@ export default function Sidebar({
   onRenameSlug,
   onExportZip,
   onDelete,
+  onDiscard,
 }: SidebarProps) {
   const [brokenSlug, setBrokenSlug] = useState<string | null>(null)
   const [unreadableOpen, setUnreadableOpen] = useState(false)
@@ -111,7 +113,10 @@ export default function Sidebar({
       x = rect.left
       y = rect.bottom
     }
-    setRowMenu({ ...target, x, y })
+    const menu = { ...target, x, y }
+    // 公開済みの記事は、Android以外では操作が無い
+    if (rowMenuItems(menu).length === 0) return
+    setRowMenu(menu)
   }
 
   const rowMenuItems = (menu: RowMenu): MenuItem[] => {
@@ -134,7 +139,20 @@ export default function Sidebar({
       icon: 'folder_zip',
       onSelect: () => onExportZip(menu.slug),
     }
-    return isAndroid ? [renameItem, exportZipItem, deleteItem] : [renameItem, deleteItem]
+    const discardItem: MenuItem = {
+      key: 'discard',
+      label: t('sidebar.menu_discard'),
+      icon: 'undo',
+      onSelect: () => onDiscard(menu),
+    }
+    // zipの書き出しはGitHubの分類によらず出す
+    const actions = rowMenuActions(github?.states ?? null, menu.slug)
+    return [
+      ...(actions.includes('rename') ? [renameItem] : []),
+      ...(isAndroid ? [exportZipItem] : []),
+      ...(actions.includes('delete') ? [deleteItem] : []),
+      ...(actions.includes('discard') ? [discardItem] : []),
+    ]
   }
 
   const groups =

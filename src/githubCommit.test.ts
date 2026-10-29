@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { CommitPreview } from './api'
 import type { GithubArticleStates } from './githubList'
 import {
   canSendMessage,
@@ -7,6 +8,7 @@ import {
   defaultCommitMessage,
   imagesText,
   linesText,
+  mdNameText,
 } from './githubCommit'
 
 const NOW = 1_700_000_000
@@ -27,11 +29,27 @@ function statesOf(
           category: 'published' as const,
           dirty: item?.dirty ?? false,
           conflict: item?.conflict ?? false,
+          branch: false,
         },
       ]),
     ) as GithubArticleStates['articles'],
     skipped: [],
     ...rest,
+  }
+}
+
+// 本文の行に要る項目だけを指定して作る
+function previewOf(mdName: string, oldMdName: string | null): CommitPreview {
+  return {
+    title: '記事',
+    mdName,
+    oldMdName,
+    oldBranch: oldMdName === null ? null : 'blog/old',
+    added: 0,
+    removed: 0,
+    imagesAdded: 0,
+    imagesRemoved: 0,
+    kind: 'update',
   }
 }
 
@@ -86,6 +104,16 @@ describe('imagesText', () => {
 
   it('両方0なら行を出さない', () => {
     expect(imagesText(0, 0)).toBe(null)
+  })
+})
+
+describe('mdNameText', () => {
+  it('slugを変えた記事は元の名前から新しい名前を出す', () => {
+    expect(mdNameText(previewOf('new.md', 'old.md'))).toBe('old.md → new.md')
+  })
+
+  it('slugを変えていなければ新しい名前だけ', () => {
+    expect(mdNameText(previewOf('new.md', null))).toBe('new.md')
   })
 })
 

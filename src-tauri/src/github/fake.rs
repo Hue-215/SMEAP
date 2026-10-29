@@ -594,6 +594,7 @@ impl FakeRepo {
         // 書き込みを受け付けている間は、branchを進める応答も足す
         if self.writes_on.load(Ordering::SeqCst) {
             self.register_patch(transport, branch);
+            self.register_delete(transport, branch);
         }
         let url = self.url(
             "ref/heads",
@@ -697,6 +698,7 @@ impl FakeRepo {
             .collect::<Vec<_>>()
         {
             self.register_patch(transport, &name);
+            self.register_delete(transport, &name);
         }
     }
 
@@ -1031,6 +1033,44 @@ impl FakeRepo {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(branch.to_string(), new.clone());
         Ok(json_response(200, ref_json(branch, &new)))
+    }
+
+    // DELETE /git/refs/heads/{branch}の応答。ブランチがあれば消して204、無ければ422
+    fn register_delete(&self, transport: &RouteTransport, branch: &str) {
+        let url = self.url(
+            "refs/heads",
+            branch.split('/').collect::<Vec<_>>().as_slice(),
+            &[],
+        );
+        let repo = self.clone();
+        let name = branch.to_string();
+        let key = url.clone();
+        transport.on(
+            Method::Delete,
+            &url,
+            Box::new(move |request| repo.delete(&name, &key, request)),
+        );
+    }
+
+    fn delete(&self, branch: &str, url: &str, _request: &Request) -> Result<Response, GithubError> {
+        self.fire(Method::Delete, url);
+        let removed = self
+            .branches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(branch);
+        if removed.is_none() {
+            return Ok(json_response(
+                422,
+                serde_json::json!({ "message": "Reference does not exist" }),
+            ));
+        }
+        // 実際のGitHubと同じく、消したブランチのコミットの応答は残す
+        Ok(Response {
+            status: 204,
+            headers: Vec::new(),
+            body: Vec::new(),
+        })
     }
 
     // APIのURLを組み立てる。pathはgit/の後ろの部分

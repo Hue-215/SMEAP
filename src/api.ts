@@ -234,6 +234,11 @@ export type GithubError =
   | { kind: 'branchGone' }
   | { kind: 'pushRetryExceeded' }
   | { kind: 'articleNotFound' }
+  | { kind: 'branchMoved' }
+  | { kind: 'slugReserved'; slug: string }
+  | { kind: 'slugInUse'; slug: string }
+  | { kind: 'inBaseBranch' }
+  | { kind: 'conflicted' }
 
 export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>('github_status')
@@ -311,6 +316,9 @@ export type CommitKind = 'add' | 'fix' | 'update'
 export interface CommitPreview {
   title: string
   mdName: string
+  // slugを変えた記事だけ入る
+  oldMdName: string | null
+  oldBranch: string | null
   added: number
   removed: number
   imagesAdded: number
@@ -322,6 +330,8 @@ export interface CommitPreview {
 export interface PushResult {
   branch: string
   commit: string
+  // 消せなかった古いbranch
+  keptBranch: string | null
 }
 
 export function githubCommitPreview(slug: string): Promise<CommitPreview> {
@@ -339,6 +349,11 @@ export function githubCommitPush(
 
 export function githubPull(slug: string, branch: string | null): Promise<void> {
   return invoke('github_pull', { slug, branch })
+}
+
+// 手元の変更を捨て、公開済みの内容に戻す
+export function githubDiscardEdit(slug: string): Promise<void> {
+  return invoke('github_discard_edit', { slug })
 }
 
 // 連携していなければnull

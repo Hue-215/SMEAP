@@ -21,8 +21,13 @@ pub fn list_articles(store: State<'_, Store>) -> Result<ArticleList, StoreError>
 }
 
 #[tauri::command(async)]
-pub fn create_article(store: State<'_, Store>, slug: String) -> Result<Article, StoreError> {
-    store.create_article(&slug)
+pub fn create_article(
+    app: AppHandle,
+    github: State<'_, crate::github::commands::GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<Article, crate::github::commands::CommandError> {
+    crate::github::commands::create_article(&app, &github, &store, &slug)
 }
 
 #[tauri::command(async)]
@@ -41,16 +46,23 @@ pub fn save_article(
 
 #[tauri::command(async)]
 pub fn rename_article(
+    app: AppHandle,
+    github: State<'_, crate::github::commands::GitHub>,
     store: State<'_, Store>,
     old: String,
     new: String,
-) -> Result<Article, StoreError> {
-    store.rename_article(&old, &new)
+) -> Result<Article, crate::github::commands::CommandError> {
+    crate::github::commands::rename_article(&app, &github, &store, &old, &new)
 }
 
 #[tauri::command(async)]
-pub fn delete_article(store: State<'_, Store>, slug: String) -> Result<(), StoreError> {
-    store.delete_article(&slug)
+pub fn delete_article(
+    app: AppHandle,
+    github: State<'_, crate::github::commands::GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<(), crate::github::commands::CommandError> {
+    crate::github::commands::delete_article(&app, &github, &store, &slug)
 }
 
 #[tauri::command(async)]
