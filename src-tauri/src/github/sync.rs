@@ -506,7 +506,8 @@ pub fn wanted_images(
         .assets
         .iter()
         .filter(|(name, asset)| {
-            !name.contains('/') && !asset.fetched && !local.assets.contains_key(*name)
+            // 名前はGitHub上のツリーから来るので、assets/{slug}/の外を指すものは取らない
+            crate::store::is_filename(name) && !asset.fetched && !local.assets.contains_key(*name)
         })
         .map(|(name, asset)| (name.clone(), asset.sha.clone()))
         .collect())
@@ -541,6 +542,9 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
             else {
                 return Ok(());
             };
+            if !crate::store::is_filename(&name) {
+                return Ok(());
+            }
             let path = assets_base.join(slug).join(&name);
             if path.exists() {
                 return Ok(());
@@ -2366,6 +2370,19 @@ mod tests {
     }
 
     // 画像の取得: 1つ取れなくても残りは取り、取れなかった件数を返す
+    #[test]
+    fn assetsの外を指す名前の画像は取らない() {
+        let test = SyncTest::new();
+        let _repo = test.post_synced();
+        test.edit_state(|state| {
+            state["articles"]["post"]["assets"]["../evil.png"] =
+                serde_json::json!({ "sha": blob_sha(PNG), "fetched": false });
+        });
+        test.fetch_images("post").unwrap();
+        assert!(!test.assets_base.join("evil.png").exists());
+        assert_eq!(fs::read(test.image_path("post/01.png")).unwrap(), PNG);
+    }
+
     #[test]
     fn 画像を1つ取れなくても残りは取り取れなかった件数を返す() {
         let test = SyncTest::new();

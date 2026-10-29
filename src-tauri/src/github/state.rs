@@ -302,7 +302,10 @@ pub fn same_as_remote(record: Option<&Record>, local: &LocalFiles, remote: &Arti
     }
     let not_fetched =
         |record: &Record, name: &str| record.assets.get(name).is_none_or(|asset| !asset.fetched);
-    let mut wanted = remote.assets.keys().filter(|name| !name.contains('/'));
+    let mut wanted = remote
+        .assets
+        .keys()
+        .filter(|name| crate::store::is_filename(name));
     match record {
         None => wanted.all(|name| local.assets.contains_key(name)),
         Some(record) => {
