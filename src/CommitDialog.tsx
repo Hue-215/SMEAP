@@ -81,23 +81,23 @@ export default function CommitDialog({ preview, onCancel, onCommit, onPull }: Co
     setRunning(true)
     setError(null)
     setProgress({ step: 'checking' })
+    // 終わった後に届いた知らせも捨てる。古い呼び出しならfalse
+    const finish = () => {
+      if (call.current !== current) return false
+      call.current += 1
+      setProgress(null)
+      return true
+    }
     void onCommit(message, overwrite, (next) => {
       if (call.current === current) setProgress(next)
     }).then(
       (result) => {
-        if (call.current !== current) return
-        // 終わった後に届いた知らせも捨てる
-        call.current += 1
-        setProgress(null)
-        if (result.kind === 'pushed') return
+        if (!finish() || result.kind === 'pushed') return
         setPhase(result)
         setRunning(false)
       },
       (e) => {
-        if (call.current !== current) return
-        call.current += 1
-        setProgress(null)
-        fail(e)
+        if (finish()) fail(e)
       },
     )
   }

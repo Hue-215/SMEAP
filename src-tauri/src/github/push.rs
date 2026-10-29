@@ -222,7 +222,7 @@ fn target_branch(record: Option<&Record>, basis: &Basis, slug: &str) -> String {
 
 // blobの送り直しを避けるための中身->SHAと、送っている間の進み具合
 struct BlobCache<'a> {
-    blobs: HashMap<Vec<u8>, String>,
+    shas: HashMap<Vec<u8>, String>,
     progress: &'a dyn Fn(PushProgress),
     sent: usize,
     total: usize,
@@ -231,7 +231,7 @@ struct BlobCache<'a> {
 impl<'a> BlobCache<'a> {
     fn new(progress: &'a dyn Fn(PushProgress)) -> Self {
         BlobCache {
-            blobs: HashMap::new(),
+            shas: HashMap::new(),
             progress,
             sent: 0,
             total: 0,
@@ -242,13 +242,12 @@ impl<'a> BlobCache<'a> {
     fn begin(&mut self, diff: &LocalDiff) {
         let md = diff.md.iter().map(|(_, body)| body);
         let assets = diff.added.values().map(|(_, body)| body);
-        let total = md
+        self.sent = 0;
+        self.total = md
             .chain(assets)
-            .filter(|body| !self.blobs.contains_key(*body))
+            .filter(|body| !self.shas.contains_key(*body))
             .collect::<BTreeSet<_>>()
             .len();
-        self.sent = 0;
-        self.total = total;
     }
 }
 
@@ -257,7 +256,7 @@ fn upload_blob(
     blobs: &mut BlobCache,
     content: &[u8],
 ) -> Result<String, GithubError> {
-    if let Some(sha) = blobs.blobs.get(content) {
+    if let Some(sha) = blobs.shas.get(content) {
         return Ok(sha.clone());
     }
     blobs.sent += 1;
@@ -266,7 +265,7 @@ fn upload_blob(
         total: blobs.total,
     });
     let sha = git::create_blob(input.transport, input.token, input.now, input.repo, content)?;
-    blobs.blobs.insert(content.to_vec(), sha.clone());
+    blobs.shas.insert(content.to_vec(), sha.clone());
     Ok(sha)
 }
 
