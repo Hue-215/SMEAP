@@ -123,7 +123,7 @@ impl State {
     }
 }
 
-fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
+pub(crate) fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
     data_dir.join("github").join(&repo.owner).join(&repo.name)
 }
 
@@ -135,6 +135,11 @@ pub fn synced_path(data_dir: &Path, repo: &RepoRef, slug: &str) -> PathBuf {
     repo_dir(data_dir, repo)
         .join("synced")
         .join(format!("{slug}.md"))
+}
+
+// Pullで手元のファイルを写し置く場所の根(backup/{日時}/…)
+pub(crate) fn backup_root(data_dir: &Path, repo: &RepoRef) -> PathBuf {
+    repo_dir(data_dir, repo).join("backup")
 }
 
 // 無ければState::empty。versionが違う・読めなければStateUnreadable。basisが違えばState::empty(basis)
@@ -191,21 +196,36 @@ pub fn blob_sha(content: &[u8]) -> String {
         .collect()
 }
 
-// 手元の1記事のSHA。mdが無ければNone。assetsはassets_base/{slug}/の直下のファイルだけ
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LocalFiles {
-    pub md: Option<String>,
-    pub assets: BTreeMap<String, String>,
+// 手元の1記事のSHAと中身。中身はCommit & Pushでそのまま送る(push.rs)
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LocalBodies {
+    // (SHA, 中身)
+    pub md: Option<(String, Vec<u8>)>,
+    // assets/{slug}/の直下のファイル
+    pub assets: BTreeMap<String, (String, Vec<u8>)>,
 }
 
-pub fn local_files(
+impl LocalBodies {
+    pub(crate) fn shas(&self) -> LocalFiles {
+        LocalFiles {
+            md: self.md.as_ref().map(|(sha, _)| sha.clone()),
+            assets: self
+                .assets
+                .iter()
+                .map(|(name, (sha, _))| (name.clone(), sha.clone()))
+                .collect(),
+        }
+    }
+}
+
+pub(crate) fn local_bodies(
     posts_dir: &Path,
     assets_base: &Path,
     slug: &str,
-) -> Result<LocalFiles, GithubError> {
+) -> Result<LocalBodies, GithubError> {
     let md_path = posts_dir.join(format!("{slug}.md"));
     let md = match fs::read(&md_path) {
-        Ok(content) => Some(blob_sha(&content)),
+        Ok(content) => Some((blob_sha(&content), content)),
         // mdが無い記事もある。ほかの読み取り失敗は止める
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(GithubError::io(&md_path, error)),
@@ -216,7 +236,7 @@ pub fn local_files(
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(LocalFiles { md, assets })
+            return Ok(LocalBodies { md, assets })
         }
         Err(error) => return Err(GithubError::io(&dir, error)),
     };
@@ -234,10 +254,25 @@ pub fn local_files(
         let content = fs::read(&path).map_err(|error| GithubError::io(&path, error))?;
         assets.insert(
             entry.file_name().to_string_lossy().to_string(),
-            blob_sha(&content),
+            (blob_sha(&content), content),
         );
     }
-    Ok(LocalFiles { md, assets })
+    Ok(LocalBodies { md, assets })
+}
+
+// 手元の1記事のSHA。mdが無ければNone。assetsはassets_base/{slug}/の直下のファイルだけ
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalFiles {
+    pub md: Option<String>,
+    pub assets: BTreeMap<String, String>,
+}
+
+pub fn local_files(
+    posts_dir: &Path,
+    assets_base: &Path,
+    slug: &str,
+) -> Result<LocalFiles, GithubError> {
+    Ok(local_bodies(posts_dir, assets_base, slug)?.shas())
 }
 
 // 手元に変更があればtrue。記録が無い記事は常にtrue

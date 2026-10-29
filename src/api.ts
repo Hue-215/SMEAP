@@ -228,6 +228,12 @@ export type GithubError =
   | { kind: 'syncBusy' }
   | { kind: 'settingsChanged' }
   | { kind: 'notLinked' }
+  | { kind: 'nothingToCommit' }
+  | { kind: 'conflict'; head: string; md: boolean; images: string[] }
+  | { kind: 'branchExists'; branch: string }
+  | { kind: 'branchGone' }
+  | { kind: 'pushRetryExceeded' }
+  | { kind: 'articleNotFound' }
 
 export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>('github_status')
@@ -297,6 +303,42 @@ export function githubSync(protect: string | null): Promise<GithubSyncResult> {
 // 取れなかった画像の件数。連携していなければ0
 export function githubFetchImages(slug: string): Promise<number> {
   return invoke<number>('github_fetch_images', { slug })
+}
+
+// Rust側のCommitKind・CommitPreview(src-tauri/src/github/push.rs)とそろえる
+export type CommitKind = 'add' | 'fix' | 'update'
+
+export interface CommitPreview {
+  title: string
+  mdName: string
+  added: number
+  removed: number
+  imagesAdded: number
+  imagesRemoved: number
+  kind: CommitKind
+}
+
+// Rust側のPushResult(src-tauri/src/github/push.rs)とそろえる
+export interface PushResult {
+  branch: string
+  commit: string
+}
+
+export function githubCommitPreview(slug: string): Promise<CommitPreview> {
+  return invoke<CommitPreview>('github_commit_preview', { slug })
+}
+
+// overwriteは、Conflictで「Push」を選んだときのリモートの先頭
+export function githubCommitPush(
+  slug: string,
+  message: string,
+  overwrite: string | null,
+): Promise<PushResult> {
+  return invoke<PushResult>('github_commit_push', { slug, message, overwrite })
+}
+
+export function githubPull(slug: string, branch: string | null): Promise<void> {
+  return invoke('github_pull', { slug, branch })
 }
 
 // 連携していなければnull

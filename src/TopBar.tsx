@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { formatSavedTime, type SaveStatus } from './autoSave'
+import type { CommitButton } from './githubCommit'
 import Icon from './Icon'
 import { t } from './i18n'
 import ImageFileInput from './ImageFileInput'
@@ -21,6 +22,8 @@ interface TopBarProps {
   notice: Notice | null
   // 記事内検索を開く。ボタンはAndroidだけに出す。nullなら押せない
   onFind: (() => void) | null
+  // nullならCommit & Pushを出さない(連携していない)
+  commit: { state: CommitButton; onClick: () => void } | null
 }
 
 function statusNotice(status: SaveStatus | null, notice: Notice | null): Notice {
@@ -52,6 +55,7 @@ export default function TopBar({
   saveStatus,
   notice,
   onFind,
+  commit,
 }: TopBarProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   const closes = !drawer.narrow && drawer.expanded
@@ -72,6 +76,19 @@ export default function TopBar({
         <Icon name={closes ? 'left_panel_close' : 'menu'} />
       </button>
       <StatusText shown={shown} />
+      {commit && (
+        <button
+          type="button"
+          className="icon-button commit-button"
+          disabled={!commit.state.enabled}
+          onClick={commit.onClick}
+          aria-label={t('topbar.commit')}
+          title={commit.state.dirty ? t('topbar.commit') : t('topbar.commit_nothing')}
+        >
+          <Icon name="upload" />
+          {commit.state.dirty && <span className="commit-button-dirty" aria-hidden="true" />}
+        </button>
+      )}
       <button
         type="button"
         className="icon-button"

@@ -74,20 +74,30 @@ fn md_entries(tree: &Tree, branch: &str, skipped: &mut Vec<Skipped>) -> BTreeMap
     shas
 }
 
-// treeの一覧を、slugのディレクトリの下の相対パス->shaにする。slugの位置やその下のファイルが
-// 通常のファイルでなければNone
-fn parse_assets(tree: &Tree, slug: &str) -> Option<BTreeMap<String, String>> {
-    let prefix = format!("{slug}/");
-    let mut assets = BTreeMap::new();
+// treeの一覧の1行(名前, sha, mode)
+type FileRow = (String, String, String);
+
+// treeの一覧を、slugのディレクトリの下のファイルにする。(名前, sha, mode)。slugはrecursiveの
+// 応答(パスはそのツリーからの相対)での取り出しの鍵。Noneなら読んだツリーの直下(subの応答)。
+// slugの位置がtreeでない・下のファイルが通常のファイルでなければNone
+fn file_rows(tree: &Tree, slug: Option<&str>) -> Option<Vec<FileRow>> {
+    let prefix = slug.map(|slug| format!("{slug}/"));
+    let mut rows = Vec::new();
     for entry in &tree.entries {
-        if entry.path == slug {
-            // assets/{slug}の位置がtreeでない
-            if entry.kind != "tree" {
-                return None;
+        let rest = match &prefix {
+            Some(prefix) => {
+                if entry.path == prefix.trim_end_matches('/') {
+                    // assets/{slug}の位置がtreeでない
+                    if entry.kind != "tree" {
+                        return None;
+                    }
+                    continue;
+                }
+                entry.path.strip_prefix(prefix)
             }
-            continue;
-        }
-        let Some(rest) = entry.path.strip_prefix(&prefix) else {
+            None => Some(entry.path.as_str()),
+        };
+        let Some(name) = rest else {
             continue;
         };
         // 下のディレクトリ。ファイルはそれぞれのentryで来る
@@ -97,9 +107,9 @@ fn parse_assets(tree: &Tree, slug: &str) -> Option<BTreeMap<String, String>> {
         if !is_regular_blob(entry) {
             return None;
         }
-        assets.insert(rest.to_string(), entry.sha.clone());
+        rows.push((name.to_string(), entry.sha.clone(), entry.mode.clone()));
     }
-    Some(assets)
+    Some(rows)
 }
 
 // 1回の読み込みの通信。同じコミット・ツリーは取り直さない
@@ -164,16 +174,27 @@ impl Reader<'_> {
         assets_sha: Option<&str>,
         slug: &str,
     ) -> Result<Option<BTreeMap<String, String>>, GithubError> {
+        Ok(self
+            .asset_rows(assets_sha, slug)?
+            .map(|rows| rows.into_iter().map(|(name, sha, _)| (name, sha)).collect()))
+    }
+
+    // 上のfnと同じ読み取りで、(名前, sha, mode)の三つ組を返す(read_articleのmodes用)
+    fn asset_rows(
+        &mut self,
+        assets_sha: Option<&str>,
+        slug: &str,
+    ) -> Result<Option<Vec<FileRow>>, GithubError> {
         let Some(sha) = assets_sha else {
-            return Ok(Some(BTreeMap::new()));
+            return Ok(Some(Vec::new()));
         };
         let tree = self.tree(sha, true)?;
         if !tree.truncated {
-            return Ok(parse_assets(&tree, slug));
+            return Ok(file_rows(&tree, Some(slug)));
         }
         let immediate = self.tree(sha, false)?;
         let Some(entry) = immediate.entries.iter().find(|entry| entry.path == slug) else {
-            return Ok(Some(BTreeMap::new()));
+            return Ok(Some(Vec::new()));
         };
         if entry.kind != "tree" {
             return Ok(None);
@@ -182,17 +203,7 @@ impl Reader<'_> {
         if sub.truncated {
             return Err(truncated());
         }
-        let mut assets = BTreeMap::new();
-        for item in &sub.entries {
-            if item.kind == "tree" {
-                continue;
-            }
-            if !is_regular_blob(item) {
-                return Ok(None);
-            }
-            assets.insert(item.path.clone(), item.sha.clone());
-        }
-        Ok(Some(assets))
+        Ok(file_rows(&sub, None))
     }
 
     // コミットのpostsツリーとassetsの位置。記事のディレクトリが無ければNone
@@ -346,6 +357,60 @@ pub fn read_remote(
         },
         skipped,
     })
+}
+
+// そのコミットでの記事。modesはリポジトリのルートからのパス -> mode(記事のmdとassets/{slug}/の下のファイル)
+pub struct RemoteArticle {
+    pub files: ArticleFiles,
+    pub modes: BTreeMap<String, String>,
+}
+
+pub fn read_article(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    basis: &Basis,
+    slug: &str,
+    commit: &str,
+) -> Result<Option<RemoteArticle>, GithubError> {
+    let mut reader = Reader {
+        t,
+        token,
+        now,
+        repo,
+        root_trees: HashMap::new(),
+        trees: HashMap::new(),
+    };
+    let Some((posts_tree, assets_sha)) = reader.read_positions(commit, basis)? else {
+        return Ok(None);
+    };
+    let name = format!("{slug}.md");
+    let Some(entry) = posts_tree.entries.iter().find(|entry| entry.path == name) else {
+        return Ok(None);
+    };
+    if !is_regular_blob(entry) {
+        return Err(GithubError::InvalidLayout { path: name });
+    }
+    let rows = reader
+        .asset_rows(assets_sha.as_deref(), slug)?
+        .ok_or(GithubError::InvalidLayout { path: name.clone() })?;
+    let assets_dir = format!("{}/{slug}", config::assets_path(&basis.posts_path));
+    let mut modes = BTreeMap::from([(format!("{}/{name}", basis.posts_path), entry.mode.clone())]);
+    let assets = rows
+        .into_iter()
+        .map(|(name, sha, mode)| {
+            modes.insert(format!("{assets_dir}/{name}"), mode);
+            (name, sha)
+        })
+        .collect();
+    Ok(Some(RemoteArticle {
+        files: ArticleFiles {
+            md: entry.sha.clone(),
+            assets,
+        },
+        modes,
+    }))
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::config::RepoRef;
@@ -176,6 +177,111 @@ pub fn blob(
         });
     }
     Ok(content)
+}
+
+// ツリーに重ねるエントリ。shaがNoneなら消す
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTreeEntry {
+    pub path: String,
+    pub mode: String,
+    pub sha: Option<String>,
+}
+
+pub fn create_blob(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    content: &[u8],
+) -> Result<String, GithubError> {
+    let url = git_url(repo, &["blobs"], &[])?;
+    let body = serde_json::json!({
+        "content": base64::engine::general_purpose::STANDARD.encode(content),
+        "encoding": "base64",
+    });
+    let request = api_request(Method::Post, &url, token, Some(body))?;
+    let (_, body) = send_json(t, &request, now)?;
+    let sha = string_of(&body, "sha")?;
+    if sha != blob_sha(content) {
+        return Err(GithubError::InvalidResponse {
+            reason: "the created blob sha does not match".to_string(),
+        });
+    }
+    Ok(sha)
+}
+
+pub fn create_tree(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    base_tree: &str,
+    entries: &[NewTreeEntry],
+) -> Result<String, GithubError> {
+    let url = git_url(repo, &["trees"], &[])?;
+    let tree = entries
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "path": entry.path,
+                "mode": entry.mode,
+                "type": "blob",
+                "sha": entry.sha,
+            })
+        })
+        .collect::<Vec<_>>();
+    let body = serde_json::json!({ "base_tree": base_tree, "tree": tree });
+    let request = api_request(Method::Post, &url, token, Some(body))?;
+    let (_, body) = send_json(t, &request, now)?;
+    string_of(&body, "sha")
+}
+
+pub fn create_commit(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    message: &str,
+    tree: &str,
+    parents: &[&str],
+) -> Result<String, GithubError> {
+    let url = git_url(repo, &["commits"], &[])?;
+    let body = serde_json::json!({ "message": message, "tree": tree, "parents": parents });
+    let request = api_request(Method::Post, &url, token, Some(body))?;
+    let (_, body) = send_json(t, &request, now)?;
+    string_of(&body, "sha")
+}
+
+pub fn create_ref(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    branch: &str,
+    sha: &str,
+) -> Result<(), GithubError> {
+    let url = git_url(repo, &["refs"], &[])?;
+    let body = serde_json::json!({ "ref": format!("refs/heads/{branch}"), "sha": sha });
+    let request = api_request(Method::Post, &url, token, Some(body))?;
+    let (_, _) = send_json(t, &request, now)?;
+    Ok(())
+}
+
+pub fn update_ref(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    branch: &str,
+    sha: &str,
+) -> Result<(), GithubError> {
+    let mut path = vec!["refs", "heads"];
+    path.extend(branch.split('/'));
+    let url = git_url(repo, &path, &[])?;
+    let body = serde_json::json!({ "sha": sha, "force": false });
+    let request = api_request(Method::Patch, &url, token, Some(body))?;
+    let (_, _) = send_json(t, &request, now)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -478,5 +584,203 @@ mod tests {
             blob(&transport, TOKEN, NOW, &repo_ref(), &other),
             Err(GithubError::InvalidResponse { .. })
         ));
+    }
+
+    // -- #65: 書き込みの通信 --
+
+    const WRITE_CONTENT: &[u8] = b"write\n";
+
+    fn blobs_url() -> String {
+        url_of(&["repos", "owner", "blog", "git", "blobs"], &[])
+    }
+
+    fn trees_url() -> String {
+        url_of(&["repos", "owner", "blog", "git", "trees"], &[])
+    }
+
+    fn commits_url() -> String {
+        url_of(&["repos", "owner", "blog", "git", "commits"], &[])
+    }
+
+    fn refs_url() -> String {
+        url_of(&["repos", "owner", "blog", "git", "refs"], &[])
+    }
+
+    // 送ったbodyのJSON。url_partで絞る
+    fn write_body(requests: &[Request], method: Method, url_part: &str) -> serde_json::Value {
+        let matching: Vec<&Request> = requests
+            .iter()
+            .filter(|request| request.method == method && request.url.contains(url_part))
+            .collect();
+        assert_eq!(matching.len(), 1, "1回のはず: {url_part}");
+        serde_json::from_slice(matching[0].body.as_deref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn create_blobはbase64で送ってSHAを返す() {
+        let transport = RouteTransport::new();
+        let sha = blob_sha(WRITE_CONTENT);
+        transport.json(
+            Method::Post,
+            &blobs_url(),
+            201,
+            serde_json::json!({ "sha": sha }),
+        );
+        assert_eq!(
+            create_blob(&transport, TOKEN, NOW, &repo_ref(), WRITE_CONTENT).unwrap(),
+            sha
+        );
+        let body = write_body(&transport.requests(), Method::Post, "/git/blobs");
+        assert_eq!(body["content"], "d3JpdGUK");
+        assert_eq!(body["encoding"], "base64");
+
+        // SHAが合わない応答はInvalidResponse
+        let transport = RouteTransport::new();
+        transport.json(
+            Method::Post,
+            &blobs_url(),
+            201,
+            serde_json::json!({ "sha": "sha-x" }),
+        );
+        assert!(matches!(
+            create_blob(&transport, TOKEN, NOW, &repo_ref(), WRITE_CONTENT),
+            Err(GithubError::InvalidResponse { .. })
+        ));
+    }
+
+    #[test]
+    fn create_treeはbase_treeとエントリを送り消すエントリはsha_nullになる() {
+        let transport = RouteTransport::new();
+        transport.json(
+            Method::Post,
+            &trees_url(),
+            201,
+            serde_json::json!({ "sha": "tree-new" }),
+        );
+        let entries = vec![
+            NewTreeEntry {
+                path: "src/content/blog/a.md".to_string(),
+                mode: "100755".to_string(),
+                sha: Some(blob_sha(WRITE_CONTENT)),
+            },
+            NewTreeEntry {
+                path: "src/assets/a/01.png".to_string(),
+                mode: "100644".to_string(),
+                sha: None,
+            },
+        ];
+        assert_eq!(
+            create_tree(&transport, TOKEN, NOW, &repo_ref(), "tree-base", &entries).unwrap(),
+            "tree-new"
+        );
+        let body = write_body(&transport.requests(), Method::Post, "/git/trees");
+        assert_eq!(body["base_tree"], "tree-base");
+        let tree = body["tree"].as_array().expect("treeは配列のはず");
+        assert_eq!(tree[0]["path"], "src/content/blog/a.md");
+        assert_eq!(tree[0]["mode"], "100755");
+        assert_eq!(tree[0]["sha"], blob_sha(WRITE_CONTENT));
+        assert_eq!(tree[0]["type"], "blob");
+        assert_eq!(tree[1]["path"], "src/assets/a/01.png");
+        assert_eq!(tree[1]["type"], "blob");
+        // キーが無いのではなく、nullで送る
+        assert_eq!(tree[1].get("sha"), Some(&serde_json::Value::Null));
+    }
+
+    #[test]
+    fn create_commitはmessageとtreeとparentsを送る() {
+        let transport = RouteTransport::new();
+        transport.json(
+            Method::Post,
+            &commits_url(),
+            201,
+            serde_json::json!({ "sha": "commit-new" }),
+        );
+        assert_eq!(
+            create_commit(
+                &transport,
+                TOKEN,
+                NOW,
+                &repo_ref(),
+                "メッセージ",
+                "tree-new",
+                &["sha-c1", "sha-c2"]
+            )
+            .unwrap(),
+            "commit-new"
+        );
+        let body = write_body(&transport.requests(), Method::Post, "/git/commits");
+        assert_eq!(body["message"], "メッセージ");
+        assert_eq!(body["tree"], "tree-new");
+        assert_eq!(body["parents"], serde_json::json!(["sha-c1", "sha-c2"]));
+    }
+
+    #[test]
+    fn create_refはrefs_headsを付けて送り422はStatusになる() {
+        let transport = RouteTransport::new();
+        transport.json(
+            Method::Post,
+            &refs_url(),
+            201,
+            serde_json::json!({"ref": "refs/heads/blog/a", "object": {"sha": "sha-c", "type": "commit"}}),
+        );
+        create_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a", "sha-c").unwrap();
+        let body = write_body(&transport.requests(), Method::Post, "/git/refs");
+        assert_eq!(body["ref"], "refs/heads/blog/a");
+        assert_eq!(body["sha"], "sha-c");
+
+        let transport = RouteTransport::new();
+        transport.json(
+            Method::Post,
+            &refs_url(),
+            422,
+            serde_json::json!({ "message": "Reference already exists" }),
+        );
+        assert!(matches!(
+            create_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a", "sha-c"),
+            Err(GithubError::Status { status: 422 })
+        ));
+    }
+
+    #[test]
+    fn update_refはsegmentごとにエンコードしてforce_falseで送る() {
+        // /はsegmentの区切りのままで、#のような文字はpercentエンコードされる
+        let target = url_of(
+            &[
+                "repos", "owner", "blog", "git", "refs", "heads", "blog", "a#b",
+            ],
+            &[],
+        );
+        let transport = RouteTransport::new();
+        transport.json(
+            Method::Patch,
+            &target,
+            200,
+            serde_json::json!({"ref": "refs/heads/blog/a#b", "object": {"sha": "sha-new", "type": "commit"}}),
+        );
+        update_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a#b", "sha-new").unwrap();
+        let request = last_request(&transport);
+        assert_eq!(request.url, target);
+        let body: serde_json::Value =
+            serde_json::from_slice(request.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["sha"], "sha-new");
+        assert_eq!(body["force"], false);
+
+        // 422と404はStatus
+        for status in [422, 404] {
+            let transport = RouteTransport::new();
+            transport.json(
+                Method::Patch,
+                &target,
+                status,
+                serde_json::json!({ "message": "failed" }),
+            );
+            assert!(
+                matches!(
+                    update_ref(&transport, TOKEN, NOW, &repo_ref(), "blog/a#b", "sha-new"),
+                    Err(GithubError::Status { status: error }) if error == status
+                ),
+                "失敗のはず: {status}"
+            );
+        }
     }
 }

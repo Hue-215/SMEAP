@@ -576,6 +576,58 @@ pub fn github_fetch_images(
 }
 
 #[tauri::command(async)]
+pub fn github_commit_preview(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<super::push::CommitPreview, CommandError> {
+    crate::store::validate_slug(&slug)?;
+    with_sync_input(&app, &github, &store, None, |input| {
+        super::push::preview(input, &slug)
+    })?
+    .ok_or_else(|| GithubError::NotLinked.into())
+}
+
+// commitを作ってbranchを進める。overwriteは、Conflictで「Push」を選んだときのリモートの先頭
+#[tauri::command(async)]
+pub fn github_commit_push(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+    message: String,
+    overwrite: Option<String>,
+) -> Result<super::push::PushResult, CommandError> {
+    crate::store::validate_slug(&slug)?;
+    with_sync_input(&app, &github, &store, None, |input| {
+        github
+            .sync_lock
+            .run(|| super::push::commit_push(input, &slug, &message, overwrite.as_deref()))
+    })?
+    .ok_or_else(|| GithubError::NotLinked.into())
+}
+
+// 手元の記事のファイルをbackupに写してから、GitHubの内容を読み込み直すための記録に替える
+#[tauri::command(async)]
+pub fn github_pull(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+    branch: Option<String>,
+) -> Result<(), CommandError> {
+    crate::store::validate_slug(&slug)?;
+    with_sync_input(&app, &github, &store, None, |input| {
+        github.sync_lock.run(|| {
+            let backup_name = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+            super::push::pull(input, &slug, branch.as_deref(), &backup_name)
+        })
+    })?
+    .ok_or_else(|| GithubError::NotLinked.into())
+}
+
+#[tauri::command(async)]
 pub fn github_article_states(
     app: AppHandle,
     store: State<'_, Store>,

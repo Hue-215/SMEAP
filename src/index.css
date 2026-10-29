@@ -352,6 +352,21 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-error);
 }
 
+/* Commit & Push(TopBar.tsx)。commitしていない変更のあるときは、アイコンの右上に丸を重ねる */
+.commit-button {
+  position: relative;
+}
+
+.commit-button-dirty {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.3125rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
 /* 記事内検索(SearchBar.tsx)。デスクトップは本文の上に浮かせる箱、Androidは上のバーの代わりの行。 */
 .find-box {
   position: absolute;
@@ -721,6 +736,42 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
 
 .confirm-dialog-error {
   color: var(--color-error);
+}
+
+/* Commit & Pushのダイアログ(CommitDialog.tsx)。md・画像の差分と、Commit messageの入力欄。 */
+.commit-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+}
+
+.commit-row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.commit-label {
+  width: 3em;
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+}
+
+.commit-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.commit-lines {
+  color: var(--color-text-secondary);
+}
+
+.commit-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .slug-dialog-fields {

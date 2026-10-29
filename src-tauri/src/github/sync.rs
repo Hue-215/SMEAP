@@ -392,7 +392,7 @@ pub fn sync(input: &SyncInput<'_>) -> Result<SyncResult, GithubError> {
 }
 
 // 通信の間に設定や保存先が替わったら、何も書かずに断る(世代はset_posts_dirが成功するたびに進む)
-fn check_unchanged(input: &SyncInput<'_>, posts_dir: &Path) -> Result<(), GithubError> {
+pub(crate) fn check_unchanged(input: &SyncInput<'_>, posts_dir: &Path) -> Result<(), GithubError> {
     if input.store.generation() != input.generation || posts_dir != input.posts_dir {
         return Err(GithubError::SettingsChanged);
     }
@@ -412,7 +412,7 @@ fn md_body<'a>(
 }
 
 // 同じディレクトリの一時ファイルに書いてから置き換える。ディレクトリが無ければ作る
-fn write_file(path: &Path, body: &[u8]) -> Result<(), GithubError> {
+pub(crate) fn write_file(path: &Path, body: &[u8]) -> Result<(), GithubError> {
     let dir = path
         .parent()
         .ok_or_else(|| GithubError::io(path, "no parent directory"))?;
@@ -424,7 +424,11 @@ fn write_file(path: &Path, body: &[u8]) -> Result<(), GithubError> {
 }
 
 // synced/{slug}.mdに、元にしたmdの中身を写す
-fn write_synced(input: &SyncInput<'_>, slug: &str, body: &[u8]) -> Result<(), GithubError> {
+pub(crate) fn write_synced(
+    input: &SyncInput<'_>,
+    slug: &str,
+    body: &[u8],
+) -> Result<(), GithubError> {
     write_file(&state::synced_path(input.data_dir, input.repo, slug), body)
 }
 

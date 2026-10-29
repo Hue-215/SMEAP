@@ -5,6 +5,7 @@ pub mod config;
 pub(crate) mod fake;
 pub mod git;
 pub mod http;
+pub mod push;
 pub mod remote;
 pub mod repos;
 pub mod state;
@@ -63,6 +64,23 @@ pub enum GithubError {
     SettingsChanged,
     #[error("not linked to GitHub")]
     NotLinked,
+    #[error("nothing to commit")]
+    NothingToCommit,
+    // headは、食い違いの確認で見たときのリモートの先頭(「Push」でoverwriteに入れるもの)
+    #[error("the remote has conflicting changes")]
+    Conflict {
+        head: String,
+        md: bool,
+        images: Vec<String>,
+    },
+    #[error("the branch already exists")]
+    BranchExists { branch: String },
+    #[error("the branch is gone")]
+    BranchGone,
+    #[error("too many retries to push")]
+    PushRetryExceeded,
+    #[error("the article is not found on GitHub")]
+    ArticleNotFound,
 }
 
 impl GithubError {

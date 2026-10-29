@@ -6,8 +6,11 @@ import {
   getPostsDirName,
   githubArticleState,
   githubArticleStates,
+  githubCommitPreview,
+  githubCommitPush,
   githubFetchImages,
   githubLogout,
+  githubPull,
   githubStatus,
   githubSync,
   githubWaitLogin,
@@ -18,6 +21,7 @@ import {
   exportZip,
   UnsavedArticleError,
   type Article,
+  type CommitPreview,
   type EditedFields,
   type GithubError,
   type GithubSyncResult,
@@ -27,8 +31,11 @@ import {
 } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
+import CommitDialog, { type CommitPushResult } from './CommitDialog'
 import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
+import { commitButtonState } from './githubCommit'
+import { githubErrorText } from './githubError'
 import type { GithubArticleStates } from './githubList'
 import { t } from './i18n'
 import { isAndroid } from './platform'
@@ -75,6 +82,12 @@ export default function App() {
   // 最後のGitHubからの読み込みの失敗。syncBusy・settingsChangedと、保存先を戻したloginRequiredは入れない
   const [syncError, setSyncError] = useState<{ error: unknown } | null>(null)
   const syncingRef = useRef(false)
+  // Commit & Pushの対象。previewがnullの間は概略を読んでいる
+  const [commitTarget, setCommitTarget] = useState<{ slug: string; preview: CommitPreview | null } | null>(
+    null,
+  )
+  // 概略を読み始めてからダイアログを閉じるまで、記事の切り替えと読み込みをさせない
+  const commitOpenRef = useRef(false)
   // 読み込み中に頼まれた読み込み(Repositoryの切り替えの後など)。終わった後にもう一度読み込む
   const syncAgainRef = useRef(false)
   // 開いている記事を置き換えさせる読み込みの間は、上のバーも含めて記事を変えさせない
@@ -82,6 +95,8 @@ export default function App() {
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
   const loaded = article.status === 'loaded' ? article : null
+  // 連携していなければnull
+  const commitButton = commitButtonState(githubStates, loaded?.slug ?? null, syncing, saveStatus.dirty)
   // 読み込みの間に開いている記事が替わっても、読み込み後の処理を今の記事に合わせるため
   const selectedSlugRef = useRef<string | null>(null)
 
@@ -197,7 +212,7 @@ export default function App() {
   // 切り替えた先の記事への入力が置き換えで消えることがある
   const selectArticle = (slug: string) => {
     drawer.close()
-    if (syncingRef.current) return
+    if (syncingRef.current || commitOpenRef.current) return
     if (slug === selectedSlug && article.status !== 'failed') return
     if (!askToSave({ kind: 'switch', slug })) openArticle(slug)
   }
@@ -400,6 +415,95 @@ export default function App() {
     }
   }
 
+  const closeCommit = () => {
+    commitOpenRef.current = false
+    setCommitTarget(null)
+  }
+
+  // 開いている記事を保存してから、Commit & Pushのダイアログに出す概略を読む
+  const openCommit = async () => {
+    const slug = loaded?.slug
+    if (slug === undefined || commitOpenRef.current || syncingRef.current) return
+    commitOpenRef.current = true
+    setCommitTarget({ slug, preview: null })
+    try {
+      await saveBeforeProceed()
+      const preview = await githubCommitPreview(slug)
+      setCommitTarget({ slug, preview })
+    } catch (e) {
+      closeCommit()
+      const error = e as GithubError
+      if (error?.kind === 'loginRequired' && (await recoverGithubLogin())) return
+      console.error('Failed to read the commit preview', e)
+      setNotice({ text: githubErrorText(e), error: true })
+    }
+  }
+
+  // ConflictとBranchExistsはダイアログに返し、成功とBranchGoneはここで閉じて読み込み直す
+  const commitPush = async (
+    slug: string,
+    message: string,
+    overwrite: string | null,
+  ): Promise<CommitPushResult> => {
+    try {
+      await githubCommitPush(slug, message, overwrite)
+    } catch (e) {
+      const error = e as GithubError
+      switch (error?.kind) {
+        case 'conflict':
+          return { kind: 'conflict', head: error.head, md: error.md, images: error.images }
+        case 'branchExists':
+          return { kind: 'branchExists', branch: error.branch }
+        case 'branchGone':
+          closeCommit()
+          setNotice({ text: t('app.branch_gone'), error: false })
+          void runGithubSyncRef.current()
+          return { kind: 'pushed' }
+        // branchは進めたが、保存先が替わったので記録を書かなかった。読み込みで記録が直る
+        case 'settingsChanged':
+          closeCommit()
+          setNotice({ text: t('app.push_not_recorded'), error: true })
+          void runGithubSyncRef.current()
+          return { kind: 'pushed' }
+        case 'loginRequired':
+          if (await recoverGithubLogin()) {
+            closeCommit()
+            return { kind: 'pushed' }
+          }
+          throw e
+        default:
+          throw e
+      }
+    }
+    closeCommit()
+    setNotice({ text: t('app.push_done'), error: false })
+    void runGithubSyncRef.current()
+    return { kind: 'pushed' }
+  }
+
+  // 手元をバックアップに写してから、選んだbranchの内容に読み込み直す
+  const commitPull = async (slug: string, branch: string | null) => {
+    try {
+      await githubPull(slug, branch)
+    } catch (e) {
+      const error = e as GithubError
+      if (error?.kind === 'branchGone') {
+        closeCommit()
+        setNotice({ text: t('app.branch_gone'), error: false })
+        void runGithubSyncRef.current()
+        return
+      }
+      if (error?.kind === 'loginRequired' && (await recoverGithubLogin())) {
+        closeCommit()
+        return
+      }
+      throw e
+    }
+    closeCommit()
+    setNotice({ text: t('app.pull_done'), error: false })
+    void runGithubSyncRef.current()
+  }
+
   // 開いている記事は、編集欄に保存していない
   // 入力があるかをRust側で知れないので書き換えさせず(deferred)、ここで入力が無いと確かめてから置き換えさせる
   const syncOpenArticle = async (): Promise<GithubSyncResult> => {
@@ -418,6 +522,8 @@ export default function App() {
   }
 
   const runGithubSync = async () => {
+    // Commit & Pushのダイアログの間に読み込むと、見ている内容が替わる
+    if (commitOpenRef.current) return
     if (syncingRef.current) {
       syncAgainRef.current = true
       return
@@ -584,7 +690,10 @@ export default function App() {
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
       <Drawer drawer={drawer}>{sidebar}</Drawer>
-      <main inert={drawer.shown || editorLocked} {...swipeToOpen}>
+      <main
+        inert={drawer.shown || editorLocked || (commitTarget !== null && commitTarget.preview === null)}
+        {...swipeToOpen}
+      >
         {isAndroid && findOpen ? (
           findBar('bar')
         ) : (
@@ -595,6 +704,7 @@ export default function App() {
             saveStatus={loaded ? saveStatus : null}
             notice={notice}
             onFind={loaded ? () => openFindRef.current(null) : null}
+            commit={commitButton === null ? null : { state: commitButton, onClick: () => void openCommit() }}
           />
         )}
         <div className="editor-area">
@@ -605,7 +715,7 @@ export default function App() {
                   key={article.slug}
                   ref={editor}
                   article={article.article}
-                  paused={saveConfirm !== null || deleteTarget !== null || syncing}
+                  paused={saveConfirm !== null || deleteTarget !== null || syncing || commitTarget !== null}
                   onSaveStatus={setSaveStatus}
                   onSaved={onSaved}
                   onNotice={(text) => setNotice({ text, error: true })}
@@ -625,6 +735,14 @@ export default function App() {
           destination={destination}
           onDone={onDialogDone}
           onCancel={() => setSlugDialog(null)}
+        />
+      )}
+      {commitTarget?.preview && (
+        <CommitDialog
+          preview={commitTarget.preview}
+          onCancel={closeCommit}
+          onCommit={(message, overwrite) => commitPush(commitTarget.slug, message, overwrite)}
+          onPull={(branch) => commitPull(commitTarget.slug, branch)}
         />
       )}
       {saveConfirm && (

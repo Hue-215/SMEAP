@@ -1052,7 +1052,7 @@ fn read_string(value: &str) -> Option<String> {
 }
 
 // 読める値だけ読み、読めなかった部分はextraに元の行を残す
-fn parse_md(slug: &str, content: &str) -> Article {
+pub(crate) fn parse_md(slug: &str, content: &str) -> Article {
     // CRLFのmdは置き換えて読む
     let content = if content.contains('\r') {
         Cow::Owned(content.replace("\r\n", "\n"))

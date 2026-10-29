@@ -28,6 +28,12 @@ export function githubErrorText(error: unknown): string {
       return t('common.github_state_unreadable')
     case 'io':
       return t('common.github_io', { path: e.path })
+    case 'pushRetryExceeded':
+      return t('common.github_push_retry_exceeded')
+    case 'articleNotFound':
+      return t('common.github_article_not_found')
+    case 'nothingToCommit':
+      return t('common.github_nothing_to_commit')
     case 'status':
     case 'invalidResponse':
     case 'redirect':
