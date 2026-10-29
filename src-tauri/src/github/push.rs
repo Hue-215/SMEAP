@@ -44,6 +44,16 @@ pub struct PushResult {
     pub kept_branch: Option<String>,
 }
 
+// 最初のCheckingは画面が出す。ここから送るのは作り直すときだけ
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "step", rename_all = "camelCase")]
+pub enum PushProgress {
+    Checking,
+    Uploading { current: usize, total: usize },
+    Committing,
+    Pushing,
+}
+
 // SHAと、送る中身(SHAを求めるときに読んだもの。読んでから送るまでに替わっても、記録と送った中身を合わせる)
 type Content = (String, Vec<u8>);
 
@@ -210,19 +220,53 @@ fn target_branch(record: Option<&Record>, basis: &Basis, slug: &str) -> String {
         .unwrap_or_else(|| branch_name(basis, slug))
 }
 
-// blobの送り直しを避けるための中身->SHA
-type BlobCache = HashMap<Vec<u8>, String>;
+// blobの送り直しを避けるための中身->SHAと、送っている間の進み具合
+struct BlobCache<'a> {
+    blobs: HashMap<Vec<u8>, String>,
+    progress: &'a dyn Fn(PushProgress),
+    sent: usize,
+    total: usize,
+}
+
+impl<'a> BlobCache<'a> {
+    fn new(progress: &'a dyn Fn(PushProgress)) -> Self {
+        BlobCache {
+            blobs: HashMap::new(),
+            progress,
+            sent: 0,
+            total: 0,
+        }
+    }
+
+    // このツリーで送る中身のうち、まだ送っていないものを、中身が同じものは1つにして数える
+    fn begin(&mut self, diff: &LocalDiff) {
+        let md = diff.md.iter().map(|(_, body)| body);
+        let assets = diff.added.values().map(|(_, body)| body);
+        let total = md
+            .chain(assets)
+            .filter(|body| !self.blobs.contains_key(*body))
+            .collect::<BTreeSet<_>>()
+            .len();
+        self.sent = 0;
+        self.total = total;
+    }
+}
 
 fn upload_blob(
     input: &SyncInput<'_>,
     blobs: &mut BlobCache,
     content: &[u8],
 ) -> Result<String, GithubError> {
-    if let Some(sha) = blobs.get(content) {
+    if let Some(sha) = blobs.blobs.get(content) {
         return Ok(sha.clone());
     }
+    blobs.sent += 1;
+    (blobs.progress)(PushProgress::Uploading {
+        current: blobs.sent,
+        total: blobs.total,
+    });
     let sha = git::create_blob(input.transport, input.token, input.now, input.repo, content)?;
-    blobs.insert(content.to_vec(), sha.clone());
+    blobs.blobs.insert(content.to_vec(), sha.clone());
     Ok(sha)
 }
 
@@ -235,6 +279,7 @@ fn tree_entries(
     modes: &BTreeMap<String, String>,
     blobs: &mut BlobCache,
 ) -> Result<Vec<NewTreeEntry>, GithubError> {
+    blobs.begin(diff);
     let slug_assets = assets_dir(input.basis, slug);
     let md = diff
         .md
@@ -280,6 +325,7 @@ fn renamed_tree_entries(
     diff: &LocalDiff,
     blobs: &mut BlobCache,
 ) -> Result<Vec<NewTreeEntry>, GithubError> {
+    blobs.begin(diff);
     let mode_of = |path: &str| {
         parent
             .modes
@@ -525,6 +571,7 @@ pub fn commit_push(
     slug: &str,
     message: &str,
     overwrite: Option<&str>,
+    progress: &dyn Fn(PushProgress),
 ) -> Result<PushResult, GithubError> {
     let state_path = state::state_path(input.data_dir, input.repo);
     // state.jsonは通信の前に読む。読めなければ通信もしない
@@ -579,7 +626,7 @@ pub fn commit_push(
         if merged.md.is_empty() {
             merged.md = md.0.clone();
         }
-        let mut blobs = BlobCache::default();
+        let mut blobs = BlobCache::new(progress);
         let entries = renamed_tree_entries(
             input,
             &old_slug,
@@ -589,6 +636,7 @@ pub fn commit_push(
             &diff,
             &mut blobs,
         )?;
+        progress(PushProgress::Committing);
         let tree = git::create_tree(
             input.transport,
             input.token,
@@ -606,6 +654,7 @@ pub fn commit_push(
             &tree,
             &[&parent],
         )?;
+        progress(PushProgress::Pushing);
         match git::create_ref(
             input.transport,
             input.token,
@@ -680,7 +729,7 @@ pub fn commit_push(
     };
     // overwriteの初回は、確かめてもらった先頭から作り直すので重なりを確かめ直さない
     let mut confirming = overwrite.is_none();
-    let mut blobs = BlobCache::default();
+    let mut blobs = BlobCache::new(progress);
     // PATCHを送った回数
     let mut attempts = 0;
     // リモートで変わったファイルを求めるときに比べる元。重なりを確かめた(または確かめてもらった)親に進める
@@ -699,6 +748,7 @@ pub fn commit_push(
         }
         compared = Some(compared_record(&parent, &parent_article.files));
         let entries = tree_entries(input, slug, &diff, &parent_article.modes, &mut blobs)?;
+        progress(PushProgress::Committing);
         let tree = git::create_tree(
             input.transport,
             input.token,
@@ -717,6 +767,7 @@ pub fn commit_push(
             &[&parent],
         )?;
         let merged = merged_files(&parent_article.files, &diff);
+        progress(PushProgress::Pushing);
         let pushed = if recorded_branch {
             attempts += 1;
             git::update_ref(
@@ -748,6 +799,7 @@ pub fn commit_push(
                 return Ok(result);
             }
             Err(error @ GithubError::Status { status: 422 | 404 }) if recorded_branch => {
+                progress(PushProgress::Checking);
                 let head =
                     git::branch_head(input.transport, input.token, input.now, input.repo, &branch)?
                         .ok_or(GithubError::BranchGone)?;
@@ -903,7 +955,8 @@ mod tests {
     use super::*;
     use crate::github::config::{github_posts_dir, RepoRef};
     use crate::github::fake::{
-        b64_decode, blob_sha, read_only_dir, repo_ref, url_of, FakeRepo, RouteTransport,
+        b64_decode, blob_sha, json_response, read_only_dir, repo_ref, url_of, FakeRepo,
+        RouteTransport,
     };
     use crate::github::http::{Method, Request};
     use crate::github::state::{Basis, Category};
@@ -1124,7 +1177,25 @@ mod tests {
             message: &str,
             overwrite: Option<&str>,
         ) -> Result<PushResult, GithubError> {
-            commit_push(&self.input(), slug, message, overwrite)
+            commit_push(&self.input(), slug, message, overwrite, &|_| {})
+        }
+
+        // 知らせと、知らせを受けた時点で送り終えていたリクエストの数を組にして返す
+        fn commit_push_progress(
+            &self,
+            slug: &str,
+            message: &str,
+            overwrite: Option<&str>,
+        ) -> (Result<PushResult, GithubError>, Vec<(PushProgress, usize)>) {
+            let received = Arc::new(Mutex::new(Vec::new()));
+            let recorded = Arc::clone(&received);
+            let transport = Arc::clone(&self.transport);
+            let result = commit_push(&self.input(), slug, message, overwrite, &move |progress| {
+                let at = transport.requests().len();
+                recorded.lock().unwrap().push((progress, at));
+            });
+            let received = received.lock().unwrap().clone();
+            (result, received)
         }
 
         fn pull(
@@ -1251,6 +1322,40 @@ mod tests {
                 })
                 .collect()
         }
+
+        // atは知らせを受けた時点のリクエストの数。知らせの直後に送ったリクエストを返す
+        fn request_after(&self, at: usize) -> String {
+            let requests = self.transport.requests();
+            let request = requests
+                .get(at)
+                .unwrap_or_else(|| panic!("{at}番目のリクエストは無い"));
+            request_text(request)
+        }
+
+        // Checking以外の知らせが、それぞれ別の対応する通信の直前にあるか。pushingはPushingの直後の通信
+        fn assert_progress_before_requests(
+            &self,
+            progress: &[(PushProgress, usize)],
+            pushing: &str,
+        ) {
+            for (step, at) in progress {
+                let expected = match step {
+                    PushProgress::Checking => continue,
+                    PushProgress::Uploading { .. } => "Post /git/blobs",
+                    PushProgress::Committing => "Post /git/trees",
+                    PushProgress::Pushing => pushing,
+                };
+                assert_eq!(self.request_after(*at), expected, "{step:?}");
+            }
+            assert!(
+                progress.windows(2).all(|pair| pair[0].1 < pair[1].1),
+                "{progress:?}"
+            );
+        }
+
+        fn request_before(&self, at: usize) -> String {
+            request_text(&self.transport.requests()[at - 1])
+        }
     }
 
     fn bodies(requests: &[Request], method: Method, url_part: &str) -> Vec<Value> {
@@ -1258,6 +1363,22 @@ mod tests {
             .iter()
             .filter(|request| request.method == method && request.url.contains(url_part))
             .map(|request| serde_json::from_slice(request.body.as_deref().unwrap()).unwrap())
+            .collect()
+    }
+
+    // リクエストを「メソッド URLの末尾」の形にする
+    fn request_text(request: &Request) -> String {
+        let tail = request
+            .url
+            .split_once("/repos/owner/blog")
+            .map_or(request.url.as_str(), |(_, tail)| tail);
+        format!("{:?} {tail}", request.method)
+    }
+
+    fn steps_of(progress: &[(PushProgress, usize)]) -> Vec<PushProgress> {
+        progress
+            .iter()
+            .map(|(progress, _)| progress.clone())
             .collect()
     }
 
@@ -3107,5 +3228,332 @@ mod tests {
         }
         assert!(shared.is_empty(), "{shared:?}");
         assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), PNG3);
+    }
+
+    // #78: Commit & Pushの進捗 -----------------------------------------------------
+
+    #[test]
+    fn 新しい記事の進捗は送るファイルごとにUploadingを出してCommittingとPushingで終わる() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", NO_A_MAIN);
+        repo.accept_writes(&test.transport);
+        test.write_md(&a_new());
+        test.write_image("a/01.png", PNG);
+        test.write_image("a/02.png", PNG2);
+
+        let (result, progress) = test.commit_push_progress(SLUG, "最初のcommit", None);
+        result.unwrap();
+
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 3
+                },
+                PushProgress::Uploading {
+                    current: 2,
+                    total: 3
+                },
+                PushProgress::Uploading {
+                    current: 3,
+                    total: 3
+                },
+                PushProgress::Committing,
+                PushProgress::Pushing,
+            ]
+        );
+        test.assert_progress_before_requests(&progress, "Post /git/refs");
+    }
+
+    #[test]
+    fn 同じ中身の画像は1つに数えてUploadingを出す() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", NO_A_MAIN);
+        repo.accept_writes(&test.transport);
+        test.write_md(&a_new());
+        test.write_image("a/01.png", PNG);
+        test.write_image("a/02.png", PNG);
+
+        let (result, progress) = test.commit_push_progress(SLUG, "最初のcommit", None);
+        result.unwrap();
+
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 2
+                },
+                PushProgress::Uploading {
+                    current: 2,
+                    total: 2
+                },
+                PushProgress::Committing,
+                PushProgress::Pushing,
+            ]
+        );
+        assert_eq!(test.post_bodies("/git/blobs").len(), 2);
+    }
+
+    #[test]
+    fn 記録のbranchがある記事の進捗は変えたファイルだけUploadingを出す() {
+        let test = PushTest::new();
+        let (repo, _head) = test.branch_synced();
+        repo.accept_writes(&test.transport);
+        test.write_md(A_LOCAL);
+
+        let (result, progress) = test.commit_push_progress(SLUG, "更新", None);
+        result.unwrap();
+
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 1
+                },
+                PushProgress::Committing,
+                PushProgress::Pushing,
+            ]
+        );
+        let (_, at) = progress.last().unwrap();
+        assert_eq!(test.request_after(*at), "Patch /git/refs/heads/blog/a");
+    }
+
+    #[test]
+    fn 作り直すときはCheckingからやり直し送り済みのblobをUploadingに数えない() {
+        let test = PushTest::new();
+        let (repo, _head) = test.branch_synced();
+        repo.accept_writes(&test.transport);
+        test.mark_fetched(SLUG, &[("01.png", true)]);
+        // 記録と違う中身にする。リモートが足す02.pngとは別の名前
+        test.write_image("a/01.png", PNG3);
+        test.write_md(A_LOCAL);
+        branch_hook(
+            &repo,
+            &test,
+            Arc::new(Mutex::new(Vec::new())),
+            1,
+            OTHER_ADDS_IMAGE,
+        );
+
+        let (result, progress) = test.commit_push_progress(SLUG, "更新", None);
+        result.unwrap();
+
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 2
+                },
+                PushProgress::Uploading {
+                    current: 2,
+                    total: 2
+                },
+                PushProgress::Committing,
+                PushProgress::Pushing,
+                PushProgress::Checking,
+                PushProgress::Committing,
+                PushProgress::Pushing,
+            ]
+        );
+        // 2周目は送り済みなのでblobのPOSTは増えない
+        assert_eq!(test.post_bodies("/git/blobs").len(), 2);
+        test.assert_progress_before_requests(&progress, "Patch /git/refs/heads/blog/a");
+        // Checkingは、失敗したPATCHの後、branchの先頭を読む前
+        let (_, at) = progress
+            .iter()
+            .find(|(progress, _)| *progress == PushProgress::Checking)
+            .expect("Checkingはあるはず");
+        assert_eq!(test.request_before(*at), "Patch /git/refs/heads/blog/a");
+        assert_eq!(test.request_after(*at), "Get /git/ref/heads/blog/a");
+    }
+
+    #[test]
+    fn branchを進められず重なっていればCheckingの後にConflictで止まる() {
+        let test = PushTest::new();
+        let (repo, _head) = test.branch_synced();
+        repo.accept_writes(&test.transport);
+        test.write_md(A_LOCAL);
+        branch_hook(
+            &repo,
+            &test,
+            Arc::new(Mutex::new(Vec::new())),
+            1,
+            OTHER_CHANGES_MD,
+        );
+
+        let (result, progress) = test.commit_push_progress(SLUG, "更新", None);
+
+        assert!(matches!(
+            result,
+            Err(GithubError::Conflict { md: true, .. })
+        ));
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 1
+                },
+                PushProgress::Committing,
+                PushProgress::Pushing,
+                PushProgress::Checking,
+            ]
+        );
+    }
+
+    #[test]
+    fn 改名した記事が送る前にConflictで止まるときは段階を知らせず何も作らない() {
+        let test = PushTest::new();
+        // 改名した記事の記録のbranch(blog/a)の先頭が進み、本文が重なる
+        let (repo, _head) = test.renamed_synced();
+        test.write_md_to(NEW_SLUG, A_LOCAL);
+        repo.branch(&test.transport, BRANCH, OTHER_CHANGES_MD);
+        repo.accept_writes(&test.transport);
+
+        let (result, progress) = test.commit_push_progress(NEW_SLUG, "更新", None);
+
+        assert!(matches!(
+            result,
+            Err(GithubError::Conflict { md: true, .. })
+        ));
+        assert!(progress.is_empty(), "{progress:?}");
+        assert!(test.post_bodies("/git/blobs").is_empty());
+        assert!(test.post_bodies("/git/trees").is_empty());
+        assert!(test.post_bodies("/git/commits").is_empty());
+    }
+
+    #[test]
+    fn 改名した記事でmdを変えていなければCommittingとPushingだけ出す() {
+        let test = PushTest::new();
+        let (repo, _head) = test.renamed_synced();
+        repo.accept_writes(&test.transport);
+
+        let (result, progress) = test.commit_push_progress(NEW_SLUG, "更新", None);
+        result.unwrap();
+
+        assert_eq!(
+            steps_of(&progress),
+            vec![PushProgress::Committing, PushProgress::Pushing]
+        );
+        assert!(test.post_bodies("/git/blobs").is_empty());
+        let (_, at) = progress.last().unwrap();
+        assert_eq!(test.request_after(*at), "Post /git/refs");
+    }
+
+    #[test]
+    fn 改名した記事でmdを変えるとPushingの後に古いbranchを消すまで知らせない() {
+        let test = PushTest::new();
+        let (repo, _head) = test.renamed_synced();
+        test.write_md_to(NEW_SLUG, A_LOCAL);
+        repo.accept_writes(&test.transport);
+
+        let (result, progress) = test.commit_push_progress(NEW_SLUG, "更新", None);
+        result.unwrap();
+
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 1
+                },
+                PushProgress::Committing,
+                PushProgress::Pushing,
+            ]
+        );
+        // Pushingの直後は新しいbranchを作るPOST
+        let (_, at) = progress.last().unwrap();
+        assert_eq!(test.request_after(*at), "Post /git/refs");
+        // 古いbranchのDELETEはその後。Pushingの後に知らせは来ない
+        let requests = test.transport.requests();
+        assert!(
+            requests[*at..].iter().any(|request| {
+                request.method == Method::Delete && request.url == test.ref_url(BRANCH)
+            }),
+            "{:?}",
+            &requests[*at..]
+        );
+    }
+
+    #[test]
+    fn blobの送信が失敗したらそこで止まりエラーを返す() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", NO_A_MAIN);
+        repo.accept_writes(&test.transport);
+        // blobのPOSTの1回目は成功し、2回目は500を返す
+        let attempts = Arc::new(Mutex::new(0usize));
+        let counter = Arc::clone(&attempts);
+        test.transport.on(
+            Method::Post,
+            &url_of(&["repos", "owner", "blog", "git", "blobs"], &[]),
+            Box::new(move |request: &Request| {
+                let mut attempts = counter.lock().unwrap();
+                *attempts += 1;
+                if *attempts > 1 {
+                    return Ok(json_response(
+                        500,
+                        serde_json::json!({ "message": "failed" }),
+                    ));
+                }
+                let body: Value = serde_json::from_slice(request.body.as_deref().unwrap()).unwrap();
+                let content = b64_decode(body["content"].as_str().unwrap()).unwrap();
+                Ok(json_response(
+                    201,
+                    serde_json::json!({ "sha": blob_sha(&content) }),
+                ))
+            }),
+        );
+        test.write_md(&a_new());
+        test.write_image("a/01.png", PNG);
+
+        let (result, progress) = test.commit_push_progress(SLUG, "最初のcommit", None);
+
+        assert!(matches!(result, Err(GithubError::Status { status: 500 })));
+        assert_eq!(
+            steps_of(&progress),
+            vec![
+                PushProgress::Uploading {
+                    current: 1,
+                    total: 2
+                },
+                PushProgress::Uploading {
+                    current: 2,
+                    total: 2
+                },
+            ]
+        );
+        assert_eq!(*attempts.lock().unwrap(), 2);
+    }
+
+    // 画面のPushProgress(src/api.ts)と同じ形
+    #[test]
+    fn PushProgressはstepで段階を分けて送る() {
+        assert_eq!(
+            serde_json::to_value(PushProgress::Checking).unwrap(),
+            serde_json::json!({ "step": "checking" })
+        );
+        assert_eq!(
+            serde_json::to_value(PushProgress::Uploading {
+                current: 2,
+                total: 4
+            })
+            .unwrap(),
+            serde_json::json!({ "step": "uploading", "current": 2, "total": 4 })
+        );
+        assert_eq!(
+            serde_json::to_value(PushProgress::Committing).unwrap(),
+            serde_json::json!({ "step": "committing" })
+        );
+        assert_eq!(
+            serde_json::to_value(PushProgress::Pushing).unwrap(),
+            serde_json::json!({ "step": "pushing" })
+        );
     }
 }

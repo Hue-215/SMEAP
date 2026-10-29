@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import type { GithubArticleState, GithubArticleStates, GithubSkipped } from './githubList'
 import { isAndroid } from './platform'
 
@@ -340,6 +340,13 @@ export interface PushResult {
   keptBranch: string | null
 }
 
+// Rust側のPushProgress(src-tauri/src/github/push.rs)とそろえる
+export type PushProgress =
+  | { step: 'checking' }
+  | { step: 'uploading'; current: number; total: number }
+  | { step: 'committing' }
+  | { step: 'pushing' }
+
 export function githubCommitPreview(slug: string): Promise<CommitPreview> {
   return invoke<CommitPreview>('github_commit_preview', { slug })
 }
@@ -349,8 +356,16 @@ export function githubCommitPush(
   slug: string,
   message: string,
   overwrite: string | null,
+  onProgress: (progress: PushProgress) => void,
 ): Promise<PushResult> {
-  return invoke<PushResult>('github_commit_push', { slug, message, overwrite })
+  const channel = new Channel<PushProgress>()
+  channel.onmessage = onProgress
+  return invoke<PushResult>('github_commit_push', {
+    slug,
+    message,
+    overwrite,
+    onProgress: channel,
+  })
 }
 
 export function githubPull(slug: string, branch: string | null): Promise<void> {

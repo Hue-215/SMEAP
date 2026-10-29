@@ -3493,7 +3493,7 @@ mod tests {
         repo.accept_writes(&test.transport);
         let base = repo.head("main");
 
-        let result = push::commit_push(&test.input(), "new", "更新", None).unwrap();
+        let result = push::commit_push(&test.input(), "new", "更新", None, &|_| {}).unwrap();
 
         assert_eq!(result.branch, "blog/new");
         // 親はベースの先頭

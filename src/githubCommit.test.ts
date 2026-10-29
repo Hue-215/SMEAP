@@ -9,6 +9,7 @@ import {
   imagesText,
   linesText,
   mdNameText,
+  progressText,
 } from './githubCommit'
 
 const NOW = 1_700_000_000
@@ -124,6 +125,15 @@ describe('canSendMessage', () => {
     expect(canSendMessage('   ')).toBe(false)
     // 全角の空白も空白
     expect(canSendMessage('　')).toBe(false)
+  })
+})
+
+describe('progressText', () => {
+  it('段階ごとの文言を出す', () => {
+    expect(progressText({ step: 'checking' })).toBe('確認中')
+    expect(progressText({ step: 'uploading', current: 2, total: 4 })).toBe('送信中(2/4)')
+    expect(progressText({ step: 'committing' })).toBe('commit中')
+    expect(progressText({ step: 'pushing' })).toBe('push中')
   })
 })
 

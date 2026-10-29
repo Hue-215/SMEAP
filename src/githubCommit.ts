@@ -1,5 +1,5 @@
 // Commit & Pushのための判断(docs/spec.mdの「Commit & Push」)
-import type { CommitKind, CommitPreview } from './api'
+import type { CommitKind, CommitPreview, PushProgress } from './api'
 import type { GithubArticleStates } from './githubList'
 import { t } from './i18n'
 
@@ -35,6 +35,19 @@ export function imagesText(added: number, removed: number): string | null {
 export interface CommitButton {
   enabled: boolean
   dirty: boolean
+}
+
+export function progressText(progress: PushProgress): string {
+  switch (progress.step) {
+    case 'checking':
+      return t('commit.progress_checking')
+    case 'uploading':
+      return t('commit.progress_uploading', { current: progress.current, total: progress.total })
+    case 'committing':
+      return t('commit.progress_committing')
+    case 'pushing':
+      return t('commit.progress_pushing')
+  }
 }
 
 // 本文の行。slugを変えた記事は元の名前も出す
