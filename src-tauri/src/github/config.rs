@@ -131,8 +131,7 @@ fn check_ref_format(name: &str) -> bool {
         })
 }
 
-// 画像の置き場所は2つ上のassets。GitHubから画像を読む段で使う
-#[allow(dead_code)]
+// 画像の置き場所は2つ上のassets
 // "src/content/blog" -> "src/assets"
 pub fn assets_path(posts_path: &str) -> String {
     let mut components: Vec<&str> = posts_path.split('/').collect();

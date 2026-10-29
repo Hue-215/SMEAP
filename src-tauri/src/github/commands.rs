@@ -11,6 +11,8 @@ use super::auth::{self, DeviceCode, LoginOutcome};
 use super::config::{self, GithubSettings, RepoRef};
 use super::http::{Transport, UreqTransport, VERIFICATION_URL};
 use super::repos;
+use super::state::Basis;
+use super::sync::{self, SyncInput, SyncLock, SyncResult};
 use super::token::{self, TokenManager, TokenSet};
 use super::{now, APP_SLUG, CLIENT_ID};
 use crate::github::GithubError;
@@ -107,6 +109,7 @@ pub struct GitHub {
     transport: Arc<dyn Transport>,
     manager: TokenManager,
     login: Mutex<Login>,
+    sync_lock: SyncLock,
     // 設定に記事の保存先が無いときの、今までの保存先
     default_local_dir: PathBuf,
 }
@@ -123,6 +126,7 @@ impl GitHub {
             transport,
             manager,
             login: Mutex::new(Login::default()),
+            sync_lock: SyncLock::default(),
             default_local_dir,
         }
     }
@@ -502,6 +506,129 @@ pub fn open_github_page(app: AppHandle, page: String) -> Result<(), CommandError
     };
     app.opener().open_url(url, None::<&str>)?;
     Ok(())
+}
+
+// 連携していなければNone。世代は連携を確かめる前に読み、その後の切り替えをsync.rsで見つける
+fn with_sync_input<T>(
+    app: &AppHandle,
+    github: &GitHub,
+    store: &Store,
+    protect: Option<&str>,
+    run: impl FnOnce(&SyncInput<'_>) -> Result<T, GithubError>,
+) -> Result<Option<T>, CommandError> {
+    let generation = store.generation();
+    let Some(linked) = linked(app, store)? else {
+        return Ok(None);
+    };
+    let token = github.manager.access_token(now())?;
+    let input = SyncInput {
+        transport: github.transport.as_ref(),
+        token: &token,
+        now: now(),
+        data_dir: &linked.data_dir,
+        repo: &linked.repo,
+        basis: &linked.basis,
+        store,
+        generation,
+        posts_dir: &linked.posts_dir,
+        protect,
+    };
+    Ok(Some(run(&input)?))
+}
+
+#[tauri::command(async)]
+pub fn github_sync(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    protect: Option<String>,
+) -> Result<SyncResult, CommandError> {
+    if let Some(slug) = &protect {
+        crate::store::validate_slug(slug)?;
+    }
+    with_sync_input(&app, &github, &store, protect.as_deref(), |input| {
+        github.sync_lock.run(|| sync::sync(input))
+    })?
+    .ok_or_else(|| GithubError::NotLinked.into())
+}
+
+// 取れなかった画像の件数
+#[tauri::command(async)]
+pub fn github_fetch_images(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<usize, CommandError> {
+    crate::store::validate_slug(&slug)?;
+    // 取る画像が無ければトークンを取らない(期限が切れていると更新の通信をするので、オフラインで失敗する)
+    let Some(linked) = linked(&app, &store)? else {
+        return Ok(0);
+    };
+    if sync::wanted_images(&linked.data_dir, &linked.repo, &linked.basis, &store, &slug)?.is_empty()
+    {
+        return Ok(0);
+    }
+    let failed = with_sync_input(&app, &github, &store, None, |input| {
+        sync::fetch_images(input, &slug)
+    })?;
+    Ok(failed.unwrap_or(0))
+}
+
+#[tauri::command(async)]
+pub fn github_article_states(
+    app: AppHandle,
+    store: State<'_, Store>,
+) -> Result<Option<sync::ArticleStates>, CommandError> {
+    let Some(linked) = linked(&app, &store)? else {
+        return Ok(None);
+    };
+    Ok(Some(sync::article_states(
+        &linked.data_dir,
+        &linked.repo,
+        &linked.basis,
+        &store,
+    )))
+}
+
+#[tauri::command(async)]
+pub fn github_article_state(
+    app: AppHandle,
+    store: State<'_, Store>,
+    slug: String,
+) -> Result<Option<sync::ArticleState>, CommandError> {
+    let Some(linked) = linked(&app, &store)? else {
+        return Ok(None);
+    };
+    let state = sync::article_state(&linked.data_dir, &linked.repo, &linked.basis, &store, &slug)?;
+    Ok(Some(state))
+}
+
+struct Linked {
+    data_dir: PathBuf,
+    repo: RepoRef,
+    basis: Basis,
+    posts_dir: PathBuf,
+}
+
+// Repositoryを選んでいて、token.jsonがあり、保存層の向き先がそのRepositoryの記事のディレクトリのとき
+fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError> {
+    let settings = settings::read_from(&settings::file_path(app)?)?;
+    let data_dir = settings::data_dir(app)?;
+    let (Some(repo), Some(basis)) = (settings.github.repo.clone(), Basis::of(&settings.github))
+    else {
+        return Ok(None);
+    };
+    let posts_dir = config::github_posts_dir(&data_dir, &repo, &basis.posts_path);
+    if store.posts_dir() != posts_dir || !config::linked(&data_dir, &settings.github) {
+        return Ok(None);
+    }
+    Ok(Some(Linked {
+        data_dir,
+        repo,
+        basis,
+        posts_dir,
+    }))
 }
 
 fn sleep(seconds: u64) {

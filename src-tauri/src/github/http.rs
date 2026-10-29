@@ -10,6 +10,8 @@ pub const VERIFICATION_URL: &str = "https://github.com/login/device";
 const USER_AGENT: &str = concat!("SMEAP/", env!("CARGO_PKG_VERSION"));
 // githubが案内している現行のAPI版
 const API_VERSION: &str = "2022-11-28";
+// 応答のbodyを読む上限(blobの上限)
+const BODY_LIMIT: u64 = 100 * 1024 * 1024;
 
 // URLの部品に入れる値は、RFC3986のunreserved(ASCIIの英数字と-_.~)以外をpercentエンコードする
 const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
@@ -260,6 +262,30 @@ pub fn send_json(
     Ok((response, body))
 }
 
+// 2xxのbodyをそのまま返す(blobのraw)
+pub fn send_raw(
+    transport: &dyn Transport,
+    request: &Request,
+    now: i64,
+) -> Result<Response, GithubError> {
+    classify(transport.send(request)?, now)
+}
+
+pub fn api_request_accept(
+    method: Method,
+    url: &str,
+    token: &str,
+    accept: &str,
+) -> Result<Request, GithubError> {
+    let mut request = api_request(method, url, token, None)?;
+    for (name, value) in &mut request.headers {
+        if name.eq_ignore_ascii_case("accept") {
+            *value = accept.to_string();
+        }
+    }
+    Ok(request)
+}
+
 // keyは"login"や"owner.login"のように、.でつないだ項目の名前
 pub(crate) fn string_of(body: &serde_json::Value, key: &str) -> Result<String, GithubError> {
     let mut value = body;
@@ -401,7 +427,8 @@ impl UreqTransport {
             })
             .collect();
         let mut body = response.into_body();
-        let body = body.read_to_vec()?;
+        // read_to_vecの既定の上限は10MBで、それより大きい画像のblobを読めない
+        let body = body.with_config().limit(BODY_LIMIT).read_to_vec()?;
         Ok(Response {
             status,
             headers,

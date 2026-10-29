@@ -3,8 +3,12 @@ pub mod commands;
 pub mod config;
 #[cfg(test)]
 pub(crate) mod fake;
+pub mod git;
 pub mod http;
+pub mod remote;
 pub mod repos;
+pub mod state;
+pub mod sync;
 pub mod token;
 
 use serde::Serialize;
@@ -47,6 +51,18 @@ pub enum GithubError {
     InvalidRepository,
     #[error("io error: {path}: {reason}")]
     Io { path: String, reason: String },
+    #[error("base branch not found")]
+    BaseBranchNotFound,
+    #[error("invalid layout: {path}")]
+    InvalidLayout { path: String },
+    #[error("the sync state is unreadable")]
+    StateUnreadable,
+    #[error("a sync is already running")]
+    SyncBusy,
+    #[error("the settings changed during the sync")]
+    SettingsChanged,
+    #[error("not linked to GitHub")]
+    NotLinked,
 }
 
 impl GithubError {
@@ -54,6 +70,13 @@ impl GithubError {
     pub(crate) fn invalid_field(key: &str) -> Self {
         GithubError::InvalidResponse {
             reason: format!("{key} is missing or invalid"),
+        }
+    }
+
+    pub(crate) fn io(path: &std::path::Path, error: impl std::fmt::Display) -> Self {
+        GithubError::Io {
+            path: path.display().to_string(),
+            reason: error.to_string(),
         }
     }
 }

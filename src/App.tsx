@@ -4,6 +4,12 @@ import {
   deleteArticle,
   getPostsDir,
   getPostsDirName,
+  githubArticleState,
+  githubArticleStates,
+  githubFetchImages,
+  githubLogout,
+  githubStatus,
+  githubSync,
   githubWaitLogin,
   listArticles,
   pickPostsDir,
@@ -13,6 +19,8 @@ import {
   UnsavedArticleError,
   type Article,
   type EditedFields,
+  type GithubError,
+  type GithubSyncResult,
   type GithubWaitLogin,
   type PostsDir,
   type StoreError,
@@ -21,6 +29,7 @@ import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
 import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
+import type { GithubArticleStates } from './githubList'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
@@ -60,9 +69,21 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   // 同じ文言が続いても出し直すよう、包んで持つ
   const [notice, setNotice] = useState<Notice | null>(null)
+  // GitHub連携の記事ごとの状態。nullは連携していない
+  const [githubStates, setGithubStates] = useState<GithubArticleStates | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  // 最後のGitHubからの読み込みの失敗。syncBusy・settingsChangedと、保存先を戻したloginRequiredは入れない
+  const [syncError, setSyncError] = useState<{ error: unknown } | null>(null)
+  const syncingRef = useRef(false)
+  // 読み込み中に頼まれた読み込み(Repositoryの切り替えの後など)。終わった後にもう一度読み込む
+  const syncAgainRef = useRef(false)
+  // 開いている記事を置き換えさせる読み込みの間は、上のバーも含めて記事を変えさせない
+  const [editorLocked, setEditorLocked] = useState(false)
   const editor = useRef<ArticleEditorHandle>(null)
   const selectedSlug = article.status === 'none' ? null : article.slug
   const loaded = article.status === 'loaded' ? article : null
+  // 読み込みの間に開いている記事が替わっても、読み込み後の処理を今の記事に合わせるため
+  const selectedSlugRef = useRef<string | null>(null)
 
   // 記事内検索。文字は記事を切り替えても残す
   const [findFor, setFindFor] = useState<Article | null>(null)
@@ -74,20 +95,29 @@ export default function App() {
 
   // 後から出した読み込みが先に返ったら、前の読み込みの結果は捨てる
   const listRequest = useRef(0)
-  const reloadArticles = () => {
+  const reloadArticles = (): Promise<GithubArticleStates | null> => {
     const request = ++listRequest.current
-    listArticles()
-      .then((list) => {
-        if (request !== listRequest.current) return
+    // 連携していないときはgithub_article_statesがnullを返す
+    // 読めなかったときは前の状態を残す(nullにすると連携していない表示になる)
+    const states = githubArticleStates().catch((e) => {
+      console.error('Failed to read the GitHub states', e)
+      return undefined
+    })
+    return Promise.all([listArticles(), states])
+      .then(([list, githubResult]) => {
+        if (request !== listRequest.current) return null
         setArticles({
           status: 'loaded',
           articles: list.articles,
           broken: list.broken,
           unreadable: list.unreadable,
         })
+        if (githubResult === undefined) return null
+        setGithubStates(githubResult)
+        return githubResult
       })
       .catch((e) => {
-        if (request !== listRequest.current) return
+        if (request !== listRequest.current) return null
         console.error('Failed to load the article list', e)
         const error = e as StoreError | string | undefined
         // Tauriは種類の無いエラーを文字列で渡す
@@ -96,11 +126,21 @@ export default function App() {
           path: typeof error === 'string' ? undefined : error?.path,
           reason: typeof error === 'string' ? error : error?.reason,
         })
+        return null
       })
   }
 
+  // 描画のたびに最新のrunGithubSyncを入れ、起動時に1回だけ動くeffectなどから呼ぶ
+  const runGithubSyncRef = useRef<() => Promise<void>>(async () => {})
+  // 一覧を読み直し、連携していればGitHubから読み込む
+  const reloadAndSync = () => {
+    void reloadArticles().then((states) => {
+      if (states !== null) void runGithubSyncRef.current()
+    })
+  }
+
   useEffect(() => {
-    reloadArticles()
+    reloadAndSync()
     if (isAndroid) {
       getPostsDirName()
         .then((name) => setPostsDir({ kind: 'android', name }))
@@ -118,6 +158,10 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [notice])
 
+  useEffect(() => {
+    selectedSlugRef.current = selectedSlug
+  })
+
   const openArticle = (slug: string) => {
     setArticle({ status: 'loading', slug })
     // 切り替えた後に返ってきた前の記事の読み込みは捨てる
@@ -126,7 +170,21 @@ export default function App() {
         current.status === 'loading' && current.slug === slug ? next : current,
       )
     whenSaved()
-      .then(() => readArticle(slug))
+      .then(async () => {
+        // 連携しているときは、まだ取っていない画像をGitHubから取ってから読む。取り損ねても記事は開く
+        if (githubStates !== null && !githubStates.stateUnreadable) {
+          try {
+            const count = await githubFetchImages(slug)
+            if (count > 0) {
+              setNotice({ text: t('app.images_fetch_failed_count', { count }), error: true })
+            }
+          } catch (e) {
+            console.error('Failed to fetch the images from GitHub', e)
+            setNotice({ text: t('app.images_fetch_failed'), error: true })
+          }
+        }
+        return readArticle(slug)
+      })
       .then((loaded) => settle({ status: 'loaded', slug, article: loaded }))
       .catch((e) => {
         console.error('Failed to read the article', e)
@@ -135,8 +193,11 @@ export default function App() {
   }
 
   // 読めなかった記事は、選び直したら読み直す。
+  // GitHubからの読み込み中は切り替えない。読み込みが守るのは始めたときに開いていた記事だけなので、
+  // 切り替えた先の記事への入力が置き換えで消えることがある
   const selectArticle = (slug: string) => {
     drawer.close()
+    if (syncingRef.current) return
     if (slug === selectedSlug && article.status !== 'failed') return
     if (!askToSave({ kind: 'switch', slug })) openArticle(slug)
   }
@@ -309,7 +370,7 @@ export default function App() {
   // 保存先が替わった後。開いている記事は前の保存先のものなので閉じ、一覧と保存先を読み直す
   const afterDestinationChange = () => {
     setArticle({ status: 'none' })
-    reloadArticles()
+    reloadAndSync()
     if (!isAndroid) {
       getPostsDir()
         .then((location) => setPostsDir({ kind: 'desktop', ...location }))
@@ -323,6 +384,98 @@ export default function App() {
     await saveBeforeProceed()
     await command()
     afterDestinationChange()
+  }
+
+  // 読み込みでログインの切れが出たら、設定画面と同じく状態を読み、必要なら今までの保存先へ戻す
+  // 保存先を戻したらtrue
+  const recoverGithubLogin = async () => {
+    try {
+      const status = await githubStatus()
+      if (!status.loginExpired) return false
+      await switchDestination(githubLogout)
+      return true
+    } catch (e) {
+      console.error('Failed to read the GitHub status', e)
+      return false
+    }
+  }
+
+  // 開いている記事は、編集欄に保存していない
+  // 入力があるかをRust側で知れないので書き換えさせず(deferred)、ここで入力が無いと確かめてから置き換えさせる
+  const syncOpenArticle = async (): Promise<GithubSyncResult> => {
+    const open = selectedSlugRef.current
+    const result = await githubSync(open)
+    if (open === null || !result.deferred.includes(open)) return result
+    // 入力できなくした画面が出てから、入力が無いことを確かめる。解くのはrunGithubSyncで開き直した後
+    setEditorLocked(true)
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    if (!editor.current?.isDirty()) return githubSync(null)
+    setEditorLocked(false)
+    // 入力を保存し、手元の変更として読み直させる(GitHub上でも変わっていれば食い違いの印が付く)
+    if (!(await saveOpenArticle())) return result
+    await whenSaved()
+    return githubSync(open)
+  }
+
+  const runGithubSync = async () => {
+    if (syncingRef.current) {
+      syncAgainRef.current = true
+      return
+    }
+    syncingRef.current = true
+    setSyncing(true)
+    let result: GithubSyncResult | null = null
+    try {
+      try {
+        result = await syncOpenArticle()
+        setSyncError(null)
+      } catch (e) {
+        const error = e as GithubError
+        switch (error?.kind) {
+          case 'syncBusy':
+          case 'settingsChanged':
+            // 重なった読み込みと設定の変更は、後の読み込みで出し直すので失敗として出さない
+            break
+          case 'loginRequired':
+            if (!(await recoverGithubLogin())) setSyncError({ error: e })
+            break
+          default:
+            console.error('Failed to sync from GitHub', e)
+            setSyncError({ error: e })
+        }
+      }
+      await reloadArticles()
+      // 開いている記事が替わっていたら開き直し、GitHub上から消えていたら閉じる
+      const open = selectedSlugRef.current
+      if (result !== null && open !== null) {
+        if (result.removed.includes(open)) setArticle({ status: 'none' })
+        else if (result.replaced.includes(open)) openArticle(open)
+      }
+    } finally {
+      syncingRef.current = false
+      setSyncing(false)
+      setEditorLocked(false)
+    }
+    if (syncAgainRef.current) {
+      syncAgainRef.current = false
+      void runGithubSyncRef.current()
+    }
+  }
+  useEffect(() => {
+    runGithubSyncRef.current = runGithubSync
+  })
+
+  // 一覧の更新ボタン。開いている記事を保存してから読み込む
+  const syncAfterSave = async () => {
+    try {
+      if (!(await saveOpenArticle())) return
+      await whenSaved()
+    } catch (e) {
+      // 保存の失敗は編集欄が出すので、ここでは読み込まないだけにする
+      console.error('Failed to save the article before the sync', e)
+      return
+    }
+    await runGithubSync()
   }
 
   // ログインの待ち。Rust側はログインできると保存先を替えるので、呼ぶ前に保存しておき、返った後に閉じて読み直す
@@ -360,11 +513,13 @@ export default function App() {
     <Sidebar
       articles={articles}
       selectedSlug={selectedSlug}
+      github={githubStates === null ? null : { states: githubStates, syncing, failed: syncError }}
       onSelect={selectArticle}
       onNew={() => {
         drawer.close()
         openSlugDialog({ kind: 'create' })
       }}
+      onSync={() => void syncAfterSave()}
       onSettings={openSettings}
       onRenameSlug={(slug) => {
         drawer.close()
@@ -381,11 +536,24 @@ export default function App() {
     />
   )
 
-  // 一覧に出るのはタイトルと公開日
+  // 一覧に出るのはタイトルと公開日。保存した記事の状態は、連携していればGitHubの記録で直す
   const onSaved = (fields: EditedFields) => {
     if (articles.status !== 'loaded' || article.status !== 'loaded') return
     const listed = articles.articles.find((a) => a.slug === article.slug)
     if (listed?.title !== fields.title || listed.pubDate !== fields.pubDate) reloadArticles()
+    if (githubStates === null) return
+    const slug = article.slug
+    void githubArticleState(slug)
+      .then((state) => {
+        // 読み取りの間に一覧が替わっていたら、一覧の読み直しに合わせる
+        if (state === null) return
+        setGithubStates((current) =>
+          current === null || current.articles[slug] === undefined
+            ? current
+            : { ...current, articles: { ...current.articles, [slug]: state } },
+        )
+      })
+      .catch((e) => console.error('Failed to read the GitHub state', e))
   }
 
   const swipeToOpen = useSwipeToOpen(drawer)
@@ -416,7 +584,7 @@ export default function App() {
   return (
     <div className={drawer.narrow ? 'layout narrow' : 'layout'}>
       <Drawer drawer={drawer}>{sidebar}</Drawer>
-      <main inert={drawer.shown} {...swipeToOpen}>
+      <main inert={drawer.shown || editorLocked} {...swipeToOpen}>
         {isAndroid && findOpen ? (
           findBar('bar')
         ) : (
@@ -437,7 +605,7 @@ export default function App() {
                   key={article.slug}
                   ref={editor}
                   article={article.article}
-                  paused={saveConfirm !== null || deleteTarget !== null}
+                  paused={saveConfirm !== null || deleteTarget !== null || syncing}
                   onSaveStatus={setSaveStatus}
                   onSaved={onSaved}
                   onNotice={(text) => setNotice({ text, error: true })}

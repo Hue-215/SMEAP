@@ -20,6 +20,14 @@ export function githubErrorText(error: unknown): string {
         : t('common.github_rate_limited_at', { time: formatRetryAt(e.retryAt) })
     case 'loginRequired':
       return t('common.github_login_required')
+    case 'baseBranchNotFound':
+      return t('common.github_base_branch_not_found')
+    case 'invalidLayout':
+      return t('common.github_invalid_layout', { path: e.path })
+    case 'stateUnreadable':
+      return t('common.github_state_unreadable')
+    case 'io':
+      return t('common.github_io', { path: e.path })
     case 'status':
     case 'invalidResponse':
     case 'redirect':

@@ -1,5 +1,7 @@
-import { useId, useState, type MouseEvent, type ReactNode } from 'react'
+import { Fragment, useId, useState, type MouseEvent, type ReactNode } from 'react'
 import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
+import { githubErrorText } from './githubError'
+import { fetchLineText, groupArticles, type ArticleRow, type GithubArticleStates } from './githubList'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import Dialog from './Dialog'
 import Icon from './Icon'
@@ -22,16 +24,31 @@ export type ArticlesState =
       unreadable: UnreadableEntry[]
     }
 
+// GitHub連携中の状態。nullは連携していない
+export interface SidebarGithub {
+  states: GithubArticleStates
+  syncing: boolean
+  failed: { error: unknown } | null
+}
+
 interface SidebarProps {
   articles: ArticlesState
   selectedSlug: string | null
+  github: SidebarGithub | null
   onSelect: (slug: string) => void
   onNew: () => void
+  onSync: () => void
   onSettings: () => void
   onRenameSlug: (slug: string) => void
   onExportZip: (slug: string) => void
   onDelete: (target: ArticleRef) => void
 }
+
+const categoryLabel = {
+  drafting: 'sidebar.group_drafting',
+  editing: 'sidebar.group_editing',
+  published: 'sidebar.group_published',
+} as const
 
 function DialogDetail({
   title,
@@ -66,8 +83,10 @@ type RowMenu = ArticleRef & { x: number; y: number }
 export default function Sidebar({
   articles,
   selectedSlug,
+  github,
   onSelect,
   onNew,
+  onSync,
   onSettings,
   onRenameSlug,
   onExportZip,
@@ -75,6 +94,8 @@ export default function Sidebar({
 }: SidebarProps) {
   const [brokenSlug, setBrokenSlug] = useState<string | null>(null)
   const [unreadableOpen, setUnreadableOpen] = useState(false)
+  const [syncFailedOpen, setSyncFailedOpen] = useState(false)
+  const [skippedOpen, setSkippedOpen] = useState(false)
   const [rowMenu, setRowMenu] = useState<RowMenu | null>(null)
   const brokenDialog =
     articles.status === 'loaded' && brokenSlug !== null
@@ -116,11 +137,90 @@ export default function Sidebar({
     return isAndroid ? [renameItem, exportZipItem, deleteItem] : [renameItem, deleteItem]
   }
 
+  const groups =
+    articles.status === 'loaded' ? groupArticles(articles.articles, github?.states ?? null) : []
+
+  // 一覧の行。GitHubの状態があれば、変更と食い違いの印も出す
+  const row = ({ article, state }: ArticleRow) => (
+    <button
+      key={article.slug}
+      type="button"
+      className="article-row"
+      aria-current={article.slug === selectedSlug ? 'true' : undefined}
+      onClick={() => onSelect(article.slug)}
+      onContextMenu={(e) =>
+        openRowMenu(e, { kind: 'article', slug: article.slug, title: article.title })
+      }
+    >
+      <span className="article-row-title">
+        {article.title || t('common.untitled')}
+        {article.warning && (
+          <span className="article-row-warning">
+            <Icon name="warning" />
+            <span className="visually-hidden">{t('sidebar.has_warning')}</span>
+          </span>
+        )}
+        {state?.conflict && (
+          <span className="article-row-conflict">
+            <Icon name="sync_problem" />
+            <span className="visually-hidden">{t('sidebar.conflict')}</span>
+          </span>
+        )}
+        {state?.dirty && (
+          <span className="article-row-dirty">
+            <span className="visually-hidden">{t('sidebar.dirty')}</span>
+          </span>
+        )}
+      </span>
+      <span className="article-row-detail">
+        {article.pubDate === null
+          ? article.slug
+          : `${article.slug} · ${article.pubDate}`}
+      </span>
+    </button>
+  )
+
+  // 一覧の上の、GitHubからの読み込みの1行
+  const githubLine = () => {
+    if (github === null) return null
+    if (github.states.stateUnreadable) {
+      return (
+        <p role="status" className="sidebar-github error">
+          {t('common.github_state_unreadable')}
+        </p>
+      )
+    }
+    if (github.failed !== null) {
+      return (
+        <button type="button" className="sidebar-github error" onClick={() => setSyncFailedOpen(true)}>
+          {fetchLineText(github.states.repo, github.states.fetchedAt, true)}
+        </button>
+      )
+    }
+    return (
+      <p role="status" className="sidebar-github">
+        {fetchLineText(github.states.repo, github.states.fetchedAt, false)}
+      </p>
+    )
+  }
+
   return (
     <>
       <aside className="sidebar">
         <div className="sidebar-header">
           <span className="sidebar-title">{t('sidebar.heading')}</span>
+          {github !== null && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t('sidebar.sync')}
+              title={t('sidebar.sync')}
+              onClick={onSync}
+              disabled={github.syncing}
+            >
+              <Icon name="sync" className={github.syncing ? 'icon-spinning' : undefined} />
+            </button>
+          )}
           <button
             type="button"
             className="icon-button"
@@ -131,6 +231,7 @@ export default function Sidebar({
             <Icon name="add" />
           </button>
         </div>
+        {githubLine()}
         <nav aria-label={t('sidebar.nav_label')} className="sidebar-nav">
           {articles.status === 'loading' ? null : articles.status === 'failed' ? (
             <>
@@ -143,32 +244,15 @@ export default function Sidebar({
               {articles.articles.length === 0 && articles.broken.length === 0 && (
                 <p className="sidebar-message">{t('sidebar.empty')}</p>
               )}
-              {articles.articles.map((article) => (
-                <button
-                  key={article.slug}
-                  type="button"
-                  className="article-row"
-                  aria-current={article.slug === selectedSlug ? 'true' : undefined}
-                  onClick={() => onSelect(article.slug)}
-                  onContextMenu={(e) =>
-                    openRowMenu(e, { kind: 'article', slug: article.slug, title: article.title })
-                  }
-                >
-                  <span className="article-row-title">
-                    {article.title || t('common.untitled')}
-                    {article.warning && (
-                      <span className="article-row-warning">
-                        <Icon name="warning" />
-                        <span className="visually-hidden">{t('sidebar.has_warning')}</span>
-                      </span>
-                    )}
-                  </span>
-                  <span className="article-row-detail">
-                    {article.pubDate === null
-                      ? article.slug
-                      : `${article.slug} · ${article.pubDate}`}
-                  </span>
-                </button>
+              {groups.map((group) => (
+                <Fragment key={group.category ?? 'all'}>
+                  {group.category !== null && (
+                    <h2 className="sidebar-group">
+                      {t(categoryLabel[group.category], { count: group.rows.length })}
+                    </h2>
+                  )}
+                  {group.rows.map(row)}
+                </Fragment>
               ))}
               {articles.broken.map((broken) => (
                 <button
@@ -189,6 +273,15 @@ export default function Sidebar({
                   onClick={() => setUnreadableOpen(true)}
                 >
                   {t('sidebar.unreadable_count', { count: articles.unreadable.length })}
+                </button>
+              )}
+              {github !== null && github.states.skipped.length > 0 && (
+                <button
+                  type="button"
+                  className="sidebar-message sidebar-unreadable"
+                  onClick={() => setSkippedOpen(true)}
+                >
+                  {t('sidebar.skipped_count', { count: github.states.skipped.length })}
                 </button>
               )}
             </>
@@ -215,6 +308,20 @@ export default function Sidebar({
               {entry.path}
               <br />
               {entry.reason}
+            </p>
+          ))}
+        </DialogDetail>
+      )}
+      {syncFailedOpen && github !== null && github.failed !== null && (
+        <DialogDetail title={t('sidebar.fetch_failed')} onClose={() => setSyncFailedOpen(false)}>
+          <p>{githubErrorText(github.failed.error)}</p>
+        </DialogDetail>
+      )}
+      {skippedOpen && github !== null && (
+        <DialogDetail title={t('sidebar.skipped_title')} onClose={() => setSkippedOpen(false)}>
+          {github.states.skipped.map((skipped, index) => (
+            <p key={`${skipped.slug} ${skipped.branch} ${index}`}>
+              {skipped.slug} · {skipped.branch}
             </p>
           ))}
         </DialogDetail>

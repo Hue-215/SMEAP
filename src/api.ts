@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { GithubArticleState, GithubArticleStates, GithubSkipped } from './githubList'
 import { isAndroid } from './platform'
 
 // Rust側のエラー。種類によってpath・reasonを持つ
@@ -221,6 +222,12 @@ export type GithubError =
   | { kind: 'invalidPostsPath' }
   | { kind: 'invalidRepository' }
   | { kind: 'io'; path: string; reason: string }
+  | { kind: 'baseBranchNotFound' }
+  | { kind: 'invalidLayout'; path: string }
+  | { kind: 'stateUnreadable' }
+  | { kind: 'syncBusy' }
+  | { kind: 'settingsChanged' }
+  | { kind: 'notLinked' }
 
 export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>('github_status')
@@ -271,6 +278,34 @@ export function validatePostsPath(path: string): Promise<void> {
 // deviceは認可のページ、installはAppのインストールのページ
 export function openGithubPage(page: 'device' | 'install'): Promise<void> {
   return invoke('open_github_page', { page })
+}
+
+// Rust側のSyncResult(src-tauri/src/github/sync.rs)とそろえる
+export interface GithubSyncResult {
+  fetchedAt: number
+  replaced: string[]
+  removed: string[]
+  skipped: GithubSkipped[]
+  deferred: string[]
+}
+
+// protectの記事は置き換えも削除もせず、そうなるはずだったらdeferredに入れて返す
+export function githubSync(protect: string | null): Promise<GithubSyncResult> {
+  return invoke<GithubSyncResult>('github_sync', { protect })
+}
+
+// 取れなかった画像の件数。連携していなければ0
+export function githubFetchImages(slug: string): Promise<number> {
+  return invoke<number>('github_fetch_images', { slug })
+}
+
+// 連携していなければnull
+export function githubArticleStates(): Promise<GithubArticleStates | null> {
+  return invoke<GithubArticleStates | null>('github_article_states')
+}
+
+export function githubArticleState(slug: string): Promise<GithubArticleState | null> {
+  return invoke<GithubArticleState | null>('github_article_state', { slug })
 }
 
 // 画像は記事のディレクトリの2つ上のassetsに入る。Rust側のassets_path(src-tauri/src/github/config.rs)とそろえる
