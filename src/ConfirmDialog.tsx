@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react'
 import Dialog from './Dialog'
+import Icon from './Icon'
 import { t } from './i18n'
 
 interface ConfirmDialogProps {
@@ -12,6 +13,8 @@ interface ConfirmDialogProps {
   onConfirm: () => Promise<boolean | string>
   // キャンセルの左に置くボタン。確定の左にも置かれる
   secondary?: { label: string; onClick: () => void }
+  // 送っている間に出す段階
+  progress?: string | null
 }
 
 export default function ConfirmDialog({
@@ -22,6 +25,7 @@ export default function ConfirmDialog({
   onCancel,
   onConfirm,
   secondary,
+  progress,
 }: ConfirmDialogProps) {
   const [state, setState] = useState<'idle' | 'running' | 'failed'>('idle')
   const [failure, setFailure] = useState<string | null>(null)
@@ -63,6 +67,12 @@ export default function ConfirmDialog({
           )}
         </div>
         <div className="dialog-buttons">
+          {progress != null && (
+            <p role="status" className="commit-progress">
+              <Icon name="progress_activity" className="icon-spinning" />
+              <span>{progress}</span>
+            </p>
+          )}
           {secondary && (
             <button type="button" className="left" onClick={secondary.onClick} disabled={running}>
               {secondary.label}

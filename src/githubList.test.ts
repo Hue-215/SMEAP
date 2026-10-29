@@ -19,7 +19,13 @@ function statesOf(
   articles: Partial<
     Record<
       string,
-      { category?: GithubCategory; dirty?: boolean; conflict?: boolean; branch?: boolean }
+      {
+        category?: GithubCategory
+        dirty?: boolean
+        conflict?: boolean
+        branch?: boolean
+        deleting?: 'delete' | 'unpublish' | null
+      }
     >
   >,
   rest: Partial<GithubArticleStates> = {},
@@ -36,6 +42,7 @@ function statesOf(
           dirty: item?.dirty ?? false,
           conflict: item?.conflict ?? false,
           branch: item?.branch ?? false,
+          ...(item?.deleting != null ? { deleting: item.deleting } : {}),
         },
       ]),
     ) as GithubArticleStates['articles'],
@@ -135,6 +142,26 @@ describe('groupArticles', () => {
       },
     ])
   })
+
+  it('削除予定の状態でも編集中に振り分ける', () => {
+    const articles = [article('pending', '2026-01-02'), article('published', '2026-01-01')]
+    const states = statesOf({
+      pending: { category: 'editing', deleting: 'delete' },
+      published: { category: 'published' },
+    })
+
+    const groups = groupArticles(articles, states)
+    expect(groups).toEqual([
+      {
+        category: 'editing',
+        rows: [{ article: articles[0], state: states.articles.pending }],
+      },
+      {
+        category: 'published',
+        rows: [{ article: articles[1], state: states.articles.published }],
+      },
+    ])
+  })
 })
 
 describe('fetchLineText', () => {
@@ -158,15 +185,28 @@ describe('rowMenuActions', () => {
     expect(rowMenuActions(null, 'a-post')).toEqual(['rename', 'delete'])
   })
 
-  it('分類ごとのメニュー', () => {
+  it('公開済みはslugの変更と非公開と削除', () => {
+    const states = statesOf({ published: { category: 'published' } })
+    expect(rowMenuActions(states, 'published')).toEqual(['rename', 'unpublish', 'delete'])
+  })
+
+  it('編集中はslugの変更と編集の取りやめ', () => {
+    const states = statesOf({ edit: { category: 'editing' } })
+    expect(rowMenuActions(states, 'edit')).toEqual(['rename', 'discard'])
+  })
+
+  it('削除予定は取りやめだけ', () => {
     const states = statesOf({
-      draft: { category: 'drafting' },
-      edit: { category: 'editing' },
-      published: { category: 'published' },
+      deleted: { category: 'editing', deleting: 'delete' },
+      unpublished: { category: 'editing', deleting: 'unpublish' },
     })
+    expect(rowMenuActions(states, 'deleted')).toEqual(['discard'])
+    expect(rowMenuActions(states, 'unpublished')).toEqual(['discard'])
+  })
+
+  it('執筆中は今のままslugの変更と削除', () => {
+    const states = statesOf({ draft: { category: 'drafting' } })
     expect(rowMenuActions(states, 'draft')).toEqual(['rename', 'delete'])
-    expect(rowMenuActions(states, 'edit')).toEqual(['discard'])
-    expect(rowMenuActions(states, 'published')).toEqual([])
   })
 
   it('state.jsonが読めないときと状態の無い記事は変更と削除を出す', () => {

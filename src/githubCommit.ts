@@ -68,6 +68,7 @@ export function commitButtonState(
   const dirty =
     editorDirty ||
     (!states.stateUnreadable && slug !== null && (states.articles[slug]?.dirty ?? true))
-  const enabled = !syncing && slug !== null && !states.stateUnreadable && dirty
+  const deleting = slug !== null && states.articles[slug]?.deleting != null
+  const enabled = !syncing && slug !== null && !states.stateUnreadable && dirty && !deleting
   return { enabled, dirty }
 }

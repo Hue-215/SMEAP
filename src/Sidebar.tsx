@@ -1,5 +1,5 @@
 import { Fragment, useId, useState, type MouseEvent, type ReactNode } from 'react'
-import type { ArticleSummary, BrokenArticle, UnreadableEntry } from './api'
+import type { ArticleSummary, BrokenArticle, GithubDeleting, UnreadableEntry } from './api'
 import { githubErrorText } from './githubError'
 import {
   fetchLineText,
@@ -48,7 +48,19 @@ interface SidebarProps {
   onExportZip: (slug: string) => void
   onDelete: (target: ArticleRef) => void
   onDiscard: (target: ArticleRef) => void
+  // 公開済みの記事の削除・非公開
+  onRemove: (target: ArticleRef, kind: GithubDeleting) => void
 }
+
+// 削除予定の行の印と、その取りやめのメニュー
+const deletingTexts = {
+  delete: { icon: 'delete', label: 'sidebar.deleting', discard: 'sidebar.menu_discard_delete' },
+  unpublish: {
+    icon: 'visibility_off',
+    label: 'sidebar.unpublishing',
+    discard: 'sidebar.menu_discard_unpublish',
+  },
+} as const
 
 const categoryLabel = {
   drafting: 'sidebar.group_drafting',
@@ -98,6 +110,7 @@ export default function Sidebar({
   onExportZip,
   onDelete,
   onDiscard,
+  onRemove,
 }: SidebarProps) {
   const [brokenSlug, setBrokenSlug] = useState<string | null>(null)
   const [unreadableOpen, setUnreadableOpen] = useState(false)
@@ -132,6 +145,8 @@ export default function Sidebar({
       onSelect: () => onDelete(menu),
     }
     if (menu.kind === 'broken') return [deleteItem]
+    const state = github?.states.articles[menu.slug]
+    const deleting = state?.deleting ?? null
     const renameItem: MenuItem = {
       key: 'rename-slug',
       label: t('sidebar.menu_rename'),
@@ -144,18 +159,33 @@ export default function Sidebar({
       icon: 'folder_zip',
       onSelect: () => onExportZip(menu.slug),
     }
+    const unpublishItem: MenuItem = {
+      key: 'unpublish',
+      label: t('sidebar.menu_unpublish'),
+      icon: 'visibility_off',
+      onSelect: () => onRemove(menu, 'unpublish'),
+    }
+    // 公開済みの記事の削除は、手元ではなくGitHub上の記事用のbranchにcommitを送る
+    const removeItem: MenuItem = {
+      key: 'remove',
+      label: t('sidebar.menu_delete'),
+      icon: 'delete',
+      onSelect: () => onRemove(menu, 'delete'),
+    }
     const discardItem: MenuItem = {
       key: 'discard',
-      label: t('sidebar.menu_discard'),
+      label: t(deleting === null ? 'sidebar.menu_discard' : deletingTexts[deleting].discard),
       icon: 'undo',
       onSelect: () => onDiscard(menu),
     }
     // zipの書き出しはGitHubの分類によらず出す
     const actions = rowMenuActions(github?.states ?? null, menu.slug)
+    const published = state?.category === 'published' && deleting === null
     return [
       ...(actions.includes('rename') ? [renameItem] : []),
       ...(isAndroid ? [exportZipItem] : []),
-      ...(actions.includes('delete') ? [deleteItem] : []),
+      ...(actions.includes('unpublish') ? [unpublishItem] : []),
+      ...(actions.includes('delete') ? [published ? removeItem : deleteItem] : []),
       ...(actions.includes('discard') ? [discardItem] : []),
     ]
   }
@@ -187,6 +217,12 @@ export default function Sidebar({
           <span className="article-row-conflict">
             <Icon name="sync_problem" />
             <span className="visually-hidden">{t('sidebar.conflict')}</span>
+          </span>
+        )}
+        {state?.deleting != null && (
+          <span className="article-row-deleting">
+            <Icon name={deletingTexts[state.deleting].icon} />
+            <span className="visually-hidden">{t(deletingTexts[state.deleting].label)}</span>
           </span>
         )}
         {state?.dirty && (

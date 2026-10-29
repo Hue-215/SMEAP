@@ -15,6 +15,7 @@ interface ArticleHeaderProps {
   heroBusy: boolean
   onPickHeroImage: (file: File) => void
   onRemoveHeroImage: () => void
+  readOnly: boolean
 }
 
 function fitHeight(el: HTMLTextAreaElement) {
@@ -34,11 +35,12 @@ interface OneLineFieldProps {
   label: string
   value: string
   onChange: (value: string) => void
+  readOnly: boolean
 }
 
 // 折り返して高さが伸びる、改行の入らない欄。
 // field-sizingはLinuxのWebKitGTKが未対応のため、高さは自前で合わせる。
-function OneLineField({ className, label, value, onChange }: OneLineFieldProps) {
+function OneLineField({ className, label, value, onChange, readOnly }: OneLineFieldProps) {
   const ref = useRef<HTMLTextAreaElement>(null)
 
   useLayoutEffect(() => {
@@ -68,6 +70,7 @@ function OneLineField({ className, label, value, onChange }: OneLineFieldProps) 
       placeholder={label}
       aria-label={label}
       value={value}
+      readOnly={readOnly}
       onChange={(e) => {
         const el = e.target
         const flat = flatten(el.value)
@@ -92,6 +95,7 @@ export default function ArticleHeader({
   heroBusy,
   onPickHeroImage,
   onRemoveHeroImage,
+  readOnly,
 }: ArticleHeaderProps) {
   const fileInput = useRef<HTMLInputElement>(null)
   // 読めなかった画像のURL。差し替えるとURLが変わるので、読み直す
@@ -116,12 +120,14 @@ export default function ArticleHeader({
             label={t('article_header.title')}
             value={fields.title ?? ''}
             onChange={(title) => onChange({ title })}
+            readOnly={readOnly}
           />
           <OneLineField
             className="article-description"
             label={t('article_header.description')}
             value={fields.description ?? ''}
             onChange={(description) => onChange({ description })}
+            readOnly={readOnly}
           />
         </div>
         {/* ボタンの中にボタンは置けないので、入れ物で包んで外すボタンを重ねる */}
@@ -129,7 +135,7 @@ export default function ArticleHeader({
           <button
             type="button"
             className={hero === null ? 'article-hero empty' : 'article-hero'}
-            disabled={heroBusy}
+            disabled={heroBusy || readOnly}
             onClick={() => fileInput.current?.click()}
             aria-label={hero === null ? undefined : t('article_header.hero_replace')}
             title={hero?.name ?? t('article_header.hero_pick')}
@@ -146,7 +152,7 @@ export default function ArticleHeader({
             <button
               type="button"
               className="icon-button article-hero-remove"
-              disabled={heroBusy}
+              disabled={heroBusy || readOnly}
               onClick={onRemoveHeroImage}
               aria-label={t('article_header.hero_remove')}
               title={t('article_header.hero_remove')}
@@ -166,6 +172,7 @@ export default function ArticleHeader({
             required
             max="9999-12-31"
             defaultValue={fields.pubDate ?? ''}
+            disabled={readOnly}
             onChange={(e) => {
               const pubDate = e.target.value
               if (pubDate && e.target.validity.valid) onChange({ pubDate })

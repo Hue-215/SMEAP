@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::config::RepoRef;
-use super::http::{api_url, Method, Request, Response, Transport};
+use super::http::{api_url, Method, Request, Response, Transport, API_BASE};
 use super::GithubError;
 
 // テストで通信を置き換えるための偽のTransport。受けたリクエストを記録し、用意したレスポンスを順に返す
@@ -93,6 +93,11 @@ pub fn matching_refs_url(prefix_segments: &[&str]) -> String {
     let mut segments = vec!["repos", "owner", "blog", "git", "matching-refs", "heads"];
     segments.extend(prefix_segments);
     url_of(&segments, &[("per_page", "100")])
+}
+
+// compareのURL。baseheadの...はapi_urlが..として断るので、ここで組み立てる
+pub fn compare_url(base: &str, head: &str) -> String {
+    format!("{API_BASE}/repos/owner/blog/compare/{base}...{head}")
 }
 
 pub type Handler = Box<dyn Fn(&Request) -> Result<Response, GithubError> + Send + Sync>;
@@ -369,6 +374,60 @@ fn collect_files(node: &TreeNode, prefix: &str, files: &mut BTreeMap<String, (St
     }
 }
 
+// コミットとその親から、そのコミットまでの祖先を集める
+fn ancestors_of(commit: &str, parents: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
+    let mut seen = BTreeSet::new();
+    let mut queue = VecDeque::from([commit.to_string()]);
+    while let Some(current) = queue.pop_front() {
+        if !seen.insert(current.clone()) {
+            continue;
+        }
+        if let Some(parents) = parents.get(&current) {
+            queue.extend(parents.iter().cloned());
+        }
+    }
+    seen
+}
+
+// 共通の祖先のうち、headからたどって最初に当たるもの
+fn merge_base(base: &str, head: &str, parents: &BTreeMap<String, Vec<String>>) -> Option<String> {
+    let base_ancestors = ancestors_of(base, parents);
+    let mut seen = BTreeSet::new();
+    let mut queue = VecDeque::from([head.to_string()]);
+    while let Some(current) = queue.pop_front() {
+        if !seen.insert(current.clone()) {
+            continue;
+        }
+        if base_ancestors.contains(&current) {
+            return Some(current);
+        }
+        if let Some(parents) = parents.get(&current) {
+            queue.extend(parents.iter().cloned());
+        }
+    }
+    None
+}
+
+// 2つのツリーのblobを比べた、added・removed・modifiedのファイル
+fn compare_files(before: &TreeNode, after: &TreeNode) -> Vec<serde_json::Value> {
+    let mut before_files = BTreeMap::new();
+    collect_files(before, "", &mut before_files);
+    let mut after_files = BTreeMap::new();
+    collect_files(after, "", &mut after_files);
+    let paths: BTreeSet<&String> = before_files.keys().chain(after_files.keys()).collect();
+    let mut files = Vec::new();
+    for path in paths {
+        let status = match (before_files.get(path), after_files.get(path)) {
+            (None, Some(_)) => "added",
+            (Some(_), None) => "removed",
+            (Some(before), Some(after)) if before != after => "modified",
+            _ => continue,
+        };
+        files.push(serde_json::json!({ "filename": path, "status": status }));
+    }
+    files
+}
+
 // GitHub上のリポジトリを組み立てるヘルパー。ブランチ名 -> 先頭コミットのファイル(リポジトリの
 // ルートからのパス -> 中身)で作り、git/ref・matching-refs・git/commits・git/trees・git/blobsの
 // 応答をRouteTransportに登録する。同じ中身でも呼ぶたびに別のコミットのSHAにする。
@@ -385,8 +444,11 @@ pub struct FakeRepo {
     trees: Arc<Mutex<BTreeMap<String, TreeNode>>>,
     // 書き込みで作ったblob(sha -> 中身)
     blobs: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
-    // 書き込みで作ったコミットの親(PATCHの早送りの判定に使う)。branch()で作ったコミットは入らない
+    // コミットの親(PATCHの早送りの判定とcompareの分岐点に使う)。branch()で作ったコミットは入らない
     parents: Arc<Mutex<BTreeMap<String, Vec<String>>>>,
+    // orphan_branchで作った、ほかの履歴とつながらないコミット。branch()で作った親の無いコミットは、
+    // compareでは空のツリーの共通の祖先から切ったものとして扱う(実際のブランチは祖先を共有するため)
+    orphans: Arc<Mutex<BTreeSet<String>>>,
     // 書き込みの通信を受け付けている間、register_refsはPATCHの応答も足す
     writes_on: Arc<AtomicBool>,
     // 書き込みの通信の、(Method, URL)ごとの出現回数
@@ -406,6 +468,7 @@ impl FakeRepo {
             trees: Arc::new(Mutex::new(BTreeMap::new())),
             blobs: Arc::new(Mutex::new(BTreeMap::new())),
             parents: Arc::new(Mutex::new(BTreeMap::new())),
+            orphans: Arc::new(Mutex::new(BTreeSet::new())),
             writes_on: Arc::new(AtomicBool::new(false)),
             counts: Arc::new(Mutex::new(BTreeMap::new())),
             hooks: Arc::new(Mutex::new(BTreeMap::new())),
@@ -424,7 +487,34 @@ impl FakeRepo {
         branch: &str,
         files: &[(&str, &[u8])],
     ) -> String {
-        self.branch_with_entries(transport, branch, files, &[])
+        self.branch_at(transport, branch, files, &[], None)
+    }
+
+    // 親を持つコミットでブランチを作るか進める
+    pub fn branch_from(
+        &self,
+        transport: &RouteTransport,
+        branch: &str,
+        parent_commit: &str,
+        files: &[(&str, &[u8])],
+    ) -> String {
+        self.branch_at(transport, branch, files, &[], Some(parent_commit))
+    }
+
+    // ほかのどのコミットとも共通の祖先を持たないブランチ
+    pub fn orphan_branch(
+        &self,
+        transport: &RouteTransport,
+        branch: &str,
+        files: &[(&str, &[u8])],
+    ) -> String {
+        let commit = self.branch_at(transport, branch, files, &[], None);
+        self.orphans
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(commit.clone());
+        self.register_compares(transport);
+        commit
     }
 
     // ツリーに、blobでないもの(mode・type)を入れる
@@ -434,6 +524,17 @@ impl FakeRepo {
         branch: &str,
         files: &[(&str, &[u8])],
         extra: &[(&str, &str, &str)],
+    ) -> String {
+        self.branch_at(transport, branch, files, extra, None)
+    }
+
+    fn branch_at(
+        &self,
+        transport: &RouteTransport,
+        branch: &str,
+        files: &[(&str, &[u8])],
+        extra: &[(&str, &str, &str)],
+        parent: Option<&str>,
     ) -> String {
         let mut root = TreeNode::default();
         for (path, content) in files {
@@ -470,12 +571,19 @@ impl FakeRepo {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(commit_sha.clone(), root_sha);
+        if let Some(parent) = parent {
+            self.parents
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(commit_sha.clone(), vec![parent.to_string()]);
+        }
         self.branches
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(branch.to_string(), commit_sha.clone());
         self.register_commit(transport, &commit_sha);
         self.register_refs(transport, branch);
+        self.register_compares(transport);
         commit_sha
     }
 
@@ -572,6 +680,7 @@ impl FakeRepo {
     fn register_commit(&self, transport: &RouteTransport, commit_sha: &str) {
         let url = self.url("commits", &[commit_sha], &[]);
         let commits = self.commits.clone();
+        let parents = self.parents.clone();
         let sha = commit_sha.to_string();
         transport.on(
             Method::Get,
@@ -579,14 +688,123 @@ impl FakeRepo {
             Box::new(move |_| {
                 let commits = commits.lock().unwrap_or_else(PoisonError::into_inner);
                 match commits.get(&sha) {
-                    Some(tree) => Ok(json_response(
-                        200,
-                        serde_json::json!({ "sha": sha, "tree": { "sha": tree } }),
-                    )),
+                    Some(tree) => {
+                        let parents = parents
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .get(&sha)
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(json_response(
+                            200,
+                            serde_json::json!({
+                                "sha": sha,
+                                "tree": { "sha": tree },
+                                "parents": parents.iter().map(|sha| serde_json::json!({ "sha": sha })).collect::<Vec<_>>(),
+                            }),
+                        ))
+                    }
                     None => Ok(not_found()),
                 }
             }),
         );
+    }
+
+    // compareの応答を、今あるコミットの組ごとに登録する。orphan_branchのコミットとの組は404
+    fn register_compares(&self, transport: &RouteTransport) {
+        let commits: Vec<String> = self
+            .commits
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect();
+        for base in &commits {
+            for head in &commits {
+                self.register_compare(transport, base, head);
+            }
+        }
+    }
+
+    fn register_compare(&self, transport: &RouteTransport, base: &str, head: &str) {
+        let url = format!(
+            "{API_BASE}/repos/{}/{}/compare/{base}...{head}",
+            self.owner, self.name
+        );
+        let commits = Arc::clone(&self.commits);
+        let trees = Arc::clone(&self.trees);
+        let parents = Arc::clone(&self.parents);
+        let orphans = Arc::clone(&self.orphans);
+        let base = base.to_string();
+        let head = head.to_string();
+        transport.on(
+            Method::Get,
+            &url,
+            Box::new(move |_| {
+                let commits = commits.lock().unwrap_or_else(PoisonError::into_inner);
+                if !commits.contains_key(&base) {
+                    return Ok(not_found());
+                }
+                let Some(head_tree) = commits.get(&head) else {
+                    return Ok(not_found());
+                };
+                let parents = parents.lock().unwrap_or_else(PoisonError::into_inner);
+                let trees = trees.lock().unwrap_or_else(PoisonError::into_inner);
+                let empty = TreeNode::default();
+                let before = match merge_base(&base, &head, &parents) {
+                    Some(merge) => {
+                        let Some(tree) = commits.get(&merge).and_then(|sha| trees.get(sha)) else {
+                            return Ok(not_found());
+                        };
+                        tree
+                    }
+                    None => {
+                        let orphans = orphans.lock().unwrap_or_else(PoisonError::into_inner);
+                        let rooted_in_orphan = |commit: &str| {
+                            ancestors_of(commit, &parents)
+                                .iter()
+                                .any(|ancestor| orphans.contains(ancestor))
+                        };
+                        if rooted_in_orphan(&base) || rooted_in_orphan(&head) {
+                            return Ok(not_found());
+                        }
+                        &empty
+                    }
+                };
+                let Some(after) = trees.get(head_tree) else {
+                    return Ok(not_found());
+                };
+                let files = compare_files(before, after);
+                let base_ancestors = ancestors_of(&base, &parents);
+                let head_ancestors = ancestors_of(&head, &parents);
+                let behind_by = base_ancestors.difference(&head_ancestors).count();
+                let ahead_by = head_ancestors.difference(&base_ancestors).count();
+                Ok(json_response(
+                    200,
+                    serde_json::json!({
+                        "status": "diverged",
+                        "ahead_by": ahead_by,
+                        "behind_by": behind_by,
+                        "total_commits": ahead_by,
+                        "files": files,
+                    }),
+                ))
+            }),
+        );
+    }
+
+    // ブランチの先頭を、書き込みで作ったコミットにする(届いたのに失敗と応答した場合の再現)
+    pub fn point_branch(&self, transport: &RouteTransport, branch: &str, commit: &str) {
+        self.branches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(branch.to_string(), commit.to_string());
+        self.register_refs(transport, branch);
+    }
+
+    // まだ無いブランチのrefの応答(無ければ404)を登録する
+    pub fn watch_ref(&self, transport: &RouteTransport, branch: &str) {
+        self.register_refs(transport, branch);
     }
 
     // ブランチを追加・削除したときに替わる応答は、毎回状態を読んで返す
@@ -938,6 +1156,7 @@ impl FakeRepo {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(sha.clone(), parents.clone());
         self.register_commit(transport, &sha);
+        self.register_compares(transport);
         // 以後GET /git/commits/{sha}でも読める。PATCHの早送りの判定にも親を使う
         Ok(json_response(
             201,
@@ -1079,5 +1298,171 @@ impl FakeRepo {
         all.extend(path.split('/'));
         all.extend(segments.iter().copied());
         api_url(&all, query).expect("fakeのURLは組み立てられるはず")
+    }
+}
+
+#[cfg(test)]
+#[allow(non_snake_case)]
+mod tests {
+    use base64::Engine as _;
+
+    use super::*;
+    use crate::github::http::api_request;
+
+    const A_ONE: &[u8] = b"one\n";
+    const A_OLD: &[u8] = b"old branch\n";
+    const A_NEW: &[u8] = b"new branch\n";
+    const B: &[u8] = b"two\n";
+    const C: &[u8] = b"three\n";
+
+    fn compare(transport: &RouteTransport, base: &str, head: &str) -> Response {
+        let request = api_request(Method::Get, &compare_url(base, head), "TOKEN", None)
+            .expect("compareのURLは組み立てられるはず");
+        transport.send(&request).expect("compareの応答はあるはず")
+    }
+
+    // 応答のfilesを(パス, status)にする
+    fn files_of(response: &Response) -> Vec<(String, String)> {
+        let value: serde_json::Value =
+            serde_json::from_slice(&response.body).expect("応答はJSONのはず");
+        value["files"]
+            .as_array()
+            .expect("filesは配列のはず")
+            .iter()
+            .map(|file| {
+                (
+                    file["filename"]
+                        .as_str()
+                        .expect("filenameはあるはず")
+                        .to_string(),
+                    file["status"]
+                        .as_str()
+                        .expect("statusはあるはず")
+                        .to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(path, status)| (path.to_string(), status.to_string()))
+            .collect()
+    }
+
+    fn post(transport: &RouteTransport, url: &str, body: serde_json::Value) -> serde_json::Value {
+        let request =
+            api_request(Method::Post, url, "TOKEN", Some(body)).expect("URLは組み立てられるはず");
+        let response = transport.send(&request).expect("書き込みの応答はあるはず");
+        serde_json::from_slice(&response.body).expect("応答はJSONのはず")
+    }
+
+    #[test]
+    fn compareは分岐点からheadまでの差分を返す() {
+        let transport = RouteTransport::new();
+        let repo = FakeRepo::new(&transport, "owner", "blog");
+        // ベースを1つ進めてから切ったブランチと、その前に切ったブランチ
+        let first = repo.branch(&transport, "main", &[("src/content/blog/a.md", A_ONE)]);
+        let second = repo.branch_from(
+            &transport,
+            "main",
+            &first,
+            &[
+                ("src/content/blog/a.md", A_ONE),
+                ("src/content/blog/b.md", B),
+            ],
+        );
+        let old_branch = repo.branch_from(
+            &transport,
+            "blog/old",
+            &first,
+            &[("src/content/blog/a.md", A_OLD)],
+        );
+        let new_branch = repo.branch_from(
+            &transport,
+            "blog/new",
+            &second,
+            &[
+                ("src/content/blog/a.md", A_NEW),
+                ("src/content/blog/b.md", B),
+                ("src/content/blog/c.md", C),
+            ],
+        );
+
+        // 前に切ったブランチは、共通の祖先(first)からの差分になる。今のベースのツリーと比べると
+        // b.mdが消えたことも入ってしまう
+        assert_eq!(
+            files_of(&compare(&transport, &second, &old_branch)),
+            pairs(&[("src/content/blog/a.md", "modified")])
+        );
+        // 後に切ったブランチは、secondからの差分になる
+        assert_eq!(
+            files_of(&compare(&transport, &second, &new_branch)),
+            pairs(&[
+                ("src/content/blog/a.md", "modified"),
+                ("src/content/blog/c.md", "added"),
+            ])
+        );
+        // 同じコミットなら差分は無い
+        assert!(files_of(&compare(&transport, &second, &second)).is_empty());
+    }
+
+    #[test]
+    fn compareは共通の祖先が無ければ404() {
+        let transport = RouteTransport::new();
+        let repo = FakeRepo::new(&transport, "owner", "blog");
+        let main = repo.branch(&transport, "main", &[("src/content/blog/a.md", A_ONE)]);
+        let other = repo.orphan_branch(&transport, "other", &[("src/content/blog/a.md", A_OLD)]);
+
+        let response = compare(&transport, &main, &other);
+        assert_eq!(response.status, 404);
+    }
+
+    #[test]
+    fn compareは書き込みで作ったコミットの親もたどる() {
+        let transport = Arc::new(RouteTransport::new());
+        let repo = FakeRepo::new(&transport, "owner", "blog");
+        let base = repo.branch(&transport, "main", &[("src/content/blog/a.md", A_ONE)]);
+        let base_tree = repo.head_tree("main");
+        repo.accept_writes(&transport);
+
+        let blob = post(
+            &transport,
+            &url_of(&["repos", "owner", "blog", "git", "blobs"], &[]),
+            serde_json::json!({
+                "content": base64::engine::general_purpose::STANDARD.encode(A_NEW),
+                "encoding": "base64",
+            }),
+        );
+        let tree = post(
+            &transport,
+            &url_of(&["repos", "owner", "blog", "git", "trees"], &[]),
+            serde_json::json!({
+                "base_tree": base_tree,
+                "tree": [{
+                    "path": "src/content/blog/a.md",
+                    "mode": "100644",
+                    "type": "blob",
+                    "sha": blob["sha"],
+                }],
+            }),
+        );
+        let commit = post(
+            &transport,
+            &url_of(&["repos", "owner", "blog", "git", "commits"], &[]),
+            serde_json::json!({
+                "message": "update",
+                "tree": tree["sha"],
+                "parents": [base],
+            }),
+        );
+        let head = commit["sha"].as_str().expect("shaはあるはず");
+
+        // 書き込みのコミットをheadにして、親(base)との差分が読める
+        assert_eq!(
+            files_of(&compare(&transport, &base, head)),
+            pairs(&[("src/content/blog/a.md", "modified")])
+        );
     }
 }

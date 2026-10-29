@@ -243,8 +243,11 @@ export type GithubError =
   | { kind: 'branchMoved' }
   | { kind: 'slugReserved'; slug: string }
   | { kind: 'slugInUse'; slug: string }
-  | { kind: 'inBaseBranch' }
+  | { kind: 'notPublished' }
+  | { kind: 'outOfSync' }
   | { kind: 'conflicted' }
+
+export type GithubDeleting = 'delete' | 'unpublish'
 
 export function githubStatus(): Promise<GithubStatus> {
   return invoke<GithubStatus>('github_status')
@@ -375,6 +378,17 @@ export function githubPull(slug: string, branch: string | null): Promise<void> {
 // 手元の変更を捨て、公開済みの内容に戻す
 export function githubDiscardEdit(slug: string): Promise<void> {
   return invoke('github_discard_edit', { slug })
+}
+
+// 公開済みの記事を削除・非公開にする。手元のファイルは替えない
+export function githubRemovePublished(
+  slug: string,
+  kind: GithubDeleting,
+  onProgress: (progress: PushProgress) => void,
+): Promise<void> {
+  const channel = new Channel<PushProgress>()
+  channel.onmessage = onProgress
+  return invoke('github_remove_published', { slug, kind, onProgress: channel })
 }
 
 // 連携していなければnull

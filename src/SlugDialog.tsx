@@ -8,6 +8,8 @@ export type SlugDialogMode = { kind: 'create' } | { kind: 'rename'; slug: string
 interface SlugDialogProps {
   mode: SlugDialogMode
   destination: string | null
+  // slugを変える記事が公開済みなら、URLが変わると伝える
+  published: boolean
   onDone: (article: Article) => void
   onCancel: () => void
 }
@@ -35,11 +37,17 @@ const failureMessages = new Map<string, MessageKey>([
   ['slugInUse', 'common.github_slug_in_use'],
   ['syncBusy', 'common.github_sync_busy'],
   ['stateUnreadable', 'common.github_state_unreadable'],
-  ['inBaseBranch', 'common.github_in_base_branch'],
+  ['notPublished', 'common.github_not_published'],
   ['conflicted', 'common.github_conflicted'],
 ])
 
-export default function SlugDialog({ mode, destination, onDone, onCancel }: SlugDialogProps) {
+export default function SlugDialog({
+  mode,
+  destination,
+  published,
+  onDone,
+  onCancel,
+}: SlugDialogProps) {
   const text = texts[mode.kind]
   const currentSlug = mode.kind === 'rename' ? mode.slug : null
   const [value, setValue] = useState(currentSlug ?? '')
@@ -114,6 +122,9 @@ export default function SlugDialog({ mode, destination, onDone, onCancel }: Slug
             <p className="slug-dialog-destination">
               {t('slug_dialog.destination', { path: `${destination}/${shownSlug}.md` })}
             </p>
+          )}
+          {mode.kind === 'rename' && published && (
+            <p className="slug-dialog-destination">{t('slug_dialog.published_note')}</p>
           )}
         </div>
         <div className="dialog-buttons">

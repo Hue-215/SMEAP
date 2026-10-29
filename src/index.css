@@ -591,6 +591,17 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   vertical-align: -0.25em;
 }
 
+.article-row-deleting {
+  color: var(--color-error);
+}
+
+.article-row-deleting .icon {
+  margin-inline-start: var(--space-1);
+  width: 1.125rem;
+  height: 1.125rem;
+  vertical-align: -0.25em;
+}
+
 .article-row-broken {
   color: var(--color-text-secondary);
 }

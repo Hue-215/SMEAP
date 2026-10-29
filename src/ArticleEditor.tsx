@@ -61,6 +61,8 @@ interface ArticleEditorProps {
   article: Article
   // trueの間は決まった間隔での保存をしない
   paused: boolean
+  // 削除予定の記事は入力できない
+  readOnly: boolean
   onSaveStatus: (status: SaveStatus) => void
   onSaved: (fields: EditedFields) => void
   // エラーとして出す文言
@@ -115,8 +117,9 @@ async function importImages(
     }
   }
   if (refs.length > 0) {
-    // 取り込みの間に記事を切り替えると、編集欄はもう無い。取り込んだ画像は参照されないまま残る
-    if (view.current) insertImageRefs(view.current, refs)
+    // 取り込みの間に記事を切り替えるか削除予定にすると、編集欄はもう無いか入力できない。
+    // 取り込んだ画像は参照されないまま残る
+    if (view.current && !view.current.state.readOnly) insertImageRefs(view.current, refs)
     else console.error('Failed to insert the imported images into the body', slug, refs)
   }
   if (failed > 0) onNotice(t('article_editor.images_failed', { count: failed + unsupported }))
@@ -135,6 +138,7 @@ function readFields(
 export default function ArticleEditor({
   article,
   paused,
+  readOnly,
   onSaveStatus,
   onSaved,
   onNotice,
@@ -157,8 +161,10 @@ export default function ArticleEditor({
   const latest = useRef(fields)
   const view = useRef<EditorView>(null)
   const callbacks = useRef({ onSaveStatus, onSaved, onNotice, onFindStatus })
+  const readOnlyRef = useRef(readOnly)
   useEffect(() => {
     callbacks.current = { onSaveStatus, onSaved, onNotice, onFindStatus }
+    readOnlyRef.current = readOnly
   })
   const [saver] = useState(() => new AutoSaver(article.slug))
 
@@ -180,7 +186,7 @@ export default function ArticleEditor({
     }
   }, [saver])
 
-  useEffect(() => saver.setPaused(paused), [saver, paused])
+  useEffect(() => saver.setPaused(paused || readOnly), [saver, paused, readOnly])
 
   const slug = article.slug
   const runImports = (imports: ImageImport[]) =>
@@ -240,7 +246,7 @@ export default function ArticleEditor({
     let unlisten: (() => void) | null = null
     getCurrentWebview()
       .onDragDropEvent((event) => {
-        if (event.payload.type !== 'drop' || !view.current) return
+        if (event.payload.type !== 'drop' || !view.current || readOnlyRef.current) return
         const editor = view.current
         const x = event.payload.position.x / window.devicePixelRatio
         const y = event.payload.position.y / window.devicePixelRatio
@@ -362,11 +368,13 @@ export default function ArticleEditor({
         heroBusy={heroBusy}
         onPickHeroImage={pickHeroImage}
         onRemoveHeroImage={removeHero}
+        readOnly={readOnly}
       />
       <Editor
         slug={article.slug}
         initialDoc={article.body}
         viewRef={view}
+        readOnly={readOnly}
         onChange={() => saver.changed()}
         onUpdate={reportFindStatus}
         onPasteImage={(files) =>

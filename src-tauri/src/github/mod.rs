@@ -88,8 +88,10 @@ pub enum GithubError {
     SlugReserved { slug: String },
     #[error("the slug is already in use")]
     SlugInUse { slug: String },
-    #[error("the article is in the base branch")]
-    InBaseBranch,
+    #[error("the article is not published")]
+    NotPublished,
+    #[error("the article is out of sync with GitHub")]
+    OutOfSync,
     // 記録が無く、前回読み込んだリモートの様子に記事用のブランチがある(手元と食い違っている)
     #[error("the article conflicts with GitHub")]
     Conflicted,
