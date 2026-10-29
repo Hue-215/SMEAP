@@ -767,6 +767,25 @@ pub fn github_discard_edit(
     .ok_or_else(|| GithubError::NotLinked.into())
 }
 
+#[tauri::command(async)]
+pub fn github_remove_published(
+    app: AppHandle,
+    github: State<'_, GitHub>,
+    store: State<'_, Store>,
+    slug: String,
+    kind: super::state::Deleting,
+    on_progress: tauri::ipc::Channel<super::push::PushProgress>,
+) -> Result<(), CommandError> {
+    crate::store::validate_slug(&slug)?;
+    with_sync_input(&app, &github, &store, None, |input| {
+        super::article::remove_published(input, &github.sync_lock, &slug, kind, &|progress| {
+            // 画面が閉じているなどで送れなくても処理は続ける
+            let _ = on_progress.send(progress);
+        })
+    })?
+    .ok_or_else(|| GithubError::NotLinked.into())
+}
+
 // Repositoryを選んでいて、token.jsonがあり、保存層の向き先がそのRepositoryの記事のディレクトリのとき
 fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError> {
     let settings = settings::read_from(&settings::file_path(app)?)?;

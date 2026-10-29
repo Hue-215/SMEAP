@@ -57,7 +57,12 @@ pub struct BaseSnapshot {
 pub struct BranchSnapshot {
     pub commit: String,
     pub slug: String,
-    pub article: ArticleFiles,
+    // Noneなら空のブランチ
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub article: Option<ArticleFiles>,
+    // 移した記事の元のslug
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_from: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +87,13 @@ pub struct Applying {
     pub assets: BTreeMap<String, AssetRecord>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Deleting {
+    Delete,
+    Unpublish,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
@@ -92,6 +104,8 @@ pub struct Record {
     pub applying: Option<Applying>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renamed_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleting: Option<Deleting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +140,20 @@ impl State {
             skipped: Vec::new(),
         }
     }
+}
+
+// 公開済みの記事から移した記事の、ベースにある元のslug(renamedFromか、記録のブランチが移した記事)
+pub fn original_slug(state: &State, slug: &str) -> Option<String> {
+    let base = state.remote.base.as_ref()?;
+    if let Some(old) = state
+        .articles
+        .get(slug)
+        .and_then(|record| record.renamed_from.as_ref())
+    {
+        return base.articles.contains_key(old).then(|| old.clone());
+    }
+    let (branch, _) = article_branch(state, slug)?;
+    state.remote.branches.get(&branch)?.moved_from.clone()
 }
 
 // 記事用のブランチと、消してよいか確かめる先頭のコミット。記録にブランチが無くても、前回読み込んだ
@@ -288,6 +316,12 @@ pub struct LocalFiles {
     pub assets: BTreeMap<String, String>,
 }
 
+impl LocalFiles {
+    pub fn is_empty(&self) -> bool {
+        self.md.is_none() && self.assets.is_empty()
+    }
+}
+
 pub fn local_files(
     posts_dir: &Path,
     assets_base: &Path,
@@ -379,18 +413,27 @@ pub enum Category {
 }
 
 pub fn category(remote: &RemoteSnapshot, slug: &str, dirty: bool) -> Category {
-    let Some(base_files) = remote
-        .base
-        .as_ref()
-        .and_then(|base| base.articles.get(slug))
-    else {
+    let Some(base) = remote.base.as_ref() else {
         return Category::Drafting;
+    };
+    let Some(base_files) = base.articles.get(slug) else {
+        // ベースに無い記事は、ほかの記事を移した記事用のブランチの記事か、dirtyなら編集中。
+        // 呼び出し側は、公開済みの記事からslugを変えた記事だけdirtyにする
+        let moved = remote
+            .branches
+            .values()
+            .any(|branch| branch.slug == slug && branch.moved_from.is_some());
+        return if moved || dirty {
+            Category::Editing
+        } else {
+            Category::Drafting
+        };
     };
     // 記事用のブランチの内容がベースと違えば編集中。コミットは比べない
     let branch_differs = remote
         .branches
         .values()
-        .any(|branch| branch.slug == slug && branch.article != *base_files);
+        .any(|branch| branch.slug == slug && branch.article.as_ref() != Some(base_files));
     if dirty || branch_differs {
         Category::Editing
     } else {
@@ -453,6 +496,7 @@ mod tests {
             assets: asset_map(assets),
             applying: None,
             renamed_from: None,
+            deleting: None,
         }
     }
 
@@ -508,7 +552,8 @@ mod tests {
             BranchSnapshot {
                 commit: "commit-branch".to_string(),
                 slug: "post".to_string(),
-                article: article.clone(),
+                article: Some(article.clone()),
+                moved_from: None,
             },
         )]);
         let mut record = record_of(Some("blog/post"), &[("01.png", asset("sha-png-a", true))]);
@@ -893,7 +938,8 @@ mod tests {
                     BranchSnapshot {
                         commit: "commit-branch".to_string(),
                         slug: "post".to_string(),
-                        article: article.clone(),
+                        article: Some(article.clone()),
+                        moved_from: None,
                     },
                 ),
                 (
@@ -902,7 +948,8 @@ mod tests {
                         commit: "commit-branch".to_string(),
                         slug: "other".to_string(),
                         // ブランチの内容がベースと違う
-                        article: files_of("sha-md-b", &[]),
+                        article: Some(files_of("sha-md-b", &[])),
+                        moved_from: None,
                     },
                 ),
                 (
@@ -910,7 +957,8 @@ mod tests {
                     BranchSnapshot {
                         commit: "commit-branch".to_string(),
                         slug: "draft".to_string(),
-                        article: article.clone(),
+                        article: Some(article.clone()),
+                        moved_from: None,
                     },
                 ),
             ]),
@@ -931,5 +979,142 @@ mod tests {
         // 連携の記録が無ければ全部執筆中
         let empty = RemoteSnapshot::default();
         assert_eq!(category(&empty, "post", false), Category::Drafting);
+    }
+
+    #[test]
+    fn 空のブランチがありベースに記事があれば編集中() {
+        let remote = RemoteSnapshot {
+            base: Some(BaseSnapshot {
+                commit: "commit-base".to_string(),
+                articles: BTreeMap::from([("post".to_string(), files_of("sha-md-a", &[]))]),
+                shared_assets: None,
+            }),
+            branches: BTreeMap::from([(
+                "blog/post".to_string(),
+                BranchSnapshot {
+                    commit: "commit-branch".to_string(),
+                    slug: "post".to_string(),
+                    article: None,
+                    moved_from: None,
+                },
+            )]),
+        };
+
+        assert_eq!(category(&remote, "post", false), Category::Editing);
+    }
+
+    #[test]
+    fn 記事用のブランチが移した記事を持てばベースに無くても編集中() {
+        let remote = RemoteSnapshot {
+            base: Some(BaseSnapshot {
+                commit: "commit-base".to_string(),
+                articles: BTreeMap::from([("old".to_string(), files_of("sha-md-a", &[]))]),
+                shared_assets: None,
+            }),
+            branches: BTreeMap::from([(
+                "blog/new".to_string(),
+                BranchSnapshot {
+                    commit: "commit-branch".to_string(),
+                    slug: "new".to_string(),
+                    article: Some(files_of("sha-md-b", &[])),
+                    moved_from: Some("old".to_string()),
+                },
+            )]),
+        };
+
+        assert_eq!(category(&remote, "new", false), Category::Editing);
+    }
+
+    #[test]
+    fn renamedFromの元のslugがベースにあり記録のブランチが無い記事は編集中() {
+        let remote = RemoteSnapshot {
+            base: Some(BaseSnapshot {
+                commit: "commit-base".to_string(),
+                articles: BTreeMap::from([("old".to_string(), files_of("sha-md-a", &[]))]),
+                shared_assets: None,
+            }),
+            branches: BTreeMap::new(),
+        };
+
+        // renamedFromのある記事は、手元に変更があるものとして分類する
+        assert_eq!(category(&remote, "new", true), Category::Editing);
+    }
+
+    #[test]
+    fn 前のバージョンのstate_jsonのarticleをオブジェクトとして読める() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"basis":{"baseBranch":"main","branchFormat":"blog/{slug}","postsPath":"src/content/blog"},"fetchedAt":null,"remote":{"base":null,"branches":{"blog/post":{"commit":"commit-1","slug":"post","article":{"md":"sha-md-a","assets":{}}}}},"articles":{"post":{"branch":"blog/post","commit":"commit-1","md":"sha-md-a","assets":{},"applying":null}},"conflicts":[],"skipped":[]}"#,
+        )
+        .unwrap();
+
+        let state = read_state(&path, &basis()).unwrap();
+        let branch = &state.remote.branches["blog/post"];
+        assert_eq!(branch.article, Some(files_of("sha-md-a", &[])));
+        assert_eq!(branch.moved_from, None);
+        assert_eq!(state.articles["post"].deleting, None);
+    }
+
+    #[test]
+    fn 空のブランチと移した記事と削除予定の印は読み書きで残る() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        let mut state = State::empty(basis());
+        state.remote.branches = BTreeMap::from([
+            (
+                "blog/empty".to_string(),
+                BranchSnapshot {
+                    commit: "commit-empty".to_string(),
+                    slug: "empty".to_string(),
+                    article: None,
+                    moved_from: None,
+                },
+            ),
+            (
+                "blog/new".to_string(),
+                BranchSnapshot {
+                    commit: "commit-new".to_string(),
+                    slug: "new".to_string(),
+                    article: Some(files_of("sha-md-b", &[])),
+                    moved_from: Some("old".to_string()),
+                },
+            ),
+        ]);
+        let mut record = record_of(Some("blog/new"), &[]);
+        record.deleting = Some(Deleting::Unpublish);
+        state.articles = BTreeMap::from([("new".to_string(), record)]);
+
+        write_state(&path, &state).unwrap();
+        assert_eq!(read_state(&path, &basis()).unwrap(), state);
+
+        let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["remote"]["branches"]["blog/new"]["movedFrom"], "old");
+        assert_eq!(value["articles"]["new"]["deleting"], "unpublish");
+        assert!(
+            value["remote"]["branches"]["blog/empty"]
+                .get("article")
+                .is_none(),
+            "空のブランチのarticleの鍵は無いはず"
+        );
+    }
+
+    #[test]
+    fn articleとmovedFromとdeletingがNoneならstate_jsonに鍵を出さない() {
+        let branch = BranchSnapshot {
+            commit: "commit-1".to_string(),
+            slug: "post".to_string(),
+            article: None,
+            moved_from: None,
+        };
+        let value = serde_json::to_value(&branch).unwrap();
+        assert!(value.get("article").is_none(), "{value}");
+        assert!(value.get("movedFrom").is_none(), "{value}");
+
+        let record = record_of(Some("blog/post"), &[]);
+        assert_eq!(record.deleting, None);
+        let value = serde_json::to_value(&record).unwrap();
+        assert!(value.get("deleting").is_none(), "{value}");
     }
 }

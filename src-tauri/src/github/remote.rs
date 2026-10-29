@@ -312,6 +312,65 @@ impl Reader<'_> {
     }
 }
 
+// 記事用のブランチが移した記事。Unreadableは、そのブランチの記事を読めない記事にする
+enum Moved {
+    None,
+    Article(String),
+    Unreadable,
+}
+
+// ベースとの分岐点から消した・名前を変えた記事のmdを調べる
+fn moved_article(
+    reader: &mut Reader<'_>,
+    basis: &Basis,
+    base: &BaseSnapshot,
+    commit: &str,
+) -> Result<Moved, GithubError> {
+    let compared = match git::compare(
+        reader.t,
+        reader.token,
+        reader.now,
+        reader.repo,
+        &base.commit,
+        commit,
+    ) {
+        Ok(compared) => compared,
+        // 共通の祖先が無い
+        Err(GithubError::Status { status: 404 }) => return Ok(Moved::Unreadable),
+        Err(error) => return Err(error),
+    };
+    // 300件までしか返らず、続きを取る方法が無い
+    if compared.len() >= 300 {
+        return Ok(Moved::Unreadable);
+    }
+    let prefix = format!("{}/", basis.posts_path);
+    let mut moved = std::collections::BTreeSet::new();
+    for file in &compared {
+        let path = match (file.status.as_str(), &file.previous_filename) {
+            ("removed", _) => &file.filename,
+            ("renamed", Some(path)) => path,
+            _ => continue,
+        };
+        let Some(name) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+        let Some(slug) = name.strip_suffix(".md") else {
+            continue;
+        };
+        if name.contains('/') || crate::store::validate_slug(slug).is_err() {
+            continue;
+        }
+        if base.articles.contains_key(slug) {
+            moved.insert(slug.to_string());
+        }
+    }
+    match moved.len() {
+        0 => Ok(Moved::None),
+        1 => Ok(Moved::Article(moved.into_iter().next().unwrap())),
+        _ => Ok(Moved::Unreadable),
+    }
+}
+
 // 先頭がpreviousと同じブランチはツリーを取らない。読めない記事はpreviousの様子を残し、skippedに入れる
 pub fn read_remote(
     t: &dyn Transport,
@@ -377,16 +436,44 @@ pub fn read_remote(
         }
         match reader.read_branch(basis, &slug, &reference.commit) {
             Ok(Some(article)) => {
+                let moved = if base.articles.contains_key(&slug) {
+                    Moved::None
+                } else {
+                    moved_article(&mut reader, basis, &base, &reference.commit)?
+                };
+                let moved_from = match moved {
+                    Moved::None => None,
+                    Moved::Article(old) => Some(old),
+                    Moved::Unreadable => {
+                        skipped.push(unreadable(&slug, &reference.name));
+                        if let Some(kept) = kept {
+                            branches.insert(reference.name, kept.clone());
+                        }
+                        continue;
+                    }
+                };
                 branches.insert(
                     reference.name,
                     BranchSnapshot {
                         commit: reference.commit,
                         slug,
-                        article,
+                        article: Some(article),
+                        moved_from,
                     },
                 );
             }
-            Ok(None) => {}
+            // 記事の無い記事用のブランチ(空のブランチ)
+            Ok(None) => {
+                branches.insert(
+                    reference.name,
+                    BranchSnapshot {
+                        commit: reference.commit,
+                        slug,
+                        article: None,
+                        moved_from: None,
+                    },
+                );
+            }
             Err(GithubError::InvalidLayout { .. }) => {
                 // 記事は読めない。様子があれば前回のまま
                 skipped.push(unreadable(&slug, &reference.name));
@@ -396,6 +483,16 @@ pub fn read_remote(
             }
             // 通信の失敗(404も含む)は、この回の読み込みを止める
             Err(error) => return Err(error),
+        }
+    }
+
+    // 先頭が同じで前回の様子を残したブランチも、移した記事が今のベースで成り立つか確かめ直す
+    // (マージした後、ベースに新しいslugが入り元のslugが消える)
+    for branch in branches.values_mut() {
+        if branch.moved_from.as_ref().is_some_and(|old| {
+            !base.articles.contains_key(old) || base.articles.contains_key(&branch.slug)
+        }) {
+            branch.moved_from = None;
         }
     }
 
@@ -468,7 +565,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::github::fake::{blob_sha, repo_ref, url_of, FakeRepo, RouteTransport};
+    use crate::github::fake::{blob_sha, compare_url, repo_ref, url_of, FakeRepo, RouteTransport};
     use crate::github::http::Method;
     use crate::github::state::{ArticleFiles, BaseSnapshot, BranchSnapshot};
     const TOKEN: &str = "TOKEN";
@@ -1046,36 +1143,16 @@ mod tests {
 
         let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
         let branch = &read.snapshot.branches["blog/post"];
+        let article = branch.article.as_ref().expect("記事はあるはず");
         assert_eq!(branch.slug, "post");
-        assert_eq!(branch.article.md, blob_sha(MD));
+        assert_eq!(article.md, blob_sha(MD));
         // 別の記事の画像は一覧に入らない
-        assert_eq!(keys_of(&branch.article.assets), ["01.png"]);
+        assert_eq!(keys_of(&article.assets), ["01.png"]);
         assert_eq!(
-            branch.article.assets.get("01.png").map(String::as_str),
+            article.assets.get("01.png").map(String::as_str),
             Some(blob_sha(PNG).as_str())
         );
         assert_eq!(keys_of(&read.snapshot.branches), ["blog/post"]);
-        assert_eq!(base_keys(&read), ["post"]);
-    }
-
-    #[test]
-    fn 記事用のブランチにそのslugのmdが無ければそのブランチは無いもの() {
-        let transport = RouteTransport::new();
-        let repo = new_repo(&transport);
-        repo.branch(&transport, "main", &[("src/content/blog/post.md", MD)]);
-        // blog/postには、別の記事のmdと画像だけがある
-        repo.branch(
-            &transport,
-            "blog/post",
-            &[
-                ("src/content/blog/other.md", OTHER_MD),
-                ("src/assets/other/01.png", PNG),
-            ],
-        );
-
-        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
-        assert!(read.snapshot.branches.is_empty());
-        assert!(read.skipped.is_empty());
         assert_eq!(base_keys(&read), ["post"]);
     }
 
@@ -1116,7 +1193,8 @@ mod tests {
                 BranchSnapshot {
                     commit: branch_commit.clone(),
                     slug: "post".to_string(),
-                    article,
+                    article: Some(article),
+                    moved_from: None,
                 },
             )]),
         };
@@ -1151,7 +1229,8 @@ mod tests {
                 BranchSnapshot {
                     commit: "commit-old-branch".to_string(),
                     slug: "post".to_string(),
-                    article,
+                    article: Some(article),
+                    moved_from: None,
                 },
             )]),
         };
@@ -1442,5 +1521,365 @@ mod tests {
             base.shared_assets,
             Some(BTreeMap::from([("shared.png".to_string(), blob_sha(PNG),)]))
         );
+    }
+
+    fn compare_files_json(count: usize) -> serde_json::Value {
+        let files: Vec<serde_json::Value> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "filename": format!("src/content/blog/other{index}.md"),
+                    "status": "modified",
+                })
+            })
+            .collect();
+        serde_json::json!({ "status": "diverged", "files": files })
+    }
+
+    #[test]
+    fn 記事の無い記事用のブランチも空のブランチとして様子に入る() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(&transport, "main", &[("src/content/blog/post.md", MD)]);
+        let commit = repo.branch(
+            &transport,
+            "blog/empty",
+            &[("src/content/blog/other.md", OTHER_MD)],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let branch = read
+            .snapshot
+            .branches
+            .get("blog/empty")
+            .expect("空のブランチも様子に入るはず");
+        assert_eq!(branch.commit, commit);
+        assert_eq!(branch.slug, "empty");
+        assert!(branch.article.is_none());
+        assert!(branch.moved_from.is_none());
+        assert!(read.skipped.is_empty());
+    }
+
+    #[test]
+    fn 分岐点からベースの記事のmdを消していれば移した記事として持つ() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(&transport, "main", &[("src/content/blog/old.md", MD)]);
+        // ベースから切って、old.mdを消しnew.mdを足したブランチ
+        repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let branch = &read.snapshot.branches["blog/new"];
+        assert_eq!(branch.slug, "new");
+        assert_eq!(branch.moved_from.as_deref(), Some("old"));
+        assert_eq!(
+            branch.article.as_ref().map(|article| article.md.as_str()),
+            Some(blob_sha(BRANCH_MD).as_str())
+        );
+        assert!(read.skipped.is_empty());
+    }
+
+    #[test]
+    fn 名前を変えていれば移した記事として持つ() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(&transport, "main", &[("src/content/blog/old.md", MD)]);
+        let branch_commit = repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+        transport.json(
+            Method::Get,
+            &compare_url(&base, &branch_commit),
+            200,
+            serde_json::json!({
+                "files": [{
+                    "filename": "src/content/blog/new.md",
+                    "previous_filename": "src/content/blog/old.md",
+                    "status": "renamed",
+                }],
+            }),
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let branch = &read.snapshot.branches["blog/new"];
+        assert_eq!(branch.moved_from.as_deref(), Some("old"));
+        assert!(read.skipped.is_empty());
+    }
+
+    #[test]
+    fn ベースに記事が増える前に切ったブランチは移した記事を持たない() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let first = repo.branch(
+            &transport,
+            "main",
+            &[("src/content/blog/other.md", OTHER_MD)],
+        );
+        // other.mdだけがあるベースから切ったブランチ
+        repo.branch_from(
+            &transport,
+            "blog/new",
+            &first,
+            &[
+                ("src/content/blog/other.md", OTHER_MD),
+                ("src/content/blog/new.md", BRANCH_MD),
+            ],
+        );
+        // その後にベースへ記事が増える
+        repo.branch_from(
+            &transport,
+            "main",
+            &first,
+            &[
+                ("src/content/blog/other.md", OTHER_MD),
+                ("src/content/blog/old.md", MD),
+            ],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let branch = &read.snapshot.branches["blog/new"];
+        assert_eq!(branch.moved_from, None);
+        assert!(read.skipped.is_empty());
+    }
+
+    #[test]
+    fn 直下でないmdやslugでないmdやベースに無いmdは移した記事にしない() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(&transport, "main", &[("src/content/blog/old.md", MD)]);
+        let branch_commit = repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+        transport.json(
+            Method::Get,
+            &compare_url(&base, &branch_commit),
+            200,
+            serde_json::json!({
+                "files": [
+                    // 記事のディレクトリの下のディレクトリ
+                    {"filename": "src/content/blog/sub/old.md", "status": "removed"},
+                    // slugとして正しくない
+                    {"filename": "src/content/blog/Bad.md", "status": "removed"},
+                    // ベースに無い
+                    {"filename": "src/content/blog/unknown.md", "status": "removed"},
+                    // mdでない
+                    {"filename": "src/assets/old/01.png", "status": "removed"},
+                ],
+            }),
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        let branch = &read.snapshot.branches["blog/new"];
+        assert_eq!(branch.moved_from, None);
+        assert!(read.skipped.is_empty());
+    }
+
+    #[test]
+    fn slugがベースにあるブランチと空のブランチはcompareを呼ばない() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        repo.branch(&transport, "main", &[("src/content/blog/post.md", MD)]);
+        // slugがベースにある
+        repo.branch(&transport, "blog/post", &[("src/content/blog/post.md", MD)]);
+        // 記事の無いブランチで、slugがベースに無い
+        repo.branch(
+            &transport,
+            "blog/draft",
+            &[("src/content/blog/other.md", OTHER_MD)],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        assert!(read.snapshot.branches.contains_key("blog/post"));
+        assert!(
+            !request_urls(&transport)
+                .iter()
+                .any(|url| url.contains("/compare/")),
+            "{:?}",
+            request_urls(&transport)
+        );
+    }
+
+    #[test]
+    fn 先頭が前回と同じならcompareを呼ばず前回の移した記事を残す() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(&transport, "main", &[("src/content/blog/old.md", MD)]);
+        let branch_commit = repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+        // ベースだけ進む
+        repo.branch_from(
+            &transport,
+            "main",
+            &base,
+            &[("src/content/blog/old.md", MD), ("README.md", OTHER_MD)],
+        );
+        let article = ArticleFiles {
+            md: blob_sha(BRANCH_MD),
+            assets: BTreeMap::new(),
+        };
+        let previous = RemoteSnapshot {
+            base: Some(BaseSnapshot {
+                commit: base.clone(),
+                articles: BTreeMap::new(),
+                shared_assets: Some(BTreeMap::new()),
+            }),
+            branches: BTreeMap::from([(
+                "blog/new".to_string(),
+                BranchSnapshot {
+                    commit: branch_commit.clone(),
+                    slug: "new".to_string(),
+                    article: Some(article),
+                    moved_from: Some("old".to_string()),
+                },
+            )]),
+        };
+
+        let read = read(&transport, &basis(), &previous).unwrap();
+        let branch = &read.snapshot.branches["blog/new"];
+        assert_eq!(branch.moved_from.as_deref(), Some("old"));
+        assert!(
+            !request_urls(&transport)
+                .iter()
+                .any(|url| url.contains("/compare/")),
+            "{:?}",
+            request_urls(&transport)
+        );
+    }
+
+    #[test]
+    fn compareのfilesが300件なら読めない記事にし299件なら読める() {
+        for (count, readable) in [(299, true), (300, false)] {
+            let transport = RouteTransport::new();
+            let repo = new_repo(&transport);
+            let base = repo.branch(
+                &transport,
+                "main",
+                &[("src/content/blog/other.md", OTHER_MD)],
+            );
+            let branch_commit = repo.branch_from(
+                &transport,
+                "blog/new",
+                &base,
+                &[("src/content/blog/new.md", BRANCH_MD)],
+            );
+            transport.json(
+                Method::Get,
+                &compare_url(&base, &branch_commit),
+                200,
+                compare_files_json(count),
+            );
+
+            let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+            if readable {
+                assert!(read.skipped.is_empty(), "{count}件: {:?}", read.skipped);
+                assert!(read.snapshot.branches.contains_key("blog/new"), "{count}件");
+            } else {
+                assert_eq!(
+                    skipped_pairs(&read.skipped),
+                    vec![("new".to_string(), "blog/new".to_string())],
+                    "{count}件"
+                );
+                assert!(
+                    !read.snapshot.branches.contains_key("blog/new"),
+                    "{count}件"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn 移した記事が2つ以上あれば読めない記事にする() {
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(
+            &transport,
+            "main",
+            &[
+                ("src/content/blog/old-a.md", MD),
+                ("src/content/blog/old-b.md", OTHER_MD),
+            ],
+        );
+        // 2つの記事を消して1つ足したブランチ
+        repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+
+        let read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        assert_eq!(
+            skipped_pairs(&read.skipped),
+            vec![("new".to_string(), "blog/new".to_string())]
+        );
+        assert!(!read.snapshot.branches.contains_key("blog/new"));
+    }
+
+    #[test]
+    fn compareが404なら読めない記事にし500なら読み込みを止める() {
+        // 404は、そのブランチの記事だけ読めない記事にする
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(
+            &transport,
+            "main",
+            &[("src/content/blog/other.md", OTHER_MD)],
+        );
+        let branch_commit = repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+        transport.json(
+            Method::Get,
+            &compare_url(&base, &branch_commit),
+            404,
+            serde_json::json!({"message": "Not Found"}),
+        );
+
+        let first_read = read(&transport, &basis(), &RemoteSnapshot::default()).unwrap();
+        assert_eq!(
+            skipped_pairs(&first_read.skipped),
+            vec![("new".to_string(), "blog/new".to_string())]
+        );
+        assert!(!first_read.snapshot.branches.contains_key("blog/new"));
+
+        // 500は読み込みを止める
+        let transport = RouteTransport::new();
+        let repo = new_repo(&transport);
+        let base = repo.branch(
+            &transport,
+            "main",
+            &[("src/content/blog/other.md", OTHER_MD)],
+        );
+        let branch_commit = repo.branch_from(
+            &transport,
+            "blog/new",
+            &base,
+            &[("src/content/blog/new.md", BRANCH_MD)],
+        );
+        transport.json(
+            Method::Get,
+            &compare_url(&base, &branch_commit),
+            500,
+            serde_json::json!({"message": "Server Error"}),
+        );
+
+        assert_stopped(read(&transport, &basis(), &RemoteSnapshot::default()));
     }
 }

@@ -109,6 +109,60 @@ pub fn matching_branches(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompareFile {
+    pub filename: String,
+    pub previous_filename: Option<String>,
+    pub status: String,
+}
+
+// {base}...{head}のcompareのURL。SHAは英数字と-だけ(偽のGitHubのSHAも通す)
+fn compare_url(repo: &RepoRef, base: &str, head: &str) -> Result<String, GithubError> {
+    let valid = |sha: &str| {
+        !sha.is_empty()
+            && sha
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    };
+    if !valid(base) || !valid(head) {
+        return Err(GithubError::UrlNotAllowed);
+    }
+    let mut url = api_url(&["repos", &repo.owner, &repo.name], &[])?;
+    url.push_str("/compare/");
+    url.push_str(base);
+    url.push_str("...");
+    url.push_str(head);
+    Ok(url)
+}
+
+pub fn compare(
+    t: &dyn Transport,
+    token: &str,
+    now: i64,
+    repo: &RepoRef,
+    base: &str,
+    head: &str,
+) -> Result<Vec<CompareFile>, GithubError> {
+    let url = compare_url(repo, base, head)?;
+    let request = api_request(Method::Get, &url, token, None)?;
+    let (_, body) = send_json(t, &request, now)?;
+    body.get("files")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| GithubError::invalid_field("files"))?
+        .iter()
+        .map(|file| {
+            Ok(CompareFile {
+                filename: string_of(file, "filename")?,
+                previous_filename: file
+                    .get("previous_filename")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                status: string_of(file, "status")?,
+            })
+        })
+        .collect()
+}
+
 pub fn commit_tree(
     t: &dyn Transport,
     token: &str,

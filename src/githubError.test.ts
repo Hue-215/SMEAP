@@ -11,12 +11,16 @@ describe('githubErrorText', () => {
     expect(githubErrorText({ kind: 'slugInUse', slug: 'post' })).toBe(
       t('common.github_slug_in_use'),
     )
-    expect(githubErrorText({ kind: 'inBaseBranch' })).toBe(t('common.github_in_base_branch'))
     expect(githubErrorText({ kind: 'conflicted' })).toBe(t('common.github_conflicted'))
   })
 
   it('ほかの操作の最中なら待つよう伝える', () => {
     expect(githubErrorText({ kind: 'syncBusy' })).toBe(t('common.github_sync_busy'))
+  })
+
+  it('公開済みでない記事の操作と食い違いをそれぞれの文言にする', () => {
+    expect(githubErrorText({ kind: 'notPublished' })).toBe(t('common.github_not_published'))
+    expect(githubErrorText({ kind: 'outOfSync' })).toBe(t('common.github_out_of_sync'))
   })
 
   it('種類ごとの文言が無い失敗は、呼び出し側の文言に任せる', () => {

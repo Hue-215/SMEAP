@@ -16,7 +16,9 @@ const NOW = 1_700_000_000
 
 // 手元のGitHub連携の状態。指定のない項目は公開済み・変更無しにする
 function statesOf(
-  articles: Partial<Record<string, { dirty?: boolean; conflict?: boolean }>>,
+  articles: Partial<
+    Record<string, { dirty?: boolean; conflict?: boolean; deleting?: 'delete' | 'unpublish' }>
+  >,
   rest: Partial<GithubArticleStates> = {},
 ): GithubArticleStates {
   return {
@@ -31,6 +33,7 @@ function statesOf(
           dirty: item?.dirty ?? false,
           conflict: item?.conflict ?? false,
           branch: false,
+          deleting: item?.deleting,
         },
       ]),
     ) as GithubArticleStates['articles'],
@@ -140,6 +143,14 @@ describe('progressText', () => {
 describe('commitButtonState', () => {
   it('連携していなければnull', () => {
     expect(commitButtonState(null, 'a', false, true)).toBe(null)
+  })
+
+  it('削除予定の記事は変更があっても押せない', () => {
+    const states = statesOf({ post: { dirty: true, deleting: 'unpublish' } })
+    expect(commitButtonState(states, 'post', false, true)).toEqual({
+      enabled: false,
+      dirty: true,
+    })
   })
 
   it('押せるのは記事を開いていて、変更があって、読み込み中でないとき', () => {

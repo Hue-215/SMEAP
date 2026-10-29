@@ -1,5 +1,5 @@
 // GitHub連携の一覧のための、手元の振り分けと読み込みの1行の文言(src/Sidebar.tsx)
-import type { ArticleSummary } from './api'
+import type { ArticleSummary, GithubDeleting } from './api'
 import { t } from './i18n'
 
 // GitHub上の状態ごとの分類
@@ -11,6 +11,9 @@ export interface GithubArticleState {
   conflict: boolean
   // 記録か、前回読み込んだGitHub上の様子に記事用のbranchがあるか
   branch: boolean
+  deleting?: GithubDeleting
+  // 移した公開済みの記事の元のslug
+  movedFrom?: string
 }
 
 export interface GithubSkipped {
@@ -64,7 +67,7 @@ export function groupArticles(
   )
 }
 
-export type RowAction = 'rename' | 'delete' | 'discard'
+export type RowAction = 'rename' | 'delete' | 'discard' | 'unpublish'
 
 // 分類はRust側でも確かめるので、分からないときは変更と削除を出す
 export function rowMenuActions(states: GithubArticleStates | null, slug: string): RowAction[] {
@@ -72,13 +75,14 @@ export function rowMenuActions(states: GithubArticleStates | null, slug: string)
   const state = states.articles[slug]
   // 一覧の後に作った記事
   if (state === undefined) return ['rename', 'delete']
+  if (state.deleting != null) return ['discard']
   switch (state.category) {
     case 'drafting':
       return ['rename', 'delete']
     case 'editing':
-      return ['discard']
+      return ['rename', 'discard']
     case 'published':
-      return []
+      return ['rename', 'unpublish', 'delete']
   }
 }
 

@@ -12,6 +12,7 @@ import {
   githubFetchImages,
   githubLogout,
   githubPull,
+  githubRemovePublished,
   githubStatus,
   githubSync,
   githubWaitLogin,
@@ -24,6 +25,7 @@ import {
   type Article,
   type CommitPreview,
   type EditedFields,
+  type GithubDeleting,
   type GithubError,
   type GithubSyncResult,
   type GithubWaitLogin,
@@ -36,10 +38,10 @@ import { initialSaveStatus, whenSaved, type SaveStatus } from './autoSave'
 import CommitDialog, { type CommitPushResult } from './CommitDialog'
 import ConfirmDialog from './ConfirmDialog'
 import { Drawer } from './Drawer'
-import { commitButtonState } from './githubCommit'
+import { commitButtonState, progressText } from './githubCommit'
 import { githubErrorText, githubFailureText } from './githubError'
 import { deletesBranch, type GithubArticleStates } from './githubList'
-import { t } from './i18n'
+import { t, type MessageKey } from './i18n'
 import { isAndroid } from './platform'
 import SaveConfirmDialog from './SaveConfirmDialog'
 import SearchBar from './SearchBar'
@@ -60,6 +62,24 @@ type ArticleState =
 // 保存していない変更があるときに、確かめてから行う操作
 type PendingAction = { kind: 'switch'; slug: string } | { kind: 'close' }
 
+// 公開済みの記事の削除・非公開と、その取りやめ・削除予定の印の文言
+const removeTexts = {
+  delete: {
+    title: 'app.remove_title_delete',
+    confirm: 'app.remove_confirm_delete',
+    message: 'app.remove_message_delete',
+    discard: 'app.discard_delete_title',
+    pending: 'app.deleting_pending',
+  },
+  unpublish: {
+    title: 'app.remove_title_unpublish',
+    confirm: 'app.remove_confirm_unpublish',
+    message: 'app.remove_message_unpublish',
+    discard: 'app.discard_unpublish_title',
+    pending: 'app.unpublishing_pending',
+  },
+} satisfies Record<GithubDeleting, Record<string, MessageKey>>
+
 export default function App() {
   const drawer = useDrawer()
   const [articles, setArticles] = useState<ArticlesState>({ status: 'loading' })
@@ -77,6 +97,13 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   const [discardTarget, setDiscardTarget] = useState<ArticleRef | null>(null)
+  // 公開済みの記事の削除・非公開。branchは確認の文言に出す
+  const [removeTarget, setRemoveTarget] = useState<{
+    target: ArticleRef
+    kind: GithubDeleting
+    branch: string
+  } | null>(null)
+  const [removeProgress, setRemoveProgress] = useState<PushProgress | null>(null)
   // 同じ文言が続いても出し直すよう、包んで持つ
   const [notice, setNotice] = useState<Notice | null>(null)
   // GitHub連携の記事ごとの状態。nullは連携していない
@@ -645,6 +672,68 @@ export default function App() {
       </>
     )
 
+  // 開いている記事が削除予定なら、上のバーに出して編集欄を止める
+  const pendingRemoval =
+    loaded === null ? null : (githubStates?.articles[loaded.slug]?.deleting ?? null)
+  // 取りやめる対象が削除予定なら、文言を「削除をやめる」「非公開をやめる」にする
+  const discardState =
+    discardTarget?.kind === 'article' ? githubStates?.articles[discardTarget.slug] : undefined
+  const discardRemoval = discardState?.deleting ?? null
+  const discardMovedFrom = discardState?.movedFrom ?? null
+  let discardMessage: MessageKey = 'app.discard_message'
+  if (discardRemoval !== null) discardMessage = 'app.discard_remove_message'
+  else if (discardMovedFrom !== null) discardMessage = 'app.discard_moved_message'
+
+  const openRemove = (target: ArticleRef, kind: GithubDeleting) => {
+    drawer.close()
+    githubStatus()
+      .then((status) => {
+        setRemoveProgress(null)
+        setRemoveTarget({
+          target,
+          kind,
+          branch: status.settings.branchFormat.replace('{slug}', target.slug),
+        })
+      })
+      .catch((e) => {
+        console.error('Failed to read the branch format', e)
+        setNotice({ text: githubErrorText(e), error: true })
+      })
+  }
+
+  const removeConfirmed = async (target: ArticleRef, kind: GithubDeleting) => {
+    const slug = target.slug
+    const open = slug === selectedSlug
+    try {
+      if (open) {
+        if (!(await saveOpenArticle())) return false
+        await whenSaved()
+        setEditorLocked(true)
+      }
+      setRemoveProgress({ step: 'checking' })
+      await githubRemovePublished(slug, kind, setRemoveProgress)
+      setRemoveTarget(null)
+      await reloadArticles()
+      return true
+    } catch (e) {
+      console.error('Failed to remove the published article', slug, e)
+      // 届いたか分からないときは削除予定の印が残るので、一覧を読み直す
+      void reloadArticles()
+      const error = e as GithubError | undefined
+      if (error?.kind === 'branchExists')
+        return t('app.remove_branch_exists', { branch: error.branch })
+      return githubFailureText(e) ?? false
+    } finally {
+      if (open) setEditorLocked(false)
+      setRemoveProgress(null)
+    }
+  }
+
+  const openDiscard = (target: ArticleRef) => {
+    drawer.close()
+    setDiscardTarget(target)
+  }
+
   // 開いている記事なら編集欄を止めて、未保存の入力を捨てる。成功したら開き直す
   const discardConfirmed = async (target: ArticleRef) => {
     const slug = target.slug
@@ -652,9 +741,11 @@ export default function App() {
     try {
       if (open) setEditorLocked(true)
       await whenSaved()
+      // 移した記事をやめると、元のslugの記事に戻る
+      const reopened = githubStates?.articles[slug]?.movedFrom ?? slug
       await githubDiscardEdit(slug)
       setDiscardTarget(null)
-      if (open) openArticle(slug)
+      if (open) openArticle(reopened)
       return true
     } catch (e) {
       console.error('Failed to discard the edits', slug, e)
@@ -690,10 +781,8 @@ export default function App() {
         drawer.close()
         setDeleteTarget(target)
       }}
-      onDiscard={(target) => {
-        drawer.close()
-        setDiscardTarget(target)
-      }}
+      onDiscard={openDiscard}
+      onRemove={openRemove}
     />
   )
 
@@ -751,10 +840,20 @@ export default function App() {
         ) : (
           <TopBar
             drawer={drawer}
-            onInsertLink={loaded ? () => editor.current?.insertLink() : null}
-            onInsertImages={loaded ? (files) => editor.current?.insertImages(files) : null}
+            onInsertLink={
+              loaded && pendingRemoval === null ? () => editor.current?.insertLink() : null
+            }
+            onInsertImages={
+              loaded && pendingRemoval === null
+                ? (files) => editor.current?.insertImages(files)
+                : null
+            }
             saveStatus={loaded ? saveStatus : null}
-            notice={notice}
+            notice={
+              pendingRemoval === null
+                ? notice
+                : { text: t(removeTexts[pendingRemoval].pending), error: false }
+            }
             onFind={loaded ? () => openFindRef.current(null) : null}
             commit={
               commitButton === null
@@ -775,9 +874,12 @@ export default function App() {
                     saveConfirm !== null ||
                     deleteTarget !== null ||
                     discardTarget !== null ||
+                    removeTarget !== null ||
                     syncing ||
-                    commitTarget !== null
+                    commitTarget !== null ||
+                    pendingRemoval !== null
                   }
+                  readOnly={pendingRemoval !== null}
                   onSaveStatus={setSaveStatus}
                   onSaved={onSaved}
                   onNotice={(text) => setNotice({ text, error: true })}
@@ -795,6 +897,11 @@ export default function App() {
         <SlugDialog
           mode={slugDialog}
           destination={destination}
+          published={
+            slugDialog.kind === 'rename' &&
+            githubStates?.articles[slugDialog.slug]?.category !== undefined &&
+            githubStates?.articles[slugDialog.slug]?.category !== 'drafting'
+          }
           onDone={onDialogDone}
           onCancel={() => setSlugDialog(null)}
         />
@@ -838,18 +945,41 @@ export default function App() {
           {branchNote(deleteTarget.slug)}
         </ConfirmDialog>
       )}
+      {removeTarget && (
+        <ConfirmDialog
+          title={t(removeTexts[removeTarget.kind].title)}
+          confirmLabel={t(removeTexts[removeTarget.kind].confirm)}
+          failedText={t('common.change_failed')}
+          progress={removeProgress !== null ? progressText(removeProgress) : null}
+          onCancel={() => setRemoveTarget(null)}
+          onConfirm={() => removeConfirmed(removeTarget.target, removeTarget.kind)}
+        >
+          {t(removeTexts[removeTarget.kind].message, {
+            title:
+              (removeTarget.target.kind === 'article' && removeTarget.target.title) ||
+              t('common.untitled'),
+            slug: removeTarget.target.slug,
+            branch: removeTarget.branch,
+          })}
+        </ConfirmDialog>
+      )}
       {discardTarget && (
         <ConfirmDialog
-          title={t('app.discard_title')}
-          confirmLabel={t('app.discard_confirm')}
+          title={t(
+            discardRemoval === null ? 'app.discard_title' : removeTexts[discardRemoval].discard,
+          )}
+          confirmLabel={t(
+            discardRemoval === null ? 'app.discard_confirm' : removeTexts[discardRemoval].discard,
+          )}
           failedText={t('app.discard_failed')}
           onCancel={() => setDiscardTarget(null)}
           onConfirm={() => discardConfirmed(discardTarget)}
         >
-          {t('app.discard_message', {
+          {t(discardMessage, {
             title:
               (discardTarget.kind === 'article' && discardTarget.title) || t('common.untitled'),
             slug: discardTarget.slug,
+            oldSlug: discardMovedFrom ?? '',
           })}
           {branchNote(discardTarget.slug)}
         </ConfirmDialog>

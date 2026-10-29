@@ -43,8 +43,10 @@ export function githubFailureText(error: unknown): string | null {
       return t('common.github_slug_reserved')
     case 'slugInUse':
       return t('common.github_slug_in_use')
-    case 'inBaseBranch':
-      return t('common.github_in_base_branch')
+    case 'notPublished':
+      return t('common.github_not_published')
+    case 'outOfSync':
+      return t('common.github_out_of_sync')
     case 'syncBusy':
       return t('common.github_sync_busy')
     case 'conflicted':

@@ -204,7 +204,7 @@ fn assets_dir(basis: &Basis, slug: &str) -> String {
 }
 
 // 形式の{slug}にslugを入れたbranch名
-fn branch_name(basis: &Basis, slug: &str) -> String {
+pub(crate) fn branch_name(basis: &Basis, slug: &str) -> String {
     match basis.branch_format.split_once("{slug}") {
         Some((before, after)) => format!("{before}{slug}{after}"),
         // {slug}を含まない形式は、validate_branch_formatで断られているので起きない
@@ -483,6 +483,7 @@ fn compared_record(commit: &str, files: &ArticleFiles) -> Record {
             .collect(),
         applying: None,
         renamed_from: None,
+        deleting: None,
     }
 }
 
@@ -502,7 +503,9 @@ fn merged_files(remote: &ArticleFiles, diff: &LocalDiff) -> ArticleFiles {
 }
 
 // Push後の保存層の書き込み。ロックを取り、世代と向き先を確かめてからstate.jsonを読み直し、
-// この記事の記録とリモートの様子だけを替える(画像の取得が通信の間に書いた記録を消さないため)
+// この記事の記録とリモートの様子だけを替える(画像の取得が通信の間に書いた記録を消さないため)。
+// moved_fromがNoneなら、同じブランチの様子の移した記事を残す
+#[allow(clippy::too_many_arguments)]
 fn save_pushed(
     input: &SyncInput<'_>,
     slug: &str,
@@ -510,6 +513,7 @@ fn save_pushed(
     merged: ArticleFiles,
     diff: &LocalDiff,
     md: &Content,
+    moved_from: Option<&str>,
     state_path: &std::path::Path,
 ) -> Result<(), GithubError> {
     input.store.with_lock(|posts_dir, _| {
@@ -535,12 +539,20 @@ fn save_pushed(
         }
         // 送った記録がこの記事の内容なので、置き換えの途中の印は要らない
         record.applying = None;
+        let moved_from = moved_from.map(str::to_string).or_else(|| {
+            state
+                .remote
+                .branches
+                .get(&result.branch)
+                .and_then(|branch| branch.moved_from.clone())
+        });
         state.remote.branches.insert(
             result.branch.clone(),
             BranchSnapshot {
                 commit: result.commit.clone(),
                 slug: slug.to_string(),
-                article: merged,
+                article: Some(merged),
+                moved_from,
             },
         );
         // 食い違いの印を外す
@@ -564,6 +576,134 @@ fn forget_branch(input: &SyncInput<'_>, state_path: &std::path::Path, branch: &s
     }
 }
 
+struct RenamedPush<'a> {
+    slug: &'a str,
+    message: &'a str,
+    old_slug: &'a str,
+    record: &'a Record,
+    diff: &'a LocalDiff,
+    md: &'a Content,
+    overwrite: Option<&'a str>,
+}
+
+// 公開済みの記事のslugを変える(記録のブランチが無い)。ベースの先頭を親に新しいブランチを作る
+fn push_renamed_from_base(
+    input: &SyncInput<'_>,
+    push: RenamedPush<'_>,
+    progress: &dyn Fn(PushProgress),
+) -> Result<PushResult, GithubError> {
+    let RenamedPush {
+        slug,
+        message,
+        old_slug,
+        record,
+        diff,
+        md,
+        overwrite,
+    } = push;
+    // Conflictで「Push」を選んだときは、確かめてもらった先頭を親にし、重なりを確かめ直さない
+    let base_head = match overwrite {
+        Some(head) => head.to_string(),
+        None => git::branch_head(
+            input.transport,
+            input.token,
+            input.now,
+            input.repo,
+            &input.basis.base_branch,
+        )?
+        .ok_or(GithubError::BaseBranchNotFound)?,
+    };
+    let parent = parent_article(input, old_slug, &base_head)?;
+    // ベースから元のslugの記事が消えていれば何も作らない
+    if parent.files.md.is_empty() {
+        return Err(GithubError::BranchGone);
+    }
+    let (md_conflict, images) = conflict_of(Some(record), &parent.files, diff);
+    if overwrite.is_none() && (md_conflict || !images.is_empty()) {
+        return Err(GithubError::Conflict {
+            head: base_head,
+            md: md_conflict,
+            images,
+        });
+    }
+    let mut merged = merged_files(&parent.files, diff);
+    if merged.md.is_empty() {
+        merged.md = md.0.clone();
+    }
+    let mut blobs = BlobCache::new(progress);
+    let entries = renamed_tree_entries(input, old_slug, slug, &parent, &merged, diff, &mut blobs)?;
+    progress(PushProgress::Committing);
+    let tree = git::create_tree(
+        input.transport,
+        input.token,
+        input.now,
+        input.repo,
+        &parent.base_tree,
+        &entries,
+    )?;
+    let commit = git::create_commit(
+        input.transport,
+        input.token,
+        input.now,
+        input.repo,
+        message,
+        &tree,
+        &[&base_head],
+    )?;
+    progress(PushProgress::Pushing);
+    let branch = branch_name(input.basis, slug);
+    match git::create_ref(
+        input.transport,
+        input.token,
+        input.now,
+        input.repo,
+        &branch,
+        &commit,
+    ) {
+        Ok(()) => {}
+        Err(error @ GithubError::Status { status: 422 }) => {
+            // 空のブランチでも進めない(親が元の記事を含まないことがある)
+            if git::branch_head(input.transport, input.token, input.now, input.repo, &branch)?
+                .is_some()
+            {
+                return Err(GithubError::BranchExists { branch });
+            }
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    }
+    let result = PushResult {
+        branch: branch.clone(),
+        commit,
+        kept_branch: None,
+    };
+    let state_path = state::state_path(input.data_dir, input.repo);
+    let saved = save_pushed(
+        input,
+        slug,
+        &result,
+        merged,
+        diff,
+        md,
+        Some(old_slug),
+        &state_path,
+    );
+    // 記録を書けていれば、syncedを書けなかっただけなのでPushは成功にする(差分の行数がずれるだけ)
+    if let Err(error) = saved {
+        let recorded = state::read_state(&state_path, input.basis).is_ok_and(|state| {
+            state
+                .articles
+                .get(slug)
+                .is_some_and(|record| record.branch.as_deref() == Some(branch.as_str()))
+        });
+        if !recorded {
+            return Err(error);
+        }
+        eprintln!("Failed to write the synced md of {slug}: {error}");
+    }
+    Ok(result)
+}
+
 // overwriteは、Conflictで返したheadのうち「Push」で確かめてもらったもの
 pub fn commit_push(
     input: &SyncInput<'_>,
@@ -576,14 +716,16 @@ pub fn commit_push(
     // state.jsonは通信の前に読む。読めなければ通信もしない
     let header = state::read_state(&state_path, input.basis)?;
     let record = header.articles.get(slug);
+    // 削除予定の記事はPushできない
+    if record.is_some_and(|record| record.deleting.is_some()) {
+        return Err(GithubError::NothingToCommit);
+    }
     let renamed_from = record.and_then(|record| record.renamed_from.clone());
     // 改名した記事は新しいslugのブランチを作る
     let branch = match &renamed_from {
         Some(_) => branch_name(input.basis, slug),
         None => target_branch(record, input.basis, slug),
     };
-    // 記録のbranchがあるか。PATCHとPOST /git/refsで分ける
-    let recorded_branch = record.and_then(|record| record.branch.as_deref()).is_some();
 
     // 手元の中身を、記録と比べるときにstoreのロックの中で読む
     let local = input
@@ -596,9 +738,65 @@ pub fn commit_push(
         return Err(GithubError::NothingToCommit);
     }
 
+    // まだcommitしていない記事で、送り先の空のブランチが様子にあれば、その先頭を親にする
+    let mut empty_branch_head = None;
+    if record.is_none()
+        && header
+            .remote
+            .branches
+            .get(&branch)
+            .is_some_and(|branch| branch.article.is_none())
+    {
+        // 先頭を読み直して、記事が足されていれば作らない
+        if let Some(head) =
+            git::branch_head(input.transport, input.token, input.now, input.repo, &branch)?
+        {
+            if remote::read_article(
+                input.transport,
+                input.token,
+                input.now,
+                input.repo,
+                input.basis,
+                slug,
+                &head,
+            )?
+            .is_some()
+            {
+                return Err(GithubError::BranchExists {
+                    branch: branch.clone(),
+                });
+            }
+            empty_branch_head = Some(head);
+        }
+    }
+    // 記録のbranchがあるか。PATCHとPOST /git/refsで分ける
+    let recorded_branch =
+        record.and_then(|record| record.branch.as_deref()).is_some() || empty_branch_head.is_some();
+
     if let Some(old_slug) = renamed_from {
         let record = record.expect("renamed_from is only on a record");
+        if record.branch.is_none() {
+            return push_renamed_from_base(
+                input,
+                RenamedPush {
+                    slug,
+                    message,
+                    old_slug: &old_slug,
+                    record,
+                    diff: &diff,
+                    md: &md,
+                    overwrite,
+                },
+                progress,
+            );
+        }
         let old_branch = record.branch.as_deref().ok_or(GithubError::BranchGone)?;
+        // 元の記事を移したブランチなら、その元のslugを新しいブランチにも書く
+        let moved_from = header
+            .remote
+            .branches
+            .get(old_branch)
+            .and_then(|branch| branch.moved_from.clone());
         // 古いブランチの先頭を親にする。消えていれば何も作らない
         let old_head = git::branch_head(
             input.transport,
@@ -689,7 +887,16 @@ pub fn commit_push(
                     .is_some_and(|record| record.branch.as_deref() == Some(branch.as_str()))
             })
         };
-        let saved = match save_pushed(input, slug, &result, merged, &diff, &md, &state_path) {
+        let saved = match save_pushed(
+            input,
+            slug,
+            &result,
+            merged,
+            &diff,
+            &md,
+            moved_from.as_deref(),
+            &state_path,
+        ) {
             Err(error) if !recorded() => return Err(error),
             saved => saved,
         };
@@ -726,6 +933,9 @@ pub fn commit_push(
         )?
         .ok_or(GithubError::BaseBranchNotFound)?,
     };
+    if let (None, Some(head)) = (overwrite, &empty_branch_head) {
+        parent = head.clone();
+    }
     // overwriteの初回は、確かめてもらった先頭から作り直すので重なりを確かめ直さない
     let mut confirming = overwrite.is_none();
     let mut blobs = BlobCache::new(progress);
@@ -794,7 +1004,7 @@ pub fn commit_push(
                     commit,
                     kept_branch: None,
                 };
-                save_pushed(input, slug, &result, merged, &diff, &md, &state_path)?;
+                save_pushed(input, slug, &result, merged, &diff, &md, None, &state_path)?;
                 return Ok(result);
             }
             Err(error @ GithubError::Status { status: 422 | 404 }) if recorded_branch => {
@@ -943,7 +1153,7 @@ fn backup_dir(input: &SyncInput<'_>, backup_name: &str) -> Result<PathBuf, Githu
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
@@ -3554,5 +3764,375 @@ mod tests {
             serde_json::to_value(PushProgress::Pushing).unwrap(),
             serde_json::json!({ "step": "pushing" })
         );
+    }
+
+    // #68: ベースの記事のslugの変更 -----------------------------------------------
+
+    impl PushTest {
+        // ベースの記事oldをnewに変えた後の手元と記録(renameの実装に頼らず直接動かす)
+        fn mark_renamed_from_base(&self, old: &str, new: &str) {
+            fs::rename(self.md_path(old), self.md_path(new)).unwrap();
+            let old_assets = self.assets_base.join(old);
+            if old_assets.exists() {
+                fs::rename(old_assets, self.assets_base.join(new)).unwrap();
+            }
+            if self.synced_path(old).exists() {
+                fs::rename(self.synced_path(old), self.synced_path(new)).unwrap();
+            }
+            self.edit_state(|state| {
+                let mut record = state["articles"][old].clone();
+                record["renamedFrom"] = Value::String(old.to_string());
+                state["articles"][new] = record;
+                state["articles"].as_object_mut().unwrap().remove(old);
+            });
+        }
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更はベースの先頭を親に新しいブランチを作る() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        repo.accept_writes(&test.transport);
+        let base = repo.head("main");
+
+        test.commit_push("b", "更新", None).unwrap();
+
+        // 新しいブランチを作るPOSTだけ。古いブランチの削除はしない
+        assert_eq!(test.post_count(&test.refs_url()), 1);
+        assert_eq!(test.patch_count(&test.patch_url("blog/b")), 0);
+        assert!(
+            !test
+                .transport
+                .requests()
+                .iter()
+                .any(|request| request.method == Method::Delete),
+            "ブランチの削除は送らないはず"
+        );
+        // 親はベースの先頭
+        let commits = test.post_bodies("/git/commits");
+        assert_eq!(
+            commits.last().unwrap()["parents"],
+            serde_json::json!([base])
+        );
+        // ツリーは古いパスを消して新しいパスを足す
+        let trees = test.post_bodies("/git/trees");
+        let entries = trees.last().unwrap()["tree"].as_array().unwrap();
+        let removed: BTreeSet<&str> = entries
+            .iter()
+            .filter(|entry| entry["sha"].is_null())
+            .map(|entry| entry["path"].as_str().unwrap())
+            .collect();
+        assert!(removed.contains("src/content/blog/a.md"), "{removed:?}");
+        assert!(removed.contains("src/assets/a/01.png"), "{removed:?}");
+        let files = repo.tree_files("blog/b");
+        assert!(files.contains_key("src/content/blog/b.md"));
+        assert!(files.contains_key("src/assets/b/01.png"));
+        assert!(!files.contains_key("src/content/blog/a.md"));
+        assert!(!files.contains_key("src/assets/a/01.png"));
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更を終えると記録と様子のブランチが移した記事になる() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        repo.accept_writes(&test.transport);
+
+        let result = test.commit_push("b", "更新", None).unwrap();
+
+        let state = test.state();
+        let record = &state["articles"]["b"];
+        assert_eq!(record["branch"], "blog/b");
+        assert_eq!(record["commit"], result.commit);
+        assert!(record.get("renamedFrom").is_none(), "{record}");
+        let branch = &state["remote"]["branches"]["blog/b"];
+        assert_eq!(branch["commit"], result.commit);
+        assert_eq!(branch["slug"], "b");
+        assert_eq!(branch["movedFrom"], "a");
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更の後に読み込むと編集中の変更なしになり元のslugは作られない() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        repo.accept_writes(&test.transport);
+        test.commit_push("b", "更新", None).unwrap();
+
+        test.sync();
+
+        let state = test.article_state("b");
+        assert_eq!(state.category, Category::Editing);
+        assert!(!state.dirty);
+        assert_eq!(state.moved_from.as_deref(), Some("a"));
+        assert!(!test.md_path("a").exists(), "元のslugは作らないはず");
+        assert_eq!(test.state()["articles"]["a"], Value::Null);
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更で取ってきていない画像は親のblobのshaで新しいパスに置く() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        repo.accept_writes(&test.transport);
+
+        test.commit_push("b", "更新", None).unwrap();
+
+        // 画像の中身は送らない
+        assert!(
+            test.blob_contents().iter().all(|content| content != PNG),
+            "画像のblobは送らないはず"
+        );
+        let files = repo.tree_files("blog/b");
+        // 親のblobのSHAのまま新しいパスに置く
+        let (sha, body) = path_of(&files, "src/assets/b/01.png");
+        assert_eq!(sha, "100644");
+        assert_eq!(body, PNG);
+    }
+
+    #[test]
+    fn ベースの先頭で元のslugの記事が記録から変わっていればConflict() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        test.write_md_to("b", A_LOCAL);
+        // ほかの端末がベースのa.mdを替える
+        let base = repo.branch(&test.transport, "main", BASE_A_CHANGED);
+        repo.accept_writes(&test.transport);
+
+        match test.commit_push("b", "更新", None) {
+            Err(GithubError::Conflict { head, md, .. }) => {
+                assert_eq!(head, base);
+                assert!(md);
+            }
+            other => panic!("Conflictのはず: {other:?}"),
+        }
+        assert_eq!(test.post_count(&test.refs_url()), 0);
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更のConflictでPushを選ぶと手元の内容で新しいブランチを作る() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        test.write_md_to("b", A_LOCAL);
+        let base = repo.branch(&test.transport, "main", BASE_A_CHANGED);
+        repo.accept_writes(&test.transport);
+        let Err(GithubError::Conflict { head, .. }) = test.commit_push("b", "更新", None) else {
+            panic!("Conflictのはず");
+        };
+
+        test.commit_push("b", "更新", Some(&head)).unwrap();
+
+        let commits = test.post_bodies("/git/commits");
+        assert_eq!(
+            commits.last().unwrap()["parents"],
+            serde_json::json!([base])
+        );
+        let files = repo.tree_files("blog/b");
+        assert_eq!(body_of(&files, "src/content/blog/b.md"), A_LOCAL);
+        assert!(!files.contains_key("src/content/blog/a.md"));
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更でベースだけが本文を替えていれば重ならずベースの本文で送る() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        let changed = repo.branch(&test.transport, "main", BASE_A_CHANGED);
+        repo.accept_writes(&test.transport);
+
+        test.commit_push("b", "更新", None).unwrap();
+
+        let files = repo.tree_files("blog/b");
+        let base_md = &repo.tree_files("main")["src/content/blog/a.md"].1;
+        assert_eq!(body_of(&files, "src/content/blog/b.md"), base_md.as_slice());
+        let commits = test.post_bodies("/git/commits");
+        assert_eq!(
+            commits.last().unwrap()["parents"],
+            serde_json::json!([changed])
+        );
+    }
+
+    #[test]
+    fn ベースから元のslugの記事が消えていればBranchGoneで何も作らない() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        // ほかの端末がベースからa.mdを消す
+        repo.branch(&test.transport, "main", NO_A_MAIN);
+        repo.accept_writes(&test.transport);
+
+        assert!(matches!(
+            test.commit_push("b", "更新", None),
+            Err(GithubError::BranchGone)
+        ));
+        assert_eq!(test.post_count(&test.refs_url()), 0);
+        assert_eq!(test.state()["articles"]["b"]["renamedFrom"], "a");
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更で同じ名前のブランチが既にあればBranchExists() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        repo.branch(
+            &test.transport,
+            "blog/b",
+            &[("src/content/blog/b.md", OTHER_MD)],
+        );
+        repo.accept_writes(&test.transport);
+
+        assert!(matches!(
+            test.commit_push("b", "更新", None),
+            Err(GithubError::BranchExists { branch }) if branch == "blog/b"
+        ));
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更で同じ名前の空のブランチがあってもBranchExists() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        let base = repo.head("main");
+        repo.branch_from(&test.transport, "blog/b", &base, MAIN_FILES);
+        repo.accept_writes(&test.transport);
+
+        assert!(matches!(
+            test.commit_push("b", "更新", None),
+            Err(GithubError::BranchExists { branch }) if branch == "blog/b"
+        ));
+    }
+
+    #[test]
+    fn ベースの記事のslugの変更のpreviewは古い名前を出し古いブランチを出さない() {
+        let test = PushTest::new();
+        let _repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+
+        let preview = test.preview("b").unwrap();
+
+        assert_eq!(preview.md_name, "b.md");
+        assert_eq!(preview.old_md_name.as_deref(), Some("a.md"));
+        assert_eq!(preview.old_branch, None);
+    }
+
+    #[test]
+    fn 移した記事のslugをさらに変えると新しいブランチを作って古いブランチを消す() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        repo.accept_writes(&test.transport);
+        test.commit_push("b", "更新", None).unwrap();
+        // 手元でslugをもう一度変える
+        fs::rename(test.md_path("b"), test.md_path("c")).unwrap();
+        let old_assets = test.assets_base.join("b");
+        if old_assets.exists() {
+            fs::rename(old_assets, test.assets_base.join("c")).unwrap();
+        }
+        if test.synced_path("b").exists() {
+            fs::rename(test.synced_path("b"), test.synced_path("c")).unwrap();
+        }
+        test.edit_state(|state| {
+            let mut record = state["articles"]["b"].clone();
+            record["renamedFrom"] = Value::String("b".to_string());
+            state["articles"]["c"] = record;
+            state["articles"].as_object_mut().unwrap().remove("b");
+        });
+
+        let result = test.commit_push("c", "更新", None).unwrap();
+
+        assert_eq!(result.branch, "blog/c");
+        assert_eq!(test.post_count(&test.refs_url()), 2);
+        // 古いブランチを消す
+        assert_eq!(
+            test.transport
+                .requests()
+                .iter()
+                .filter(|request| request.method == Method::Delete
+                    && request.url.ends_with("/refs/heads/blog/b"))
+                .count(),
+            1
+        );
+        let state = test.state();
+        let record = &state["articles"]["c"];
+        assert_eq!(record["branch"], "blog/c");
+        assert!(record.get("renamedFrom").is_none(), "{record}");
+        // 続く読み込みで、新しいブランチが同じ元の記事を移した記事になる
+        test.sync();
+        let state = test.state();
+        assert_eq!(state["remote"]["branches"]["blog/c"]["movedFrom"], "a");
+        let article = test.article_state("c");
+        assert_eq!(article.category, Category::Editing);
+        assert!(!article.dirty);
+        assert!(!test.md_path("a").exists());
+    }
+
+    // #68: 空のブランチ ----------------------------------------------------------
+
+    #[test]
+    fn まだcommitしていない記事は送り先の空のブランチの先頭を親にPatchで進める() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        let base = repo.branch(&test.transport, "main", NO_A_MAIN);
+        // 記事aの無い、ベースより先に進んだブランチ
+        let empty = repo.branch_from(&test.transport, BRANCH, &base, NO_A_MAIN);
+        test.sync();
+        test.write_md(&a_new());
+        test.write_image("a/01.png", PNG);
+        repo.accept_writes(&test.transport);
+
+        test.commit_push("a", "追加", None).unwrap();
+
+        assert_eq!(test.patch_count(&test.patch_url(BRANCH)), 1);
+        assert_eq!(test.post_count(&test.refs_url()), 0);
+        let commits = test.post_bodies("/git/commits");
+        assert_eq!(commits[0]["parents"], serde_json::json!([empty]));
+    }
+
+    #[test]
+    fn 空のブランチの先頭に記事が足されていればBranchExists() {
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        let base = repo.branch(&test.transport, "main", NO_A_MAIN);
+        let empty = repo.branch_from(&test.transport, BRANCH, &base, NO_A_MAIN);
+        test.sync();
+        test.write_md(&a_new());
+        repo.accept_writes(&test.transport);
+        // 読み込みの後に、ほかの端末が空のブランチに記事を足した
+        let mut files: Vec<(&str, &[u8])> = NO_A_MAIN.to_vec();
+        files.push(("src/content/blog/a.md", A_SYNCED));
+        repo.branch_from(&test.transport, BRANCH, &empty, &files);
+
+        assert!(matches!(
+            test.commit_push("a", "追加", None),
+            Err(GithubError::BranchExists { branch }) if branch == BRANCH
+        ));
+        assert_eq!(test.post_count(&test.refs_url()), 0);
+    }
+
+    // #68: 削除予定 ---------------------------------------------------------------
+
+    #[test]
+    fn 削除予定の記事のCommit_and_PushはNothingToCommit() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.edit_state(|state| {
+            state["articles"]["a"]["deleting"] = Value::String("delete".to_string());
+        });
+        // 手元に変更があっても送らない
+        test.write_md(A_LOCAL);
+        repo.accept_writes(&test.transport);
+
+        assert!(matches!(
+            test.commit_push("a", "更新", None),
+            Err(GithubError::NothingToCommit)
+        ));
+        assert!(test
+            .transport
+            .requests()
+            .iter()
+            .all(|request| request.method == Method::Get));
     }
 }
