@@ -77,7 +77,6 @@ export default function TopBar({
       >
         <Icon name={closes ? 'left_panel_close' : 'menu'} />
       </button>
-      <StatusText shown={shown} />
       {commit && (
         <button
           type="button"
@@ -91,6 +90,7 @@ export default function TopBar({
           {commit.state.dirty && <span className="commit-button-dirty" aria-hidden="true" />}
         </button>
       )}
+      <StatusText shown={shown} />
       <span className="topbar-spacer" />
       <button
         type="button"

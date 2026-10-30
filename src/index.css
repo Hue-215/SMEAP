@@ -354,7 +354,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-error);
 }
 
-/* 保存の状態とCommitを左に寄せ、残りのボタンを右に寄せる */
+/* Commitと保存の状態を左に寄せ、残りのボタンを右に寄せる */
 .topbar-spacer {
   flex: 1;
 }
