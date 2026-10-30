@@ -258,6 +258,14 @@ fn image_ref_from<'a>(slug: &str, reference: &'a str) -> Option<(&'a str, bool)>
         .map(|name| (name, false))
 }
 
+// `<x>`なら`<>`の中、そうでなければ空白の前(後ろの題を除く)
+fn link_destination(target: &str) -> &str {
+    match target.strip_prefix('<') {
+        Some(rest) => rest.split('>').next().unwrap_or(""),
+        None => target.split_whitespace().next().unwrap_or(""),
+    }
+}
+
 // 本文の`![...](参照)`の参照を順に返す。`![a](x "題")`の題と、`![a](<x>)`の`<>`は除く
 pub(crate) fn body_image_refs(body: &str) -> Vec<&str> {
     let mut refs = Vec::new();
@@ -272,12 +280,7 @@ pub(crate) fn body_image_refs(body: &str) -> Vec<&str> {
         let Some(end) = after_ref.find(')') else {
             break;
         };
-        let target = &after_ref[..end];
-        let reference = match target.strip_prefix('<') {
-            Some(rest) => rest.split('>').next().unwrap_or(""),
-            None => target.split_whitespace().next().unwrap_or(""),
-        };
-        refs.push(reference);
+        refs.push(link_destination(&after_ref[..end]));
         rest = &after_ref[end + 1..];
     }
     refs
@@ -310,11 +313,7 @@ fn reference_definitions(body: &str) -> Vec<&str> {
         .filter_map(|line| {
             let rest = line.trim_start().strip_prefix('[')?;
             let (_, after) = rest.split_once("]:")?;
-            let target = after.trim_start();
-            match target.strip_prefix('<') {
-                Some(rest) => rest.split('>').next(),
-                None => target.split_whitespace().next(),
-            }
+            Some(link_destination(after.trim_start()))
         })
         .collect()
 }
@@ -1014,7 +1013,7 @@ impl Store {
         Ok(name)
     }
 
-    // 使われなくなったheroImageのファイルを移した先へ移す。本文が参照していれば残す。
+    // 使われなくなったheroImageのファイルを移した先へ移す。ほかの参照が残っていれば移さない。
     // 移せなくても失敗にしない
     fn remove_hero_file(&self, article: &Article, old: &str) {
         debug_assert!(is_filename(old), "{old} should be a filename");
@@ -1211,11 +1210,7 @@ impl Store {
         // 新しいslugの移した先に残っていたものは消す。改名が失敗しても戻さない
         let old_removed = self.removed_images_dir(old);
         let new_removed = self.removed_images_dir(new);
-        match fs::remove_dir_all(&new_removed) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(StoreError::io(&new_removed, error)),
-        }
+        remove_ignoring_not_found(fs::remove_dir_all(&new_removed), &new_removed)?;
 
         // gitは空ディレクトリを持たないので、画像の無い記事でもrenameできるように作る
         let old_assets = self.assets_dir(old);
