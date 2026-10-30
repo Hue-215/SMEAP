@@ -35,6 +35,9 @@ interface SettingsProps {
   // 読めていなければnull。切り替えさせない
   frontmatter: FrontmatterSettings | null
   onChangeFrontmatter: (frontmatter: FrontmatterSettings) => Promise<void>
+  // 読めていなければnull。切り替えさせない
+  removeUnusedImages: boolean | null
+  onChangeRemoveUnusedImages: (enabled: boolean) => Promise<void>
   // デスクトップだけ
   onPickPostsDir: () => Promise<void>
   // Androidだけ
@@ -65,6 +68,8 @@ export default function Settings({
   postsDir,
   frontmatter,
   onChangeFrontmatter,
+  removeUnusedImages,
+  onChangeRemoveUnusedImages,
   onPickPostsDir,
   onChangePostsDirName,
   onGithubSwitch,
@@ -81,6 +86,8 @@ export default function Settings({
   const [logoutBusy, setLogoutBusy] = useState(false)
   const [frontmatterBusy, setFrontmatterBusy] = useState(false)
   const [frontmatterFailure, setFrontmatterFailure] = useState<string | null>(null)
+  const [removeUnusedImagesBusy, setRemoveUnusedImagesBusy] = useState(false)
+  const [removeUnusedImagesFailure, setRemoveUnusedImagesFailure] = useState<string | null>(null)
   const headingId = useId()
   const backButton = useRef<HTMLButtonElement>(null)
   const body = useRef<HTMLDivElement>(null)
@@ -220,6 +227,25 @@ export default function Settings({
     }
   }
 
+  const removeUnusedImagesMessage =
+    removeUnusedImages === null
+      ? t('settings.remove_unused_images_unreadable')
+      : removeUnusedImagesFailure
+
+  const toggleRemoveUnusedImages = async () => {
+    if (removeUnusedImagesBusy || removeUnusedImages === null) return
+    setRemoveUnusedImagesBusy(true)
+    setRemoveUnusedImagesFailure(null)
+    try {
+      await onChangeRemoveUnusedImages(!removeUnusedImages)
+    } catch (e) {
+      console.error('Failed to save the image settings', e)
+      setRemoveUnusedImagesFailure(t('common.change_failed'))
+    } finally {
+      setRemoveUnusedImagesBusy(false)
+    }
+  }
+
   return (
     <Dialog labelledBy={headingId} onCancel={back} className="settings-dialog">
       <div className="settings">
@@ -344,6 +370,27 @@ export default function Settings({
                 </div>
                 {frontmatterMessage !== null && (
                   <p className="settings-failure">{frontmatterMessage}</p>
+                )}
+                <h2 className="settings-h2">{t('settings.images')}</h2>
+                <div className="settings-rows">
+                  <label className="settings-row">
+                    <span className="settings-row-main">
+                      {t('settings.remove_unused_images')}
+                      <span className="settings-note">
+                        {t('settings.remove_unused_images_note')}
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      className="settings-check"
+                      checked={removeUnusedImages ?? true}
+                      disabled={removeUnusedImagesBusy || removeUnusedImages === null}
+                      onChange={() => void toggleRemoveUnusedImages()}
+                    />
+                  </label>
+                </div>
+                {removeUnusedImagesMessage !== null && (
+                  <p className="settings-failure">{removeUnusedImagesMessage}</p>
                 )}
                 <h2 className="settings-h2">{t('settings.about')}</h2>
                 <div className="settings-rows">

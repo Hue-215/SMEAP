@@ -1199,7 +1199,7 @@ mod tests {
     use crate::github::http::{Method, Request};
     use crate::github::state::{Basis, Category};
     use crate::github::sync::{self, SyncInput};
-    use crate::store::Store;
+    use crate::store::{EditedFields, Store};
 
     const TOKEN: &str = "TOKEN";
     const NOW: i64 = 1_000_000;
@@ -1629,6 +1629,24 @@ mod tests {
             .get(path)
             .map(|(_, body)| body.as_slice())
             .expect("ファイルはあるはず")
+    }
+
+    // 記事のフロントマターはそのままで本文だけを替えて保存する
+    fn save_body(test: &PushTest, slug: &str, body: &str) {
+        let article = test.store.read_article(slug).unwrap();
+        test.store
+            .save_article(
+                slug,
+                EditedFields {
+                    updated_date: None,
+                    title: article.fields.title.clone(),
+                    description: article.fields.description.clone(),
+                    pub_date: article.fields.pub_date.clone(),
+                    body: body.to_string(),
+                },
+                None,
+            )
+            .unwrap();
     }
 
     // nth回目のPATCHの前に、ほかの端末がbranchを作り替える(commitsに新しい先頭を入れる)
@@ -4242,5 +4260,52 @@ mod tests {
         test.pull(SLUG, None, BACKUP_NAME).unwrap();
 
         assert!(!updated_mark(&path, SLUG));
+    }
+
+    #[test]
+    fn 参照しない保存で移した画像はPushでGitHubから消え参照を戻すと記録どおりに戻る() {
+        // 画像を取ってきた記事で、本文が参照しない保存をすると、画像は手元から移り変更として残る
+        let test = PushTest::new();
+        let (repo, _head) = test.branch_synced();
+        repo.accept_writes(&test.transport);
+        test.mark_fetched(SLUG, &[("01.png", true)]);
+        test.write_image("a/01.png", PNG);
+
+        save_body(&test, SLUG, "line-a\nline-b\nline-c\nline-d\nline-e\n");
+        assert!(!test.image_path("a/01.png").exists());
+        assert!(test.article_state(SLUG).dirty);
+
+        test.commit_push(SLUG, "画像を片付ける", None).unwrap();
+        assert!(!github_files(&repo).contains_key("src/assets/a/01.png"));
+
+        // 別の記事で参照を戻して保存すると、記録と同じ中身に戻り変更ではなくなる
+        const B_SYNCED: &[u8] = b"---\ntitle: \"B\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n![img](../../assets/b/01.png)\n";
+        let test = PushTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("README.md", README),
+                ("src/content/blog/b.md", B_SYNCED),
+                ("src/assets/b/01.png", PNG),
+            ],
+        );
+        test.sync();
+        test.mark_fetched("b", &[("01.png", true)]);
+        test.write_image("b/01.png", PNG);
+        assert!(!test.article_state("b").dirty);
+
+        save_body(&test, "b", "画像なし\n");
+        assert!(!test.image_path("b/01.png").exists());
+        assert!(test.article_state("b").dirty);
+
+        save_body(&test, "b", "![img](../../assets/b/01.png)\n");
+        assert_eq!(
+            fs::read_to_string(test.md_path("b")).unwrap(),
+            String::from_utf8_lossy(B_SYNCED)
+        );
+        assert_eq!(fs::read(test.image_path("b/01.png")).unwrap(), PNG);
+        assert!(!test.article_state("b").dirty);
     }
 }

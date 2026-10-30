@@ -12,7 +12,7 @@ use super::state::{
     RemoteSnapshot, Skipped, State,
 };
 use super::GithubError;
-use crate::store::Store;
+use crate::store::{body_image_refs, Store};
 
 // 記事のリモートの内容。branchがNoneならベース
 #[derive(Debug, Clone, Copy)]
@@ -752,31 +752,6 @@ pub fn wanted_images(
         })
         .map(|(name, asset)| (name.clone(), asset.sha.clone()))
         .collect())
-}
-
-// 本文の`![...](参照)`の参照を順に返す。`![a](x "題")`の題と、`![a](<x>)`の`<>`は除く
-fn body_image_refs(body: &str) -> Vec<&str> {
-    let mut refs = Vec::new();
-    let mut rest = body;
-    while let Some(start) = rest.find("![") {
-        let after_alt = &rest[start + 2..];
-        // `](`が無ければ、後ろの`![`にも無い。探し直すと本文の長さの二乗かかる
-        let Some(alt_end) = after_alt.find("](") else {
-            break;
-        };
-        let after_ref = &after_alt[alt_end + 2..];
-        let Some(end) = after_ref.find(')') else {
-            break;
-        };
-        let target = &after_ref[..end];
-        let reference = match target.strip_prefix('<') {
-            Some(rest) => rest.split('>').next().unwrap_or(""),
-            None => target.split_whitespace().next().unwrap_or(""),
-        };
-        refs.push(reference);
-        rest = &after_ref[end + 1..];
-    }
-    refs
 }
 
 // mdが参照している共有の画像の名前(heroImageと本文)

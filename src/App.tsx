@@ -6,6 +6,7 @@ import {
   getFrontmatterSettings,
   getPostsDir,
   getPostsDirName,
+  getRemoveUnusedImages,
   githubArticleState,
   githubArticleStates,
   githubCommitPreview,
@@ -22,6 +23,7 @@ import {
   pickPostsDir,
   setFrontmatterSettings,
   setPostsDirName,
+  setRemoveUnusedImages as updateRemoveUnusedImages,
   readArticle,
   exportZip,
   UnsavedArticleError,
@@ -102,6 +104,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 読めていなければnullで、編集画面はどちらも有効として出す
   const [frontmatter, setFrontmatter] = useState<FrontmatterSettings | null>(null)
+  // 読めていなければnull。設定画面の切り替えを止める
+  const [removeUnusedImages, setRemoveUnusedImages] = useState<boolean | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   const [discardTarget, setDiscardTarget] = useState<ArticleRef | null>(null)
   // 公開済みの記事の削除・非公開。branchは確認の文言に出す
@@ -211,11 +215,19 @@ export default function App() {
     getFrontmatterSettings()
       .then(setFrontmatter)
       .catch((e) => console.error('Failed to read the frontmatter settings', e))
+    getRemoveUnusedImages()
+      .then(setRemoveUnusedImages)
+      .catch((e) => console.error('Failed to read the image settings', e))
   }, [])
 
   const changeFrontmatter = async (next: FrontmatterSettings) => {
     await setFrontmatterSettings(next)
     setFrontmatter(next)
+  }
+
+  const changeRemoveUnusedImages = async (next: boolean) => {
+    await updateRemoveUnusedImages(next)
+    setRemoveUnusedImages(next)
   }
 
   useEffect(() => {
@@ -1007,6 +1019,8 @@ export default function App() {
           postsDir={postsDir}
           frontmatter={frontmatter}
           onChangeFrontmatter={changeFrontmatter}
+          removeUnusedImages={removeUnusedImages}
+          onChangeRemoveUnusedImages={changeRemoveUnusedImages}
           onPickPostsDir={pickPostsDirAndReload}
           onChangePostsDirName={changePostsDirName}
           onGithubSwitch={switchDestination}

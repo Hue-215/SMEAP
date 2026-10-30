@@ -1,13 +1,14 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 
 #[cfg(unix)]
@@ -257,6 +258,133 @@ fn image_ref_from<'a>(slug: &str, reference: &'a str) -> Option<(&'a str, bool)>
         .map(|name| (name, false))
 }
 
+// 本文の`![...](参照)`の参照を順に返す。`![a](x "題")`の題と、`![a](<x>)`の`<>`は除く
+pub(crate) fn body_image_refs(body: &str) -> Vec<&str> {
+    let mut refs = Vec::new();
+    let mut rest = body;
+    while let Some(start) = rest.find("![") {
+        let after_alt = &rest[start + 2..];
+        // `](`が無ければ、後ろの`![`にも無い。探し直すと本文の長さの二乗かかる
+        let Some(alt_end) = after_alt.find("](") else {
+            break;
+        };
+        let after_ref = &after_alt[alt_end + 2..];
+        let Some(end) = after_ref.find(')') else {
+            break;
+        };
+        let target = &after_ref[..end];
+        let reference = match target.strip_prefix('<') {
+            Some(rest) => rest.split('>').next().unwrap_or(""),
+            None => target.split_whitespace().next().unwrap_or(""),
+        };
+        refs.push(reference);
+        rest = &after_ref[end + 1..];
+    }
+    refs
+}
+
+// 本文の`<img ... src="参照">`の参照を順に返す。引用符は"と'の両方。タグと属性の名前の大文字小文字は問わない
+fn html_image_refs(body: &str) -> Vec<&str> {
+    // ASCIIだけを小文字にするので、位置は元の本文と同じ
+    let lower = body.to_ascii_lowercase();
+    let mut refs = Vec::new();
+    let mut offset = 0;
+    while let Some(start) = lower[offset..].find("<img") {
+        let tag_start = offset + start + 4;
+        // `>`が無ければ、後ろの`<img`にも無い。探し直すと本文の長さの二乗かかる
+        let Some(end) = lower[tag_start..].find('>') else {
+            break;
+        };
+        let tag_end = tag_start + end;
+        if let Some(reference) = src_of_tag(&body[tag_start..tag_end], &lower[tag_start..tag_end]) {
+            refs.push(reference);
+        }
+        offset = tag_end + 1;
+    }
+    refs
+}
+
+// `[id]: 参照`の定義の参照。`![a][id]`の画像がこれで指すので、使われ方は見ずにすべて拾う
+fn reference_definitions(body: &str) -> Vec<&str> {
+    body.lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix('[')?;
+            let (_, after) = rest.split_once("]:")?;
+            let target = after.trim_start();
+            match target.strip_prefix('<') {
+                Some(rest) => rest.split('>').next(),
+                None => target.split_whitespace().next(),
+            }
+        })
+        .collect()
+}
+
+// lowerはtagをASCIIだけ小文字にしたもの。属性の名前はlowerで探し、値はtagから取る
+fn src_of_tag<'a>(tag: &'a str, lower: &str) -> Option<&'a str> {
+    let bytes = tag.as_bytes();
+    let mut pos = 0;
+    while let Some(found) = lower[pos..].find("src") {
+        let at = pos + found;
+        let before = at == 0 || bytes[at - 1].is_ascii_whitespace();
+        let mut after = at + 3;
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        if before && bytes.get(after) == Some(&b'=') {
+            let mut value_start = after + 1;
+            while value_start < bytes.len() && bytes[value_start].is_ascii_whitespace() {
+                value_start += 1;
+            }
+            let quote = *bytes.get(value_start)?;
+            if quote == b'"' || quote == b'\'' {
+                let value = &tag[value_start + 1..];
+                return value.split(quote as char).next();
+            }
+        }
+        pos = at + 3;
+    }
+    None
+}
+
+// 記事が参照している記事の画像の名前。共有の画像は含めない
+fn article_image_names(slug: &str, hero: Option<&HeroImage>, body: &str) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    if let Some(hero) = hero.filter(|hero| !hero.shared) {
+        names.insert(hero.name.clone());
+    }
+    for reference in body_image_refs(body)
+        .into_iter()
+        .chain(html_image_refs(body))
+        .chain(reference_definitions(body))
+    {
+        if let Some((name, false)) = image_ref_from(slug, reference) {
+            names.insert(name.to_string());
+        }
+    }
+    names
+}
+
+// 移すときに別のファイルシステムならrenameが失敗するので、コピーしてから消す
+fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Err(error),
+        Err(_) => {
+            // 途中までのコピーを本来の名前で残さないよう、一時ファイルに書いてから置き換える
+            let dir = to.parent().unwrap_or(Path::new("."));
+            let data = fs::read(from)?;
+            write_temp(dir, &data)
+                .map_err(|error| io::Error::other(error.to_string()))?
+                .persist(to)
+                .map_err(|error| error.error)?;
+            fs::remove_file(from)
+        }
+    }
+}
+
 fn image_extension(data: &[u8]) -> Option<&'static str> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         Some("png")
@@ -284,12 +412,20 @@ fn image_number(name: &OsStr) -> Option<u32> {
     stem.parse().ok()
 }
 
-fn next_image_number(dir: &Path) -> Result<u32, StoreError> {
+fn next_image_number(dirs: &[&Path]) -> Result<u32, StoreError> {
     let mut max = 0;
-    for entry in fs::read_dir(dir).map_err(|error| StoreError::io(dir, error))? {
-        let entry = entry.map_err(|error| StoreError::io(dir, error))?;
-        if let Some(number) = image_number(&entry.file_name()) {
-            max = max.max(number);
+    for dir in dirs {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            // 移した先はまだ無いことがある
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(StoreError::io(dir, error)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|error| StoreError::io(dir, error))?;
+            if let Some(number) = image_number(&entry.file_name()) {
+                max = max.max(number);
+            }
         }
     }
     // u32::MAXの次は振れないので最大のまま返す。同じ名前があればpersist_noclobberで失敗する
@@ -336,6 +472,7 @@ pub struct Store {
     lock: Mutex<()>,
     // ログイン・Repositoryの切り替えを、GitHub読み込みの通信の間に検出するための世代
     generation: AtomicU64,
+    remove_unused_images: AtomicBool,
 }
 
 struct Dirs {
@@ -367,6 +504,7 @@ impl Store {
             backup_root,
             lock: Mutex::new(()),
             generation: AtomicU64::new(0),
+            remove_unused_images: AtomicBool::new(true),
         })
     }
 
@@ -424,6 +562,116 @@ impl Store {
             .unwrap_or_else(PoisonError::into_inner)
             .assets_base
             .join(slug)
+    }
+
+    pub fn set_remove_unused_images(&self, enabled: bool) {
+        self.remove_unused_images.store(enabled, Ordering::Relaxed);
+    }
+
+    pub(crate) fn removed_images_dir(&self, slug: &str) -> PathBuf {
+        self.dirs
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .backup_dir
+            .join("removed-images")
+            .join(slug)
+    }
+
+    // 本文とheroImageから参照されていない画像を、記事の画像の置き場所から移した先へ移す。
+    // 移せなくても保存は失敗させない
+    fn move_unused_images(&self, slug: &str, used: &BTreeSet<String>) {
+        let assets = self.assets_dir(slug);
+        let removed = self.removed_images_dir(slug);
+        let entries = match fs::read_dir(&assets) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+            Err(error) => {
+                eprintln!(
+                    "Failed to read the image directory: {}",
+                    StoreError::io(&assets, error)
+                );
+                return;
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    eprintln!(
+                        "Failed to read the image directory: {}",
+                        StoreError::io(&assets, error)
+                    );
+                    continue;
+                }
+            };
+            let name = entry.file_name();
+            if name.to_str().is_some_and(|name| used.contains(name)) {
+                continue;
+            }
+            // 下のディレクトリとシンボリックリンクは対象にしない
+            let path = entry.path();
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {}
+                Ok(_) => continue,
+                Err(error) => {
+                    eprintln!(
+                        "Failed to read the image file: {}",
+                        StoreError::io(&path, error)
+                    );
+                    continue;
+                }
+            }
+            let dest = removed.join(&name);
+            if let Err(error) = move_file(&path, &dest) {
+                eprintln!(
+                    "Failed to move the unused image: {}",
+                    StoreError::io(&path, error)
+                );
+            }
+        }
+    }
+
+    // 移した画像のうち、記事から参照されているものを元の名前で戻す
+    fn restore_referenced_images(&self, slug: &str, used: &BTreeSet<String>) {
+        let removed = self.removed_images_dir(slug);
+        let assets = self.assets_dir(slug);
+        for name in used {
+            let path = removed.join(name);
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {}
+                _ => continue,
+            }
+            let dest = assets.join(name);
+            if dest.exists() {
+                continue;
+            }
+            if let Err(error) = move_file(&path, &dest) {
+                eprintln!(
+                    "Failed to restore the image: {}",
+                    StoreError::io(&path, error)
+                );
+            }
+        }
+    }
+
+    // 保存の後に、参照されている移した画像を戻し、片付けが有効なら参照されない画像を移す
+    fn tidy_images(&self, article: &Article) {
+        let names = article_image_names(
+            &article.slug,
+            article.fields.hero_image.as_ref(),
+            &article.fields.body,
+        );
+        self.restore_referenced_images(&article.slug, &names);
+        // heroImageが読めない書き方だと、使っているサムネイルが参照に入らないので移さない
+        let hero_unreadable = article.extra.iter().any(|entry| {
+            entry
+                .key_value
+                .as_ref()
+                .is_some_and(|(key, _)| key == "heroImage")
+        });
+        if self.remove_unused_images.load(Ordering::Relaxed) && !hero_unreadable {
+            self.move_unused_images(&article.slug, &names);
+        }
     }
 
     fn backup_path(&self, slug: &str) -> PathBuf {
@@ -557,6 +805,12 @@ impl Store {
             // mdはnoclobberの失敗では増えないので、ここでは触らない。
             // assetsは作ったときだけ消したいので、空の時だけ消えるremove_dirにする
             let _ = fs::remove_dir(self.assets_dir(slug));
+        } else {
+            // 同じslugで作り直したとき、前の記事の画像が移した先に残っている
+            let removed = self.removed_images_dir(slug);
+            if let Err(error) = remove_ignoring_not_found(fs::remove_dir_all(&removed), &removed) {
+                eprintln!("Failed to remove the moved images of the previous article: {error}");
+            }
         }
         result
     }
@@ -581,28 +835,111 @@ impl Store {
         } else {
             self.assets_dir(slug)
         };
-        let path = dir.join(name);
-        fs::read(&path).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                StoreError::ImageNotFound {
-                    reference: reference.to_string(),
+        let read = |path: PathBuf| {
+            fs::read(&path).map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    StoreError::ImageNotFound {
+                        reference: reference.to_string(),
+                    }
+                } else {
+                    StoreError::io(&path, error)
                 }
-            } else {
-                StoreError::io(&path, error)
+            })
+        };
+        match read(dir.join(name)) {
+            // Ctrl+Zで参照を戻してから次の保存までの間も、移した画像を表示できるようにする
+            Err(StoreError::ImageNotFound { .. }) if !shared => {
+                read(self.removed_images_dir(slug).join(name))
             }
-        })
+            result => result,
+        }
     }
 
     // 本文に入れる`![](...)`を返す
     pub fn import_body_image(&self, slug: &str, data: &[u8]) -> Result<String, StoreError> {
         let _guard = self.lock_guard();
         let (dir, ext) = self.prepare_import(slug, data)?;
-        let name = format!("{:02}.{}", next_image_number(&dir)?, ext);
+        if let Some(name) = self.restore_matching_image(slug, data) {
+            return Ok(format!("![]({}{name})", assets_ref(slug)));
+        }
+        let name = format!(
+            "{:02}.{}",
+            next_image_number(&[&dir, &self.removed_images_dir(slug)])?,
+            ext
+        );
         let path = dir.join(&name);
         let tmp = write_temp(&dir, data)?;
         tmp.persist_noclobber(&path)
             .map_err(|error| StoreError::io(&path, error))?;
         Ok(format!("![]({}{name})", assets_ref(slug)))
+    }
+
+    // 移した画像のうち、中身がdataと同じものを元の名前で戻す。名前の順で最初のもの
+    fn restore_matching_image(&self, slug: &str, data: &[u8]) -> Option<String> {
+        let removed = self.removed_images_dir(slug);
+        let entries = match fs::read_dir(&removed) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                eprintln!(
+                    "Failed to read the moved images: {}",
+                    StoreError::io(&removed, error)
+                );
+                return None;
+            }
+        };
+        let mut names: Vec<OsString> = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(entry) => names.push(entry.file_name()),
+                Err(error) => eprintln!(
+                    "Failed to read the moved images: {}",
+                    StoreError::io(&removed, error)
+                ),
+            }
+        }
+        names.sort();
+        let assets = self.assets_dir(slug);
+        for name in names {
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            // 本文の画像がhero.*になると、後でheroImageを選んだときに上書きされる
+            if !is_filename(name) || name.starts_with("hero.") {
+                continue;
+            }
+            let path = removed.join(name);
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {}
+                _ => continue,
+            }
+            let content = match fs::read(&path) {
+                Ok(content) => content,
+                Err(error) => {
+                    eprintln!(
+                        "Failed to read the moved image: {}",
+                        StoreError::io(&path, error)
+                    );
+                    continue;
+                }
+            };
+            if content != data {
+                continue;
+            }
+            let dest = assets.join(name);
+            if dest.exists() {
+                continue;
+            }
+            if let Err(error) = move_file(&path, &dest) {
+                eprintln!(
+                    "Failed to restore the image: {}",
+                    StoreError::io(&path, error)
+                );
+                continue;
+            }
+            return Some(name.to_string());
+        }
+        None
     }
 
     // heroImageに入れるファイル名を返す。mdのheroImageもここで書き換える
@@ -628,23 +965,29 @@ impl Store {
             return Err(error);
         }
         if let Some(old) = old.filter(|old| !old.shared && old.name != name) {
-            self.remove_hero_file(slug, &old.name, &article.fields.body);
+            self.remove_hero_file(&article, &old.name);
         }
         Ok(name)
     }
 
-    // 使われなくなったheroImageのファイルを消す。本文が参照していれば消さない。
-    // 消せなくても失敗にしない
-    fn remove_hero_file(&self, slug: &str, old: &str, body: &str) {
+    // 使われなくなったheroImageのファイルを移した先へ移す。本文が参照していれば残す。
+    // 移せなくても失敗にしない
+    fn remove_hero_file(&self, article: &Article, old: &str) {
         debug_assert!(is_filename(old), "{old} should be a filename");
-        if body.contains(&format!("{}{old}", assets_ref(slug))) {
+        let names = article_image_names(
+            &article.slug,
+            article.fields.hero_image.as_ref(),
+            &article.fields.body,
+        );
+        if names.contains(old) {
             return;
         }
-        let old_path = self.assets_dir(slug).join(old);
-        if let Err(error) = fs::remove_file(&old_path) {
+        let old_path = self.assets_dir(&article.slug).join(old);
+        let dest = self.removed_images_dir(&article.slug).join(old);
+        if let Err(error) = move_file(&old_path, &dest) {
             if error.kind() != io::ErrorKind::NotFound {
                 eprintln!(
-                    "Failed to remove the previous heroImage: {}",
+                    "Failed to move the previous heroImage: {}",
                     StoreError::io(&old_path, error)
                 );
             }
@@ -661,7 +1004,7 @@ impl Store {
         };
         self.write_md(&article)?;
         if !old.shared {
-            self.remove_hero_file(slug, &old.name, &article.fields.body);
+            self.remove_hero_file(&article, &old.name);
         }
         Ok(())
     }
@@ -746,12 +1089,14 @@ impl Store {
             pub_date: fields.pub_date.clone(),
             updated_date: fields.updated_date.clone(),
         };
-        self.write_md(&Article {
+        let article = Article {
             slug: slug.to_string(),
             fields,
             warnings: Vec::new(),
             extra: original.extra,
-        })?;
+        };
+        self.write_md(&article)?;
+        self.tidy_images(&article);
         Ok(saved)
     }
 
@@ -823,6 +1168,15 @@ impl Store {
             .body
             .replace(&assets_ref(old), &assets_ref(new));
 
+        // 移した先に残っていたものは、改名が失敗しても戻さない
+        let old_removed = self.removed_images_dir(old);
+        let new_removed = self.removed_images_dir(new);
+        match fs::remove_dir_all(&new_removed) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(StoreError::io(&new_removed, error)),
+        }
+
         // gitは空ディレクトリを持たないので、画像の無い記事でもrenameできるように作る
         let old_assets = self.assets_dir(old);
         fs::create_dir_all(&old_assets).map_err(|error| StoreError::io(&old_assets, error))?;
@@ -837,6 +1191,12 @@ impl Store {
             .map_err(|error| StoreError::io(&old_backup, error))?
         {
             renames.push((old_backup, self.backup_path(new)));
+        }
+        if old_removed
+            .try_exists()
+            .map_err(|error| StoreError::io(&old_removed, error))?
+        {
+            renames.push((old_removed, new_removed));
         }
 
         rename_all(&renames)?;
@@ -873,6 +1233,8 @@ impl Store {
         remove_ignoring_not_found(fs::remove_file(&md), &md)?;
         let assets = self.assets_dir(slug);
         remove_ignoring_not_found(fs::remove_dir_all(&assets), &assets)?;
+        let removed = self.removed_images_dir(slug);
+        remove_ignoring_not_found(fs::remove_dir_all(&removed), &removed)?;
         Ok(())
     }
 
@@ -2525,7 +2887,7 @@ mod tests {
     }
 
     #[test]
-    fn heroは上書きしてmdのhero_imageが変わる() {
+    fn heroを上書きするとmdのhero_imageが変わり前のファイルは移した先に残る() {
         let (_tmp, store) = setup();
         store.create_article("hero").unwrap();
         let dir = store.assets_dir("hero");
@@ -2545,6 +2907,10 @@ mod tests {
             "hero.jpg"
         );
         assert!(!dir.join("hero.png").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("hero").join("hero.png")).unwrap(),
+            png()
+        );
         assert_eq!(fs::read(dir.join("hero.jpg")).unwrap(), jpeg());
         let read = store.read_article("hero").unwrap();
         assert_eq!(
@@ -2557,7 +2923,7 @@ mod tests {
     }
 
     #[test]
-    fn heroは前のhero_imageのファイルを消す() {
+    fn 前のhero_imageのファイルは移した先に残る() {
         let (_tmp, store) = setup();
         store.create_article("post").unwrap();
         // 保存ではheroImageを書けないので、mdに直接書く
@@ -2572,6 +2938,10 @@ mod tests {
 
         assert_eq!(store.import_hero_image("post", &png()).unwrap(), "hero.png");
         assert!(!dir.join("cover.png").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("post").join("cover.png")).unwrap(),
+            b"cover"
+        );
         // 前のheroImage以外は消さない
         assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"old");
         let read = store.read_article("post").unwrap();
@@ -2592,7 +2962,7 @@ mod tests {
     }
 
     #[test]
-    fn 開いた後に差し替えたheroは開いたときの内容の保存で戻らない() {
+    fn 開いた後に差し替えたheroは開いたときの内容の保存で戻らず前のファイルは移した先に残る() {
         let (_tmp, store) = setup();
         store.create_article("swap").unwrap();
         store.import_hero_image("swap", &png()).unwrap();
@@ -2614,6 +2984,10 @@ mod tests {
         let dir = store.assets_dir("swap");
         assert!(dir.join("hero.jpg").is_file());
         assert!(!dir.join("hero.png").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("swap").join("hero.png")).unwrap(),
+            png()
+        );
     }
 
     #[test]
@@ -2642,15 +3016,21 @@ mod tests {
     }
 
     #[test]
-    fn heroを外すとmdとファイルが消える() {
+    fn heroを外すとmdから外してファイルは移した先に残す() {
         let (_tmp, store) = setup();
         store.create_article("remove").unwrap();
         store.import_hero_image("remove", &png()).unwrap();
         let md = fs::read_to_string(store.md_path("remove")).unwrap();
         assert!(md.contains("heroImage"));
 
+        // heroImageの前の画像は、片付けを無効にしていても移す
+        store.set_remove_unused_images(false);
         store.remove_hero_image("remove").unwrap();
         assert!(!store.assets_dir("remove").join("hero.png").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("remove").join("hero.png")).unwrap(),
+            png()
+        );
         let md = fs::read_to_string(store.md_path("remove")).unwrap();
         assert!(!md.contains("heroImage"));
         let read = store.read_article("remove").unwrap();
@@ -3591,7 +3971,7 @@ mod tests {
     }
 
     #[test]
-    fn 記事の画像のheroImageを外したとき同じ名前の共有の画像は消さない() {
+    fn 記事の画像のheroImageを外すとファイルは移した先に残り同じ名前の共有の画像は消さない() {
         let (_tmp, store) = setup();
         md_article(
             &store,
@@ -3605,6 +3985,10 @@ mod tests {
 
         store.remove_hero_image("post").unwrap();
         assert!(!store.assets_dir("post").join("hero.png").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("post").join("hero.png")).unwrap(),
+            b"article"
+        );
         assert_eq!(fs::read(assets.join("hero.png")).unwrap(), b"shared");
     }
 
@@ -4047,5 +4431,465 @@ mod tests {
         let article = store.read_article("local-only").unwrap();
         assert_eq!(article.fields.pub_date.as_deref(), Some("2026-01-01"));
         assert_eq!(article.fields.updated_date, None);
+    }
+
+    // 画像の片付け ----------------------------------------------------------------
+
+    fn body_input(body: &str) -> EditedFields {
+        EditedFields {
+            updated_date: None,
+            title: Some("t".to_string()),
+            description: Some(String::new()),
+            pub_date: Some("2026-01-01".to_string()),
+            body: body.to_string(),
+        }
+    }
+
+    // 移した先の名前を並べる
+    fn removed_names(store: &Store, slug: &str) -> Vec<String> {
+        let dir = store.removed_images_dir(slug);
+        let mut names: Vec<String> = match fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => panic!("{}: {error}", dir.display()),
+        };
+        names.sort();
+        names
+    }
+
+    // 形式判定に通る、先頭バイトだけのダミーに1バイト足して中身を分ける
+    fn png_with(byte: u8) -> Vec<u8> {
+        let mut data = png();
+        data.push(byte);
+        data
+    }
+
+    #[test]
+    fn 保存すると本文からもheroImageからも参照されない画像だけを移す() {
+        let (tmp, store) = setup();
+        let slug = "post";
+        store.create_article(slug).unwrap();
+        let dir = store.assets_dir(slug);
+        let body = "![a](../../assets/post/01.png)\n![b](<../../assets/post/02 a.png> \"題\")\n<img src=\"../../assets/post/03.png\">\n[x](../../assets/post/04.png)\n../../assets/post/05.png\n";
+        md_article(
+            &store,
+            slug,
+            &format!(
+                "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/hero.png\"\n---\n{body}"
+            ),
+        );
+        for name in [
+            "01.png",
+            "02 a.png",
+            "03.png",
+            "hero.png",
+            "04.png",
+            "05.png",
+            "06.png",
+            "notes.txt",
+        ] {
+            fs::write(dir.join(name), name.as_bytes()).unwrap();
+        }
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/07.png"), b"sub").unwrap();
+        // 共有の画像とシンボリックリンクは触らない
+        fs::create_dir_all(store.assets_base()).unwrap();
+        fs::write(store.assets_base().join("01.png"), b"shared").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("01.png"), dir.join("08.png")).unwrap();
+
+        store.save_article(slug, body_input(body), None).unwrap();
+
+        // 移した先は一度だけ、バックアップの根から組み立てた場所と照合する
+        let expected = tmp
+            .path()
+            .join("backup")
+            .join(posts_dir_hash(&store.posts_dir()))
+            .join("removed-images")
+            .join(slug);
+        assert_eq!(store.removed_images_dir(slug), expected);
+
+        for name in ["01.png", "02 a.png", "03.png", "hero.png"] {
+            assert!(dir.join(name).exists(), "{name} は残るはず");
+        }
+        for name in ["04.png", "05.png", "06.png", "notes.txt"] {
+            assert!(!dir.join(name).exists(), "{name} は移るはず");
+            assert_eq!(
+                fs::read(store.removed_images_dir(slug).join(name)).unwrap(),
+                name.as_bytes(),
+                "{name}"
+            );
+        }
+        assert!(dir.join("sub/07.png").exists());
+        assert!(store.assets_base().join("01.png").exists());
+        #[cfg(unix)]
+        assert!(dir.join("08.png").exists());
+        assert_eq!(
+            removed_names(&store, slug),
+            ["04.png", "05.png", "06.png", "notes.txt"]
+        );
+    }
+
+    #[test]
+    fn heroImageが読めない記事では保存しても移さない() {
+        let (_tmp, store) = setup();
+        md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/hero.png\" # cover\n---\n本文\n",
+        );
+        let dir = store.assets_dir("post");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("hero.png"), b"hero").unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        assert!(dir.join("hero.png").exists());
+    }
+
+    #[test]
+    fn 取り込みで戻す画像にhero_の名前は選ばない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let data = png_with(9);
+        store.import_hero_image("post", &data).unwrap();
+        store.remove_hero_image("post").unwrap();
+        assert!(store.removed_images_dir("post").join("hero.png").exists());
+
+        assert_eq!(
+            store.import_body_image("post", &data).unwrap(),
+            "![](../../assets/post/01.png)"
+        );
+        assert!(store.removed_images_dir("post").join("hero.png").exists());
+    }
+
+    #[test]
+    fn 参照の定義に書いた画像は移さない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("01.png"), b"one").unwrap();
+        store
+            .save_article(
+                "post",
+                body_input("![a][img]\n\n[img]: ../../assets/post/01.png \"題\"\n"),
+                None,
+            )
+            .unwrap();
+        assert!(dir.join("01.png").exists());
+    }
+
+    #[test]
+    fn htmlの画像の参照は大文字のタグと属性も拾う() {
+        assert_eq!(
+            html_image_refs("<IMG alt='a' SRC='../../assets/p/01.png'><img src=\"02.png\">"),
+            ["../../assets/p/01.png", "02.png"]
+        );
+    }
+
+    #[test]
+    fn 片付けを無効にしていると保存しても移さない() {
+        let (_tmp, store) = setup();
+        store.set_remove_unused_images(false);
+        store.create_article("post").unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("01.png"), b"one").unwrap();
+
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"one");
+        assert!(!store.removed_images_dir("post").join("01.png").exists());
+    }
+
+    #[test]
+    fn 移した画像は参照する保存で戻り参照をやめた画像は同じ保存で移る() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("01.png"), b"one").unwrap();
+        fs::write(dir.join("02.png"), b"two").unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        assert!(store.removed_images_dir("post").join("01.png").exists());
+        assert!(store.removed_images_dir("post").join("02.png").exists());
+
+        // 無効にしていても戻す
+        store.set_remove_unused_images(false);
+        store
+            .save_article("post", body_input("![a](../../assets/post/01.png)\n"), None)
+            .unwrap();
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), b"one");
+        assert!(!store.removed_images_dir("post").join("01.png").exists());
+        assert!(store.removed_images_dir("post").join("02.png").exists());
+
+        // assetsに同じ名前があれば戻さず、assetsのほうを残す
+        fs::write(dir.join("02.png"), b"local").unwrap();
+        store
+            .save_article(
+                "post",
+                body_input("![a](../../assets/post/01.png)\n![b](../../assets/post/02.png)\n"),
+                None,
+            )
+            .unwrap();
+        assert_eq!(fs::read(dir.join("02.png")).unwrap(), b"local");
+        assert_eq!(
+            fs::read(store.removed_images_dir("post").join("02.png")).unwrap(),
+            b"two"
+        );
+
+        // 同じ保存で、移した01を戻しつつ、参照をやめた02を移す
+        store.set_remove_unused_images(true);
+        store.create_article("both").unwrap();
+        let both = store.assets_dir("both");
+        fs::write(both.join("01.png"), b"one").unwrap();
+        fs::write(both.join("02.png"), b"two").unwrap();
+        store
+            .save_article("both", body_input("![b](../../assets/both/02.png)\n"), None)
+            .unwrap();
+        assert!(store.removed_images_dir("both").join("01.png").exists());
+        assert!(both.join("02.png").exists());
+
+        store
+            .save_article("both", body_input("![a](../../assets/both/01.png)\n"), None)
+            .unwrap();
+        assert_eq!(fs::read(both.join("01.png")).unwrap(), b"one");
+        assert!(!store.removed_images_dir("both").join("01.png").exists());
+        assert!(!both.join("02.png").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("both").join("02.png")).unwrap(),
+            b"two"
+        );
+    }
+
+    #[test]
+    fn heroImageだけが参照する移した画像も保存で戻る() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let removed = store.removed_images_dir("post");
+        fs::create_dir_all(&removed).unwrap();
+        fs::write(removed.join("cover.png"), b"cover").unwrap();
+        md_article(
+            &store,
+            "post",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/post/cover.png\"\n---\n本文\n",
+        );
+
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        assert_eq!(
+            fs::read(store.assets_dir("post").join("cover.png")).unwrap(),
+            b"cover"
+        );
+        assert!(!removed.join("cover.png").exists());
+    }
+
+    #[test]
+    fn 移す先に同じ名前があれば新しく移したもので上書きする() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let dir = store.assets_dir("post");
+        let removed = store.removed_images_dir("post");
+        fs::write(dir.join("01.png"), b"old").unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        assert_eq!(fs::read(removed.join("01.png")).unwrap(), b"old");
+
+        fs::write(dir.join("01.png"), b"new").unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        assert_eq!(fs::read(removed.join("01.png")).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn 移す先に書けないときも保存は成功して画像はassetsに残る() {
+        use crate::github::fake::read_only_dir;
+
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("01.png"), b"one").unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+        let removed = store.removed_images_dir("post");
+        fs::write(dir.join("02.png"), b"two").unwrap();
+
+        let Some(guard) = read_only_dir(&removed) else {
+            return;
+        };
+        let result = store.save_article("post", body_input("本文\n"), None);
+        drop(guard);
+        assert!(result.is_ok());
+        assert_eq!(fs::read(dir.join("02.png")).unwrap(), b"two");
+        assert!(!removed.join("02.png").exists());
+    }
+
+    #[test]
+    fn 本文の画像の取り込みは移した画像と同じ中身なら元の名前で戻す() {
+        let (_tmp, store) = setup();
+        let one = png_with(1);
+        store.create_article("post").unwrap();
+        let dir = store.assets_dir("post");
+        fs::write(dir.join("01.png"), &one).unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+
+        assert_eq!(
+            store.import_body_image("post", &one).unwrap(),
+            "![](../../assets/post/01.png)"
+        );
+        assert_eq!(fs::read(dir.join("01.png")).unwrap(), one);
+        assert!(!store.removed_images_dir("post").join("01.png").exists());
+
+        // 中身が同じものが2つあれば、名前の順で最初のもの
+        let two = png_with(2);
+        store.create_article("same").unwrap();
+        let same = store.assets_dir("same");
+        fs::write(same.join("01.png"), &two).unwrap();
+        fs::write(same.join("02.png"), &two).unwrap();
+        store
+            .save_article("same", body_input("本文\n"), None)
+            .unwrap();
+        assert_eq!(
+            store.import_body_image("same", &two).unwrap(),
+            "![](../../assets/same/01.png)"
+        );
+        assert!(same.join("01.png").exists());
+        assert!(store.removed_images_dir("same").join("02.png").exists());
+
+        // assetsに同じ名前があれば選ばず、新しい番号で取り込む
+        let three = png_with(3);
+        store.create_article("blocked").unwrap();
+        let blocked = store.assets_dir("blocked");
+        fs::write(blocked.join("01.png"), &three).unwrap();
+        store
+            .save_article("blocked", body_input("本文\n"), None)
+            .unwrap();
+        fs::write(blocked.join("01.png"), b"local").unwrap();
+        assert_eq!(
+            store.import_body_image("blocked", &three).unwrap(),
+            "![](../../assets/blocked/02.png)"
+        );
+        assert_eq!(fs::read(blocked.join("01.png")).unwrap(), b"local");
+        assert_eq!(fs::read(blocked.join("02.png")).unwrap(), three);
+        assert!(store.removed_images_dir("blocked").join("01.png").exists());
+    }
+
+    #[test]
+    fn 連番は移した先の名前も数える() {
+        let (_tmp, store) = setup();
+        store.create_article("seq").unwrap();
+        let dir = store.assets_dir("seq");
+        fs::write(dir.join("01.png"), b"one").unwrap();
+        fs::write(dir.join("03.png"), b"three").unwrap();
+        store
+            .save_article("seq", body_input("![a](../../assets/seq/01.png)\n"), None)
+            .unwrap();
+        assert!(dir.join("01.png").exists());
+        assert!(store.removed_images_dir("seq").join("03.png").exists());
+
+        assert_eq!(
+            store.import_body_image("seq", &png_with(4)).unwrap(),
+            "![](../../assets/seq/04.png)"
+        );
+    }
+
+    #[test]
+    fn read_imageは移した先からも読む() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        fs::write(store.assets_dir("post").join("01.png"), b"moved").unwrap();
+        store
+            .save_article("post", body_input("本文\n"), None)
+            .unwrap();
+
+        let reference = "../../assets/post/01.png";
+        assert_eq!(store.read_image("post", reference).unwrap(), b"moved");
+        // 両方にあればassetsのほうを読む
+        fs::write(store.assets_dir("post").join("01.png"), b"local").unwrap();
+        assert_eq!(store.read_image("post", reference).unwrap(), b"local");
+        fs::remove_file(store.assets_dir("post").join("01.png")).unwrap();
+        fs::remove_file(store.removed_images_dir("post").join("01.png")).unwrap();
+        assert!(matches!(
+            store.read_image("post", reference),
+            Err(StoreError::ImageNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn slugを変えると移した画像も新しいslugへ移し新しいslugに残っていたものは消す() {
+        let (_tmp, store) = setup();
+        store.create_article("old").unwrap();
+        fs::write(store.assets_dir("old").join("01.png"), b"old").unwrap();
+        store
+            .save_article("old", body_input("本文\n"), None)
+            .unwrap();
+        let leftover = store.removed_images_dir("new").join("02.png");
+        fs::create_dir_all(leftover.parent().unwrap()).unwrap();
+        fs::write(&leftover, b"leftover").unwrap();
+
+        store.rename_article("old", "new").unwrap();
+        assert!(!store.removed_images_dir("old").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("new").join("01.png")).unwrap(),
+            b"old"
+        );
+        assert!(!leftover.exists());
+    }
+
+    #[test]
+    fn 改名に失敗しても新しいslugに残っていた移した画像は消えたままで元のslugに戻る() {
+        let (_tmp, store) = setup();
+        store.create_article("old").unwrap();
+        fs::write(store.assets_dir("old").join("01.png"), b"keep").unwrap();
+        store
+            .save_article("old", body_input("本文\n"), None)
+            .unwrap();
+        let leftover = store.removed_images_dir("new").join("02.png");
+        fs::create_dir_all(leftover.parent().unwrap()).unwrap();
+        fs::write(&leftover, b"leftover").unwrap();
+
+        let result = store.rename_article_then("old", "new", |_, _, _| {
+            Err::<(), StoreError>(StoreError::Io {
+                path: "after".to_string(),
+                reason: "失敗".to_string(),
+            })
+        });
+        assert!(result.is_err());
+        assert!(store.md_path("old").exists());
+        assert_eq!(
+            fs::read(store.removed_images_dir("old").join("01.png")).unwrap(),
+            b"keep"
+        );
+        assert!(!leftover.exists());
+    }
+
+    #[test]
+    fn 記事を削除すると移した画像も消え記事を作るとそのslugに残っていた移した画像を消す() {
+        let (_tmp, store) = setup();
+        store.create_article("del").unwrap();
+        fs::write(store.assets_dir("del").join("01.png"), b"one").unwrap();
+        store
+            .save_article("del", body_input("本文\n"), None)
+            .unwrap();
+        assert!(store.removed_images_dir("del").join("01.png").exists());
+
+        store.delete_article("del").unwrap();
+        assert!(!store.removed_images_dir("del").exists());
+
+        let leftover = store.removed_images_dir("make").join("01.png");
+        fs::create_dir_all(leftover.parent().unwrap()).unwrap();
+        fs::write(&leftover, b"leftover").unwrap();
+        store.create_article("make").unwrap();
+        assert!(!leftover.exists());
     }
 }

@@ -170,6 +170,14 @@ export function setFrontmatterSettings(frontmatter: FrontmatterSettings): Promis
   return invoke('set_frontmatter_settings', { frontmatter })
 }
 
+export function getRemoveUnusedImages(): Promise<boolean> {
+  return invoke<boolean>('get_remove_unused_images')
+}
+
+export function setRemoveUnusedImages(enabled: boolean): Promise<void> {
+  return invoke('set_remove_unused_images', { enabled })
+}
+
 // Rust側のExportOutcome(src-tauri/src/export.rs)とそろえる
 export type ExportOutcome =
   { kind: 'saved' } | { kind: 'cancelled' } | { kind: 'leftIncomplete'; reason: string }
