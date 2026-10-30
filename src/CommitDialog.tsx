@@ -1,4 +1,4 @@
-// Commit & Pushのダイアログ。Conflictと「branchが既にあります」も、このダイアログの中で切り替えて出す
+// Commit & Pushのダイアログ。Conflictと「ブランチが既に存在します」も、このダイアログの中で切り替えて出す
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CommitPreview, PushProgress } from './api'
 import Dialog from './Dialog'

@@ -80,10 +80,10 @@ describe('conflictText', () => {
 
   it('画像だけの重なりは名前を「、」でつないで出す', () => {
     expect(conflictText('新しい記事', false, ['a.png', 'b.png'])).toBe(
-      '画像 a.png、b.pngがGitHub上でも変更されています。',
+      '画像 a.png、b.png がGitHub上でも変更されています。',
     )
     expect(conflictText('新しい記事', false, ['a.png'])).toBe(
-      '画像 a.pngがGitHub上でも変更されています。',
+      '画像 a.png がGitHub上でも変更されています。',
     )
   })
 })
@@ -97,8 +97,8 @@ describe('linesText', () => {
 
 describe('imagesText', () => {
   it('追加と削除の件数を出す', () => {
-    expect(imagesText(1, 1)).toBe('追加 1件・削除 1件')
-    expect(imagesText(2, 5)).toBe('追加 2件・削除 5件')
+    expect(imagesText(1, 1)).toBe('追加 1件 / 削除 1件')
+    expect(imagesText(2, 5)).toBe('追加 2件 / 削除 5件')
   })
 
   it('0の側は出さない', () => {
@@ -134,9 +134,9 @@ describe('canSendMessage', () => {
 describe('progressText', () => {
   it('段階ごとの文言を出す', () => {
     expect(progressText({ step: 'checking' })).toBe('確認中')
-    expect(progressText({ step: 'uploading', current: 2, total: 4 })).toBe('送信中(2/4)')
-    expect(progressText({ step: 'committing' })).toBe('commit中')
-    expect(progressText({ step: 'pushing' })).toBe('push中')
+    expect(progressText({ step: 'uploading', current: 2, total: 4 })).toBe('送信中 (2/4)')
+    expect(progressText({ step: 'committing' })).toBe('Commit中')
+    expect(progressText({ step: 'pushing' })).toBe('Push中')
   })
 })
 
