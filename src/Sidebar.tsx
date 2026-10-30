@@ -178,12 +178,11 @@ export default function Sidebar({
       icon: 'undo',
       onSelect: () => onDiscard(menu),
     }
-    // zipの書き出しはGitHubの分類によらず出す
     const actions = rowMenuActions(github?.states ?? null, menu.slug)
     const published = state?.category === 'published' && deleting === null
     return [
       ...(actions.includes('rename') ? [renameItem] : []),
-      ...(isAndroid ? [exportZipItem] : []),
+      ...(isAndroid && github === null ? [exportZipItem] : []),
       ...(actions.includes('unpublish') ? [unpublishItem] : []),
       ...(actions.includes('delete') ? [published ? removeItem : deleteItem] : []),
       ...(actions.includes('discard') ? [discardItem] : []),
