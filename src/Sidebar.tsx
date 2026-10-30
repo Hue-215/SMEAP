@@ -131,10 +131,7 @@ export default function Sidebar({
       x = rect.left
       y = rect.bottom
     }
-    const menu = { ...target, x, y }
-    // 公開済みの記事は、Android以外では操作が無い
-    if (rowMenuItems(menu).length === 0) return
-    setRowMenu(menu)
+    setRowMenu({ ...target, x, y })
   }
 
   const rowMenuItems = (menu: RowMenu): MenuItem[] => {
@@ -178,12 +175,11 @@ export default function Sidebar({
       icon: 'undo',
       onSelect: () => onDiscard(menu),
     }
-    // zipの書き出しはGitHubの分類によらず出す
     const actions = rowMenuActions(github?.states ?? null, menu.slug)
     const published = state?.category === 'published' && deleting === null
     return [
       ...(actions.includes('rename') ? [renameItem] : []),
-      ...(isAndroid ? [exportZipItem] : []),
+      ...(isAndroid && github === null ? [exportZipItem] : []),
       ...(actions.includes('unpublish') ? [unpublishItem] : []),
       ...(actions.includes('delete') ? [published ? removeItem : deleteItem] : []),
       ...(actions.includes('discard') ? [discardItem] : []),

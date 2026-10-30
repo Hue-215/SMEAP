@@ -125,7 +125,6 @@ export default function Settings({
 
   // 連携しているか。ログインしていてRepositoryを選んでいること(Rust側のconfig::linkedと同じ)
   const linked = github !== null && github.loggedIn && github.settings.repo !== null
-  const showPostsLocation = isAndroid || !linked
 
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = page === 'list' && !shown ? listScroll.current : 0
@@ -336,7 +335,7 @@ export default function Settings({
                   </div>
                 )}
                 {githubFailure !== null && <p className="settings-failure">{githubFailure}</p>}
-                {showPostsLocation && (
+                {!linked && (
                   <>
                     <h2 className="settings-h2">{t('settings.posts_location')}</h2>
                     {isAndroid ? (
@@ -457,7 +456,7 @@ function PostsDirRow({
       console.error('Failed to change the article directory', e)
       setFailure(
         (e as StoreError | undefined)?.kind === 'invalidPostsDir'
-          ? t('settings.invalid_posts_dir')
+          ? t('settings.github_posts_path_invalid')
           : e instanceof UnsavedArticleError
             ? t('settings.unsaved_article')
             : t('common.change_failed'),
@@ -472,7 +471,7 @@ function PostsDirRow({
       <div className="settings-rows">
         <button type="button" className="settings-row" onClick={pick} disabled={busy}>
           <span className="settings-row-main">
-            {t('settings.posts_dir')}
+            {t('settings.github_posts_path')}
             <span className="settings-note posts-dir-note">
               {dirs && (
                 <>
@@ -516,7 +515,7 @@ function PostsDirNameRow({
       console.error('Failed to change the article directory name', e)
       setFailure(
         (e as StoreError | undefined)?.kind === 'invalidPostsDirName'
-          ? t('settings.invalid_posts_dir_name')
+          ? t('settings.github_posts_path_invalid')
           : t('common.change_failed'),
       )
     } finally {
@@ -529,7 +528,7 @@ function PostsDirNameRow({
       <div className="settings-rows">
         <div className="settings-row">
           <span className="settings-row-main">
-            <label htmlFor={inputId}>{t('settings.posts_dir_name')}</label>
+            <label htmlFor={inputId}>{t('settings.github_posts_path')}</label>
             <span className="settings-note posts-dir-name">
               <span>src/content/</span>
               <input
@@ -549,6 +548,12 @@ function PostsDirNameRow({
                 autoCorrect="off"
                 spellCheck={false}
               />
+            </span>
+            <span className="settings-note posts-dir-note">
+              <span>
+                {t('settings.posts_dir_posts', { path: `src/content/${initial}/{slug}.md` })}
+              </span>
+              <span>{t('settings.posts_dir_assets', { path: 'src/assets/{slug}/' })}</span>
             </span>
           </span>
         </div>

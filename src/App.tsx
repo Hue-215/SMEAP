@@ -925,7 +925,8 @@ export default function App() {
       {slugDialog && (
         <SlugDialog
           mode={slugDialog}
-          destination={destination}
+          // Androidのdestinationはzipの中のパスで、連携中はzipを出さない
+          destination={isAndroid && githubStates !== null ? null : destination}
           published={
             slugDialog.kind === 'rename' &&
             githubStates?.articles[slugDialog.slug]?.category !== undefined &&
