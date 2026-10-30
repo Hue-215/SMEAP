@@ -14,7 +14,7 @@ describe('githubErrorText', () => {
     expect(githubErrorText({ kind: 'conflicted' })).toBe(t('common.github_conflicted'))
   })
 
-  it('ほかの操作の最中なら待つよう伝える', () => {
+  it('ほかの操作の最中ならその文言にする', () => {
     expect(githubErrorText({ kind: 'syncBusy' })).toBe(t('common.github_sync_busy'))
   })
 

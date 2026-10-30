@@ -1236,7 +1236,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   accent-color: var(--color-accent);
 }
 
-/* 左端の「repositoryを追加」。枠は要らない */
+/* 左端の「リポジトリを追加」。枠は要らない */
 .dialog-buttons .github-repo-add {
   display: flex;
   align-items: center;

@@ -608,7 +608,7 @@ function branchFormatMessage(count: number, check: Check | null, format: string)
   }
 }
 
-// GitHubの節の、Base branch以下の3つの入力欄。欄から外れたときとEnterで、3つをまとめて保存する
+// GitHubの節の、ベースブランチ以下の3つの入力欄。欄から外れたときとEnterで、3つをまとめて保存する
 function GithubFields({
   initial,
   onSave,
@@ -631,7 +631,7 @@ function GithubFields({
     'invalidBranchFormat',
   )
   const [pathCheck, checkPostsPath, setPathCheck] = useCheck(validatePostsPath, 'invalidPostsPath')
-  // Base branchは入力中には確かめず、保存のときに断られたら出す
+  // ベースブランチは入力中には確かめず、保存のときに断られたら出す
   const [baseInvalid, setBaseInvalid] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
