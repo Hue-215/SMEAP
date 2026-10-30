@@ -20,13 +20,13 @@ a{color:inherit;text-decoration:none}
 <div style="width: 390px; height: 844px; display: flex; flex-direction: column; background: {{t.bg}}; color: {{t.fg}}; font-family: 'Noto Sans JP', sans-serif; overflow: hidden">
 <div role="toolbar" aria-label="編集" style="height: 56px; flex-shrink: 0; display: flex; align-items: center; padding: 0 4px; border-bottom: 1px solid {{t.line}}">
 <a href="GitAndroidDrawer.dc.html" aria-label="記事一覧を開く" style="width: 48px; height: 48px; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">menu</span></a>
-<span role="status" style="min-width: 0; padding: 0 4px; font-size: 12px; color: {{t.gray}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">保存済み 14:32</span>
 <sc-if value="{{dirty}}" hint-placeholder-val="{{ true }}">
 <a href="GitCommit.dc.html" aria-label="Commit &amp; Push" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; position: relative"><span class="ms" aria-hidden="true">upload</span><span aria-hidden="true" style="position: absolute; top: 10px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: {{t.acc}}"></span></a>
 </sc-if>
 <sc-if value="{{clean}}" hint-placeholder-val="{{ false }}">
 <button disabled aria-label="Commit &amp; Push(commitしていない変更はありません)" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: {{t.gray}}; cursor: default"><span class="ms" aria-hidden="true">upload</span></button>
 </sc-if>
+<span role="status" style="min-width: 0; padding: 0 4px; font-size: 12px; color: {{t.gray}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">保存済み 14:32</span>
 <span style="flex: 1"></span>
 <button aria-label="リンクを挿入" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">link</span></button>
 <button aria-label="画像を挿入" style="width: 48px; height: 48px; flex-shrink: 0; display: flex; align-items: center; justify-content: center"><span class="ms" aria-hidden="true">image</span></button>
