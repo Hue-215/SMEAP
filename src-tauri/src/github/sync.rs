@@ -1913,12 +1913,17 @@ mod tests {
         // 取ってきている画像
         test.mark_fetched("post", &[("01.png", true)]);
         test.write_image("post/01.png", PNG);
+        // 移した画像は、記事が消えても残す
+        let moved = test.store.removed_images_dir("post").join("02.png");
+        fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        fs::write(&moved, PNG).unwrap();
         // ベースから消す
         repo.branch(&test.transport, "main", &[]);
 
         let result = test.sync().unwrap();
         assert_eq!(result.removed, vec!["post".to_string()]);
         assert!(result.replaced.is_empty());
+        assert!(moved.exists());
         // mdも画像もsyncedも消える。手元の記事のディレクトリも消える
         assert!(!test.md_path("post").exists());
         assert!(!test.assets_dir("post").exists());

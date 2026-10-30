@@ -61,7 +61,7 @@ impl Default for Settings {
             posts_dir_name: None,
             github: GithubSettings::default(),
             frontmatter: FrontmatterSettings::default(),
-            remove_unused_images: true,
+            remove_unused_images: default_remove_unused_images(),
         }
     }
 }
@@ -96,13 +96,10 @@ pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, StoreError> {
 
 // 読めなくても起動は止めず、既定の設定で始める。ただし画像の片付けは、無効にしていた人の画像を移さないよう止める
 pub fn load(app: &AppHandle) -> Settings {
-    let settings = read(app).unwrap_or_else(|error| {
-        eprintln!("Failed to read settings: {error}");
-        Settings {
-            remove_unused_images: false,
-            ..Settings::default()
-        }
-    });
+    let settings = match file_path(app) {
+        Ok(file) => load_from(&file),
+        Err(error) => fallback(error),
+    };
     // 検証を通らない名前が残っていたら、無かったものとして扱う(ほかの項目は残す)
     #[cfg(target_os = "android")]
     let settings = {
@@ -118,8 +115,16 @@ pub fn load(app: &AppHandle) -> Settings {
     settings
 }
 
-fn read(app: &AppHandle) -> Result<Settings, StoreError> {
-    read_from(&file_path(app)?)
+fn load_from(file: &Path) -> Settings {
+    read_from(file).unwrap_or_else(fallback)
+}
+
+fn fallback(error: StoreError) -> Settings {
+    eprintln!("Failed to read settings: {error}");
+    Settings {
+        remove_unused_images: false,
+        ..Settings::default()
+    }
 }
 
 pub(crate) fn read_from(file: &Path) -> Result<Settings, StoreError> {
@@ -276,9 +281,10 @@ pub fn set_frontmatter_settings(
     Ok(())
 }
 
-#[tauri::command(async)]
-pub fn get_remove_unused_images(app: AppHandle) -> Result<bool, StoreError> {
-    Ok(read_from(&file_path(&app)?)?.remove_unused_images)
+// 起動時に設定を読めなかったときは無効で動いているので、ファイルではなくStoreの値を返す
+#[tauri::command]
+pub fn get_remove_unused_images(store: State<'_, Store>) -> bool {
+    store.remove_unused_images()
 }
 
 #[tauri::command(async)]
@@ -662,5 +668,14 @@ mod tests {
         };
         save_to(&file, &settings).unwrap();
         assert!(!read_from(&file).unwrap().remove_unused_images);
+    }
+
+    #[test]
+    fn 起動時に設定を読めなければ片付けは無効で無ければ有効() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        assert!(load_from(&file).remove_unused_images);
+        fs::write(&file, "@").unwrap();
+        assert!(!load_from(&file).remove_unused_images);
     }
 }
