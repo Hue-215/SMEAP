@@ -22,7 +22,7 @@ interface TopBarProps {
   notice: Notice | null
   // 記事内検索を開く。ボタンはAndroidだけに出す。nullなら押せない
   onFind: (() => void) | null
-  // nullならCommit & Pushを出さない(連携していない)
+  // nullならCommitを出さない(連携していない)
   commit: { state: CommitButton; onClick: () => void } | null
 }
 

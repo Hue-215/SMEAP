@@ -354,12 +354,12 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-error);
 }
 
-/* 保存の状態とCommit & Pushを左に寄せ、残りのボタンを右に寄せる */
+/* 保存の状態とCommitを左に寄せ、残りのボタンを右に寄せる */
 .topbar-spacer {
   flex: 1;
 }
 
-/* Commit & Push(TopBar.tsx)。commitしていない変更のあるときは、アイコンの右上に丸を重ねる */
+/* Commit(TopBar.tsx)。commitしていない変更のあるときは、アイコンの右上に丸を重ねる */
 .commit-button {
   position: relative;
 }
@@ -755,7 +755,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-error);
 }
 
-/* Commit & Pushのダイアログ(CommitDialog.tsx)。md・画像の差分と、Commit messageの入力欄。 */
+/* Commitのダイアログ(CommitDialog.tsx)。md・画像の差分と、Commit messageの入力欄。 */
 .commit-summary {
   display: flex;
   flex-direction: column;
@@ -786,7 +786,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-text-secondary);
 }
 
-/* Commit & Pushの、送っている間の段階。ボタンは縮めずに段階の側で残りの幅を使い、収まらなければ末尾を切る */
+/* Commitの、送っている間の段階。ボタンは縮めずに段階の側で残りの幅を使い、収まらなければ末尾を切る */
 .commit-progress {
   display: flex;
   flex: 1;

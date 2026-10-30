@@ -251,7 +251,7 @@ pub fn blob_sha(content: &[u8]) -> String {
         .collect()
 }
 
-// 手元の1記事のSHAと中身。中身はCommit & Pushでそのまま送る(push.rs)
+// 手元の1記事のSHAと中身。中身はCommitでそのまま送る(push.rs)
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LocalBodies {
     // (SHA, 中身)

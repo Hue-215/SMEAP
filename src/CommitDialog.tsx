@@ -1,4 +1,4 @@
-// Commit & Pushのダイアログ。Conflictと「ブランチが既に存在します」も、このダイアログの中で切り替えて出す
+// Commitのダイアログ。Conflictと「ブランチが既に存在します」も、このダイアログの中で切り替えて出す
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CommitPreview, PushProgress } from './api'
 import Dialog from './Dialog'
@@ -24,7 +24,7 @@ export type CommitPushResult =
 interface CommitDialogProps {
   preview: CommitPreview
   onCancel: () => void
-  // overwriteは、Conflictで「Push」を選んだときのリモートの先頭
+  // overwriteは、Conflictで「Commit」を選んだときのリモートの先頭
   onCommit: (
     message: string,
     overwrite: string | null,

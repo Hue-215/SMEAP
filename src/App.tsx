@@ -123,7 +123,7 @@ export default function App() {
   // 最後のGitHubからの読み込みの失敗。syncBusy・settingsChangedと、保存先を戻したloginRequiredは入れない
   const [syncError, setSyncError] = useState<{ error: unknown } | null>(null)
   const syncingRef = useRef(false)
-  // Commit & Pushの対象。previewがnullの間は概略を読んでいる
+  // Commitの対象。previewがnullの間は概略を読んでいる
   const [commitTarget, setCommitTarget] = useState<{
     slug: string
     preview: CommitPreview | null
@@ -487,7 +487,7 @@ export default function App() {
     setCommitTarget(null)
   }
 
-  // 開いている記事を保存してから、Commit & Pushのダイアログに出す概略を読む
+  // 開いている記事を保存してから、Commitのダイアログに出す概略を読む
   const openCommit = async () => {
     const slug = loaded?.slug
     if (slug === undefined || commitOpenRef.current || syncingRef.current) return
@@ -598,7 +598,7 @@ export default function App() {
   }
 
   const runGithubSync = async () => {
-    // Commit & Pushのダイアログの間に読み込むと、見ている内容が替わる
+    // Commitのダイアログの間に読み込むと、見ている内容が替わる
     if (commitOpenRef.current) return
     if (syncingRef.current) {
       syncAgainRef.current = true

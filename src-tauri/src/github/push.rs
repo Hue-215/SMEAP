@@ -1814,7 +1814,7 @@ mod tests {
         ));
     }
 
-    // Commit & Push ---------------------------------------------------------------
+    // Commit ---------------------------------------------------------------
 
     fn github_files(repo: &FakeRepo) -> BTreeMap<String, (String, Vec<u8>)> {
         repo.tree_files(BRANCH)
@@ -3486,7 +3486,7 @@ mod tests {
         assert_eq!(fs::read(test.image_path("shared.png")).unwrap(), PNG3);
     }
 
-    // #78: Commit & Pushの進捗 -----------------------------------------------------
+    // #78: Commitの進捗 -----------------------------------------------------
 
     #[test]
     fn 新しい記事の進捗は送るファイルごとにUploadingを出してCommittingとPushingで終わる() {

@@ -136,7 +136,7 @@ describe('progressText', () => {
     expect(progressText({ step: 'checking' })).toBe('確認中')
     expect(progressText({ step: 'uploading', current: 2, total: 4 })).toBe('送信中 (2/4)')
     expect(progressText({ step: 'committing' })).toBe('Commit中')
-    expect(progressText({ step: 'pushing' })).toBe('Push中')
+    expect(progressText({ step: 'pushing' })).toBe('ブランチを更新中')
   })
 })
 

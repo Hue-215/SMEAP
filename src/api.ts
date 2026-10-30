@@ -393,7 +393,7 @@ export function githubCommitPreview(slug: string): Promise<CommitPreview> {
   return invoke<CommitPreview>('github_commit_preview', { slug })
 }
 
-// overwriteは、Conflictで「Push」を選んだときのリモートの先頭
+// overwriteは、Conflictで「Commit」を選んだときのリモートの先頭
 export function githubCommitPush(
   slug: string,
   message: string,
