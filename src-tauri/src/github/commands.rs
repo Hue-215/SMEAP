@@ -9,6 +9,7 @@ use tauri::{AppHandle, State};
 
 use super::auth::{self, DeviceCode, LoginOutcome};
 use super::config::{self, GithubSettings, RepoRef};
+use super::dates;
 use super::http::{Transport, UreqTransport, VERIFICATION_URL};
 use super::repos;
 use super::state::Basis;
@@ -17,7 +18,7 @@ use super::token::{self, TokenManager, TokenSet};
 use super::{now, APP_SLUG, CLIENT_ID};
 use crate::github::GithubError;
 use crate::settings::{self, Settings};
-use crate::store::{Store, StoreError};
+use crate::store::{EditedFields, SavedDates, Store, StoreError};
 
 // GithubErrorとStoreErrorはkind付きのJSONで画面へ返す。Openerだけkindが無く、文字列になる
 #[derive(Debug, thiserror::Error)]
@@ -659,6 +660,7 @@ struct Linked {
     repo: RepoRef,
     basis: Basis,
     posts_dir: PathBuf,
+    updated_date_enabled: bool,
 }
 
 fn input_of<'a>(
@@ -680,6 +682,30 @@ fn input_of<'a>(
         posts_dir: &linked.posts_dir,
         protect: None,
     }
+}
+
+pub(crate) fn save_article(
+    app: &AppHandle,
+    store: &Store,
+    slug: &str,
+    fields: EditedFields,
+) -> Result<SavedDates, CommandError> {
+    // 設定を読めなくても、日付を自動で替えずに保存する
+    let linked = linked(app, store).unwrap_or_else(|error| {
+        eprintln!("Failed to check the GitHub link before saving {slug}: {error}");
+        None
+    });
+    let Some(linked) = linked else {
+        return Ok(store.save_article(slug, fields, None)?);
+    };
+    let input = dates::SaveInput {
+        data_dir: &linked.data_dir,
+        repo: &linked.repo,
+        basis: &linked.basis,
+        store,
+        updated_date_enabled: linked.updated_date_enabled,
+    };
+    dates::save(&input, slug, fields, &crate::store::today())
 }
 
 pub(crate) fn create_article(
@@ -803,6 +829,7 @@ fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError
         repo,
         basis,
         posts_dir,
+        updated_date_enabled: settings.frontmatter.updated_date,
     }))
 }
 

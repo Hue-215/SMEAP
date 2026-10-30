@@ -1,16 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
-import type { Article, Warning } from './api'
+import type { Article, FrontmatterSettings, Warning } from './api'
 import Icon from './Icon'
 import { t } from './i18n'
 import ImageFileInput from './ImageFileInput'
 
-type Fields = Pick<Article, 'title' | 'description' | 'pubDate'>
+type Fields = Pick<Article, 'title' | 'description' | 'pubDate' | 'updatedDate'>
 export type FieldsPatch = Partial<Fields>
 
 interface ArticleHeaderProps {
   fields: Fields
   warnings: Warning[]
   onChange: (patch: FieldsPatch) => void
+  frontmatter: FrontmatterSettings
   hero: { name: string; url: string } | null
   heroBusy: boolean
   onPickHeroImage: (file: File) => void
@@ -91,6 +92,7 @@ export default function ArticleHeader({
   fields,
   warnings,
   onChange,
+  frontmatter,
   hero,
   heroBusy,
   onPickHeroImage,
@@ -100,6 +102,18 @@ export default function ArticleHeader({
   const fileInput = useRef<HTMLInputElement>(null)
   // 読めなかった画像のURL。差し替えるとURLが変わるので、読み直す
   const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
+  // 入力途中の日付は値が空になるので、日付の欄は制御しない。記事を切り替えたらApp.tsxのkeyで作り直し、
+  // 保存の結果で値が替わったら入力中でない欄だけ書き換える
+  const pubDateInput = useRef<HTMLInputElement>(null)
+  const updatedDateInput = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    for (const [el, value] of [
+      [pubDateInput.current, fields.pubDate],
+      [updatedDateInput.current, fields.updatedDate],
+    ] as const) {
+      if (el && document.activeElement !== el && el.value !== (value ?? '')) el.value = value ?? ''
+    }
+  }, [fields.pubDate, fields.updatedDate])
   return (
     <header>
       {warnings.length > 0 && (
@@ -131,43 +145,47 @@ export default function ArticleHeader({
           />
         </div>
         {/* ボタンの中にボタンは置けないので、入れ物で包んで外すボタンを重ねる */}
-        <div className="article-hero-box">
-          <button
-            type="button"
-            className={hero === null ? 'article-hero empty' : 'article-hero'}
-            disabled={heroBusy || readOnly}
-            onClick={() => fileInput.current?.click()}
-            aria-label={hero === null ? undefined : t('article_header.hero_replace')}
-            title={hero?.name ?? t('article_header.hero_pick')}
-          >
-            {hero === null ? (
-              t('article_header.hero_none')
-            ) : brokenUrl === hero.url ? (
-              t('article_header.hero_unreadable')
-            ) : (
-              <img src={hero.url} alt="" onError={() => setBrokenUrl(hero.url)} />
-            )}
-          </button>
-          {hero !== null && (
-            <button
-              type="button"
-              className="icon-button article-hero-remove"
-              disabled={heroBusy || readOnly}
-              onClick={onRemoveHeroImage}
-              aria-label={t('article_header.hero_remove')}
-              title={t('article_header.hero_remove')}
-            >
-              <Icon name="close" />
-            </button>
-          )}
-        </div>
-        <ImageFileInput ref={fileInput} onFiles={(files) => onPickHeroImage(files[0])} />
+        {frontmatter.heroImage && (
+          <>
+            <div className="article-hero-box">
+              <button
+                type="button"
+                className={hero === null ? 'article-hero empty' : 'article-hero'}
+                disabled={heroBusy || readOnly}
+                onClick={() => fileInput.current?.click()}
+                aria-label={hero === null ? undefined : t('article_header.hero_replace')}
+                title={hero?.name ?? t('article_header.hero_pick')}
+              >
+                {hero === null ? (
+                  t('article_header.hero_none')
+                ) : brokenUrl === hero.url ? (
+                  t('article_header.hero_unreadable')
+                ) : (
+                  <img src={hero.url} alt="" onError={() => setBrokenUrl(hero.url)} />
+                )}
+              </button>
+              {hero !== null && (
+                <button
+                  type="button"
+                  className="icon-button article-hero-remove"
+                  disabled={heroBusy || readOnly}
+                  onClick={onRemoveHeroImage}
+                  aria-label={t('article_header.hero_remove')}
+                  title={t('article_header.hero_remove')}
+                >
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
+            <ImageFileInput ref={fileInput} onFiles={(files) => onPickHeroImage(files[0])} />
+          </>
+        )}
       </div>
       <div className="article-meta">
         <label className="article-meta-item">
           {t('article_header.pub_date')}
-          {/* 入力途中の日付は値が空になるので制御しない。記事を切り替えたらApp.tsxのkeyで作り直す */}
           <input
+            ref={pubDateInput}
             type="date"
             required
             max="9999-12-31"
@@ -177,11 +195,46 @@ export default function ArticleHeader({
               const pubDate = e.target.value
               if (pubDate && e.target.validity.valid) onChange({ pubDate })
             }}
+            // 入力途中の値と、フォーカスの間に保存の結果で替わった値を、持っている値に合わせる
             onBlur={(e) => {
-              if (!e.target.value || !e.target.validity.valid) e.target.value = fields.pubDate ?? ''
+              e.target.value = fields.pubDate ?? ''
             }}
           />
         </label>
+        {/* 外すボタンが欄と別の行に回らないよう、まとめて包む */}
+        {frontmatter.updatedDate && (
+          <div className="article-meta-item">
+            <label className="article-meta-item">
+              {t('article_header.updated_date')}
+              <input
+                ref={updatedDateInput}
+                type="date"
+                max="9999-12-31"
+                defaultValue={fields.updatedDate ?? ''}
+                disabled={readOnly}
+                onChange={(e) => {
+                  const updatedDate = e.target.value
+                  if (updatedDate && e.target.validity.valid) onChange({ updatedDate })
+                }}
+                onBlur={(e) => {
+                  e.target.value = fields.updatedDate ?? ''
+                }}
+              />
+            </label>
+            {fields.updatedDate !== null && (
+              <button
+                type="button"
+                className="icon-button"
+                disabled={readOnly}
+                onClick={() => onChange({ updatedDate: null })}
+                aria-label={t('article_header.updated_date_remove')}
+                title={t('article_header.updated_date_remove')}
+              >
+                <Icon name="close" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   )

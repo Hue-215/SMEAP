@@ -172,7 +172,7 @@ pub fn article_branch(state: &State, slug: &str) -> Option<(String, String)> {
         .map(|(name, branch)| (name.clone(), branch.commit.clone()))
 }
 
-fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
+pub(crate) fn repo_dir(data_dir: &Path, repo: &RepoRef) -> PathBuf {
     data_dir.join("github").join(&repo.owner).join(&repo.name)
 }
 
@@ -212,16 +212,22 @@ pub fn read_state(path: &Path, basis: &Basis) -> Result<State, GithubError> {
     Ok(state)
 }
 
-// 一時ファイルに書いてから置き換える。ディレクトリが無ければ作る
 pub fn write_state(path: &Path, state: &State) -> Result<(), GithubError> {
+    write_replacing(
+        path,
+        &serde_json::to_vec(state).expect("State should serialize"),
+    )
+}
+
+// 一時ファイルに書いてから置き換える。ディレクトリが無ければ作る
+pub(crate) fn write_replacing(path: &Path, json: &[u8]) -> Result<(), GithubError> {
     let dir = path
         .parent()
         .ok_or_else(|| GithubError::io(path, "no parent directory"))?;
     fs::create_dir_all(dir).map_err(|error| GithubError::io(dir, error))?;
-    let json = serde_json::to_vec(state).expect("State should serialize");
     let mut tmp =
         tempfile::NamedTempFile::new_in(dir).map_err(|error| GithubError::io(dir, error))?;
-    tmp.write_all(&json)
+    tmp.write_all(json)
         .map_err(|error| GithubError::io(tmp.path(), error))?;
     tmp.as_file()
         .sync_all()

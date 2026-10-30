@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  DEFAULT_FRONTMATTER,
   UnsavedArticleError,
   githubAssetsPath,
   githubLogout,
@@ -9,6 +10,7 @@ import {
   repoFullName,
   validateBranchFormat,
   validatePostsPath,
+  type FrontmatterSettings,
   type GithubError,
   type GithubRepoRef,
   type GithubSettings,
@@ -30,6 +32,9 @@ interface SettingsProps {
   narrow: boolean
   // 読めていない間はnull
   postsDir: PostsDir | null
+  // 読めていなければnull。切り替えさせない
+  frontmatter: FrontmatterSettings | null
+  onChangeFrontmatter: (frontmatter: FrontmatterSettings) => Promise<void>
   // デスクトップだけ
   onPickPostsDir: () => Promise<void>
   // Androidだけ
@@ -58,6 +63,8 @@ interface GithubFieldsValues {
 export default function Settings({
   narrow,
   postsDir,
+  frontmatter,
+  onChangeFrontmatter,
   onPickPostsDir,
   onChangePostsDirName,
   onGithubSwitch,
@@ -72,6 +79,8 @@ export default function Settings({
   const [loginDialog, setLoginDialog] = useState(false)
   const [repoDialog, setRepoDialog] = useState(false)
   const [logoutBusy, setLogoutBusy] = useState(false)
+  const [frontmatterBusy, setFrontmatterBusy] = useState(false)
+  const [frontmatterFailure, setFrontmatterFailure] = useState<string | null>(null)
   const headingId = useId()
   const backButton = useRef<HTMLButtonElement>(null)
   const body = useRef<HTMLDivElement>(null)
@@ -194,6 +203,23 @@ export default function Settings({
     else await command()
   }
 
+  const frontmatterMessage =
+    frontmatter === null ? t('settings.frontmatter_unreadable') : frontmatterFailure
+
+  const toggleFrontmatter = async (key: keyof FrontmatterSettings) => {
+    if (frontmatterBusy || frontmatter === null) return
+    setFrontmatterBusy(true)
+    setFrontmatterFailure(null)
+    try {
+      await onChangeFrontmatter({ ...frontmatter, [key]: !frontmatter[key] })
+    } catch (e) {
+      console.error('Failed to save the frontmatter settings', e)
+      setFrontmatterFailure(t('common.change_failed'))
+    } finally {
+      setFrontmatterBusy(false)
+    }
+  }
+
   return (
     <Dialog labelledBy={headingId} onCancel={back} className="settings-dialog">
       <div className="settings">
@@ -295,6 +321,29 @@ export default function Settings({
                       <PostsDirRow postsDir={postsDir} onPick={onPickPostsDir} />
                     )}
                   </>
+                )}
+                <h2 className="settings-h2">{t('settings.frontmatter')}</h2>
+                <div className="settings-rows">
+                  {(
+                    [
+                      ['heroImage', 'settings.frontmatter_hero_image'],
+                      ['updatedDate', 'settings.frontmatter_updated_date'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key} className="settings-row">
+                      <span className="settings-row-main">{t(label)}</span>
+                      <input
+                        type="checkbox"
+                        className="settings-check"
+                        checked={(frontmatter ?? DEFAULT_FRONTMATTER)[key]}
+                        disabled={frontmatterBusy || frontmatter === null}
+                        onChange={() => void toggleFrontmatter(key)}
+                      />
+                    </label>
+                  ))}
+                </div>
+                {frontmatterMessage !== null && (
+                  <p className="settings-failure">{frontmatterMessage}</p>
                 )}
                 <h2 className="settings-h2">{t('settings.about')}</h2>
                 <div className="settings-rows">

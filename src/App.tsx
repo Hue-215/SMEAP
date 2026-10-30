@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
+  DEFAULT_FRONTMATTER,
   deleteArticle,
+  getFrontmatterSettings,
   getPostsDir,
   getPostsDirName,
   githubArticleState,
@@ -18,6 +20,7 @@ import {
   githubWaitLogin,
   listArticles,
   pickPostsDir,
+  setFrontmatterSettings,
   setPostsDirName,
   readArticle,
   exportZip,
@@ -25,12 +28,14 @@ import {
   type Article,
   type CommitPreview,
   type EditedFields,
+  type FrontmatterSettings,
   type GithubDeleting,
   type GithubError,
   type GithubSyncResult,
   type GithubWaitLogin,
   type PostsDir,
   type PushProgress,
+  type SavedDates,
   type StoreError,
 } from './api'
 import ArticleEditor, { type ArticleEditorHandle } from './ArticleEditor'
@@ -95,6 +100,8 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<PendingAction | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 読めていなければnullで、編集画面はどちらも有効として出す
+  const [frontmatter, setFrontmatter] = useState<FrontmatterSettings | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   const [discardTarget, setDiscardTarget] = useState<ArticleRef | null>(null)
   // 公開済みの記事の削除・非公開。branchは確認の文言に出す
@@ -201,7 +208,15 @@ export default function App() {
         .then((location) => setPostsDir({ kind: 'desktop', ...location }))
         .catch((e) => console.error('Failed to read the article directory', e))
     }
+    getFrontmatterSettings()
+      .then(setFrontmatter)
+      .catch((e) => console.error('Failed to read the frontmatter settings', e))
   }, [])
+
+  const changeFrontmatter = async (next: FrontmatterSettings) => {
+    await setFrontmatterSettings(next)
+    setFrontmatter(next)
+  }
 
   useEffect(() => {
     if (!notice) return
@@ -787,10 +802,10 @@ export default function App() {
   )
 
   // 一覧に出るのはタイトルと公開日。保存した記事の状態は、連携していればGitHubの記録で直す
-  const onSaved = (fields: EditedFields) => {
+  const onSaved = (fields: EditedFields, dates: SavedDates) => {
     if (articles.status !== 'loaded' || article.status !== 'loaded') return
     const listed = articles.articles.find((a) => a.slug === article.slug)
-    if (listed?.title !== fields.title || listed.pubDate !== fields.pubDate) reloadArticles()
+    if (listed?.title !== fields.title || listed.pubDate !== dates.pubDate) reloadArticles()
     if (githubStates === null) return
     const slug = article.slug
     void githubArticleState(slug)
@@ -870,8 +885,10 @@ export default function App() {
                   key={article.slug}
                   ref={editor}
                   article={article.article}
+                  frontmatter={frontmatter ?? DEFAULT_FRONTMATTER}
                   paused={
                     saveConfirm !== null ||
+                    slugDialog !== null ||
                     deleteTarget !== null ||
                     discardTarget !== null ||
                     removeTarget !== null ||
@@ -988,6 +1005,8 @@ export default function App() {
         <Settings
           narrow={drawer.narrow}
           postsDir={postsDir}
+          frontmatter={frontmatter}
+          onChangeFrontmatter={changeFrontmatter}
           onPickPostsDir={pickPostsDirAndReload}
           onChangePostsDirName={changePostsDirName}
           onGithubSwitch={switchDestination}

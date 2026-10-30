@@ -16,6 +16,22 @@ use crate::store::Store;
 use crate::store::{self, Store};
 use crate::store::{write_temp, StoreError};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FrontmatterSettings {
+    pub hero_image: bool,
+    pub updated_date: bool,
+}
+
+impl Default for FrontmatterSettings {
+    fn default() -> Self {
+        Self {
+            hero_image: true,
+            updated_date: true,
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -26,6 +42,8 @@ pub struct Settings {
     posts_dir_name: Option<String>,
     #[serde(default)]
     pub github: GithubSettings,
+    #[serde(default)]
+    pub frontmatter: FrontmatterSettings,
 }
 
 // デスクトップの設定はStoreが持つので、Androidだけ
@@ -160,7 +178,7 @@ pub fn pick_posts_dir(
         })?;
     store::check_posts_dir(&path)?;
     let _changes = lock_changes();
-    // ほかの項目(GitHubの設定)を消さないよう、読み直してから1項目だけ替える
+    // ほかの項目を消さないよう、読み直してから1項目だけ替える
     let settings = update(&file_path(&app)?, |settings| {
         settings.posts_dir = Some(path.clone());
     })?;
@@ -199,7 +217,7 @@ pub fn set_posts_dir_name(
     crate::store::validate_posts_dir_name(&name)?;
     let _changes = lock_changes();
     let mut state = settings.lock();
-    // ほかの項目(GitHubの設定)を消さないよう、読み直してから1項目だけ替える
+    // ほかの項目を消さないよう、読み直してから1項目だけ替える
     let next = update(&file_path(&app)?, |settings| {
         settings.posts_dir_name = Some(name.clone());
     })?;
@@ -215,6 +233,24 @@ pub(crate) fn update(
     change(&mut settings);
     save_to(file, &settings)?;
     Ok(settings)
+}
+
+#[tauri::command(async)]
+pub fn get_frontmatter_settings(app: AppHandle) -> Result<FrontmatterSettings, StoreError> {
+    Ok(read_from(&file_path(&app)?)?.frontmatter)
+}
+
+#[tauri::command(async)]
+pub fn set_frontmatter_settings(
+    app: AppHandle,
+    frontmatter: FrontmatterSettings,
+) -> Result<(), StoreError> {
+    let _changes = lock_changes();
+    // ほかの項目を消さないよう、読み直してから1項目だけ替える
+    update(&file_path(&app)?, |settings| {
+        settings.frontmatter = frontmatter;
+    })?;
+    Ok(())
 }
 
 // 向き先を確かめ、設定を保存できたら保存層の向き先を替える
@@ -325,6 +361,7 @@ mod tests {
                 branch_format: "posts/{slug}".to_string(),
                 posts_path: "src/content/posts".to_string(),
             },
+            frontmatter: FrontmatterSettings::default(),
         };
         save_to(&file, &settings).unwrap();
         assert_eq!(read_from(&file).unwrap(), settings);
@@ -340,6 +377,7 @@ mod tests {
                 repo: Some(repo()),
                 ..GithubSettings::default()
             },
+            ..Settings::default()
         };
         save_to(&file, &settings).unwrap();
         update(&file, |settings| {
@@ -361,6 +399,7 @@ mod tests {
                 repo: Some(repo()),
                 ..GithubSettings::default()
             },
+            ..Settings::default()
         };
         save_to(&file, &settings).unwrap();
         update(&file, |settings| {
@@ -459,6 +498,7 @@ mod tests {
                 repo: Some(repo()),
                 ..GithubSettings::default()
             },
+            frontmatter: FrontmatterSettings::default(),
         };
         let after = github_posts_dir(&tmp.path().join("data"), &repo(), "src/content/blog");
         switch_posts_dir(&store, &file, &settings, after.clone()).unwrap();
@@ -525,5 +565,40 @@ mod tests {
         assert!(!path.exists());
         assert_eq!(store.posts_dir(), local);
         assert!(github_dir.join("kept.md").exists());
+    }
+
+    #[test]
+    fn frontmatterの無い設定はどちらも有効で保存して読み直すと同じ値() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        fs::write(&file, r#"{"postsDir":"/x/src/content/blog"}"#).unwrap();
+        assert_eq!(
+            read_from(&file).unwrap().frontmatter,
+            FrontmatterSettings {
+                hero_image: true,
+                updated_date: true,
+            }
+        );
+
+        let settings = Settings {
+            posts_dir: Some(PathBuf::from("/x/src/content/blog")),
+            github: GithubSettings::default(),
+            frontmatter: FrontmatterSettings {
+                hero_image: false,
+                updated_date: true,
+            },
+        };
+        save_to(&file, &settings).unwrap();
+        assert_eq!(read_from(&file).unwrap(), settings);
+
+        // 一部の項目だけがあれば、残りは有効
+        fs::write(&file, r#"{"frontmatter":{"heroImage":false}}"#).unwrap();
+        assert_eq!(
+            read_from(&file).unwrap().frontmatter,
+            FrontmatterSettings {
+                hero_image: false,
+                updated_date: true,
+            }
+        );
     }
 }

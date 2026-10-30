@@ -2,6 +2,7 @@ pub mod article;
 pub mod auth;
 pub mod commands;
 pub mod config;
+pub mod dates;
 #[cfg(test)]
 pub(crate) mod fake;
 pub mod git;

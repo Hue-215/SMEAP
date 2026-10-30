@@ -5,6 +5,7 @@ use std::path::Path;
 
 use super::commands::CommandError;
 use super::config::RepoRef;
+use super::dates;
 use super::push::{self, PushProgress};
 use super::state::{self, ArticleFiles, AssetRecord, Basis, Deleting, LocalFiles, Record, State};
 use super::sync::{self, SyncInput, SyncLock};
@@ -97,7 +98,9 @@ pub fn create(
     lock.run(|| {
         let state = state::read_state(&state::state_path(data_dir, repo), basis)?;
         check_destination(&state, slug, None)?;
-        Ok(store.create_article(slug)?)
+        let article = store.create_article(slug)?;
+        dates::clear_marks_logged(data_dir, repo, slug);
+        Ok(article)
     })
 }
 
@@ -122,46 +125,69 @@ pub fn rename(
             return Err(GithubError::NotPublished.into());
         }
         check_destination(&state, new, Some(old))?;
-        let Some(record) = record else {
-            // 手元だけ変えると、次の読み込みで元のslugの記事がブランチから作り直される
-            if state::article_branch(&state, old).is_some() {
-                return Err(GithubError::Conflicted.into());
+        // 印はmdより先に移す。移せないまま変えると、次の保存で手で直した日付が上書きされる
+        let marks_path = dates::marks_path(data_dir, repo);
+        dates::rename_marks(&marks_path, old, new)?;
+        let renamed = rename_files(data_dir, repo, store, &state, record, old, new);
+        if renamed.is_err() {
+            if let Err(error) = dates::rename_marks(&marks_path, new, old) {
+                eprintln!("Failed to restore the date marks of {old}: {error}");
             }
-            return Ok(store.rename_article(old, new)?);
-        };
-        store.rename_article_then(old, new, |article, _, _| -> Result<Article, CommandError> {
-            let old_synced = state::synced_path(data_dir, repo, old);
-            let new_synced = state::synced_path(data_dir, repo, new);
-            let moved_synced = old_synced.exists();
-            if moved_synced {
-                fs::rename(&old_synced, &new_synced)
-                    .map_err(|error| GithubError::io(&old_synced, error))?;
-            }
+        }
+        renamed
+    })
+}
 
-            let mut next = state.clone();
-            next.articles.remove(old);
-            // ブランチが無い(ベースの)記事も、記録を新しいslugに付け替えて残す
-            let mut record = record.clone();
-            let original = record
-                .renamed_from
-                .clone()
-                .unwrap_or_else(|| old.to_string());
-            record.renamed_from = (new != original).then_some(original);
-            next.articles.insert(new.to_string(), record);
-            // 食い違いの印も新しいslugに移す
-            if next.conflicts.remove(old) {
-                next.conflicts.insert(new.to_string());
-            }
-            if let Err(error) = state::write_state(&state_path, &next) {
-                if moved_synced {
-                    if let Err(undo) = fs::rename(&new_synced, &old_synced) {
-                        eprintln!("Failed to restore {}: {undo}", old_synced.display());
-                    }
+// 手元のファイル・synced・記録を新しいslugに移す
+fn rename_files(
+    data_dir: &Path,
+    repo: &RepoRef,
+    store: &Store,
+    state: &State,
+    record: Option<state::Record>,
+    old: &str,
+    new: &str,
+) -> Result<Article, CommandError> {
+    let state_path = state::state_path(data_dir, repo);
+    let Some(record) = record else {
+        // 手元だけ変えると、次の読み込みで元のslugの記事がブランチから作り直される
+        if state::article_branch(state, old).is_some() {
+            return Err(GithubError::Conflicted.into());
+        }
+        return Ok(store.rename_article(old, new)?);
+    };
+    store.rename_article_then(old, new, |article, _, _| -> Result<Article, CommandError> {
+        let old_synced = state::synced_path(data_dir, repo, old);
+        let new_synced = state::synced_path(data_dir, repo, new);
+        let moved_synced = old_synced.exists();
+        if moved_synced {
+            fs::rename(&old_synced, &new_synced)
+                .map_err(|error| GithubError::io(&old_synced, error))?;
+        }
+
+        let mut next = state.clone();
+        next.articles.remove(old);
+        // ブランチが無い(ベースの)記事も、記録を新しいslugに付け替えて残す
+        let mut record = record.clone();
+        let original = record
+            .renamed_from
+            .clone()
+            .unwrap_or_else(|| old.to_string());
+        record.renamed_from = (new != original).then_some(original);
+        next.articles.insert(new.to_string(), record);
+        // 食い違いの印も新しいslugに移す
+        if next.conflicts.remove(old) {
+            next.conflicts.insert(new.to_string());
+        }
+        if let Err(error) = state::write_state(&state_path, &next) {
+            if moved_synced {
+                if let Err(undo) = fs::rename(&new_synced, &old_synced) {
+                    eprintln!("Failed to restore {}: {undo}", old_synced.display());
                 }
-                return Err(error.into());
             }
-            Ok(article.clone())
-        })
+            return Err(error.into());
+        }
+        Ok(article.clone())
     })
 }
 
@@ -192,7 +218,9 @@ pub fn delete(input: &SyncInput<'_>, lock: &SyncLock, slug: &str) -> Result<(), 
                 state::write_state(&state_path, &state)?;
                 sync::remove_synced(input, slug)?;
                 Ok(())
-            })
+            })?;
+        dates::clear_marks_logged(input.data_dir, input.repo, slug);
+        Ok(())
     })
 }
 
@@ -613,7 +641,7 @@ fn discard_moved(
 
 pub fn discard(input: &SyncInput<'_>, lock: &SyncLock, slug: &str) -> Result<(), CommandError> {
     crate::store::validate_slug(slug)?;
-    lock.run(|| {
+    let result = lock.run(|| {
         let state_path = state::state_path(input.data_dir, input.repo);
         let state = state::read_state(&state_path, input.basis)?;
         if !in_base_branch(&state, slug) {
@@ -675,7 +703,11 @@ pub fn discard(input: &SyncInput<'_>, lock: &SyncLock, slug: &str) -> Result<(),
                 Ok(())
             })?;
         Ok(())
-    })
+    });
+    if result.is_ok() {
+        dates::clear_updated_mark_logged(input.data_dir, input.repo, slug);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -691,6 +723,7 @@ mod tests {
 
     use super::*;
     use crate::github::config::github_posts_dir;
+    use crate::github::dates::{self, marks_of, updated_mark};
     use crate::github::fake::{
         blob_sha, json_response, read_only_dir, repo_ref, url_of, FakeRepo, RouteTransport,
     };
@@ -2755,5 +2788,81 @@ mod tests {
         test.create("new").unwrap();
 
         assert!(test.md_path("new").exists());
+    }
+
+    // 日付の印 -------------------------------------------------------------------
+
+    #[test]
+    fn 編集の取りやめでupdatedDateの印が外れる() {
+        let test = ArticleTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[("README.md", README), ("src/content/blog/post.md", BASE_MD)],
+        );
+        test.sync();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        dates::write_marks(&path, &marks_of(&[("post", false, true)])).unwrap();
+
+        test.discard("post").unwrap();
+
+        assert!(!updated_mark(&path, "post"));
+    }
+
+    #[test]
+    fn slugの変更が失敗したら印は元のslugに戻る() {
+        let test = ArticleTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", &[("README.md", README)]);
+        test.sync();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        test.create("draft").unwrap();
+        test.create("taken").unwrap();
+        dates::write_marks(&path, &marks_of(&[("draft", true, true)])).unwrap();
+
+        // 手元に同じslugの記事があるので、ファイルを移せない
+        assert!(test.rename("draft", "taken").is_err());
+
+        let marks = dates::read_marks(&path).unwrap();
+        assert!(marks.articles["draft"].pub_date);
+        assert!(marks.articles["draft"].updated_date);
+        assert!(!marks.articles.contains_key("taken"));
+    }
+
+    #[test]
+    fn 記事の作成と削除で印が外れslugの変更で付け替わる() {
+        let test = ArticleTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", &[("README.md", README)]);
+        test.sync();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+
+        // 作成
+        dates::write_marks(&path, &marks_of(&[("draft", true, true)])).unwrap();
+        test.create("draft").unwrap();
+        assert!(!dates::read_marks(&path)
+            .unwrap()
+            .articles
+            .contains_key("draft"));
+
+        // slugの変更
+        dates::write_marks(
+            &path,
+            &marks_of(&[("draft", true, true), ("other", true, false)]),
+        )
+        .unwrap();
+        test.rename("draft", "renamed").unwrap();
+        let marks = dates::read_marks(&path).unwrap();
+        assert!(!marks.articles.contains_key("draft"));
+        assert!(marks.articles["renamed"].pub_date);
+        assert!(marks.articles["renamed"].updated_date);
+        assert!(marks.articles["other"].pub_date);
+
+        // 削除
+        test.delete("renamed").unwrap();
+        let marks = dates::read_marks(&path).unwrap();
+        assert!(!marks.articles.contains_key("renamed"));
+        assert!(marks.articles["other"].pub_date);
     }
 }

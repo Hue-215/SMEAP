@@ -96,6 +96,8 @@ pub fn run() {
             settings::get_posts_dir_name,
             #[cfg(target_os = "android")]
             settings::set_posts_dir_name,
+            settings::get_frontmatter_settings,
+            settings::set_frontmatter_settings,
             github::commands::github_status,
             github::commands::github_start_login,
             github::commands::github_wait_login,
