@@ -26,12 +26,12 @@ GitHubの Settings → Developer settings → GitHub Apps → New GitHub App で
 作った後のAppの画面にある2つを、`src-tauri/src/github/mod.rs`の定数に入れる。どちらも公開してよい値。
 
 - Client ID(`Iv23`で始まる) → `CLIENT_ID`
-- Appの公開ページのURLの`/apps/`の後ろ → `APP_SLUG`(Repositoryの選択の「repositoryを追加」で`https://github.com/apps/{APP_SLUG}/installations/new`を開く)
+- Appの公開ページのURLの`/apps/`の後ろ → `APP_SLUG`(リポジトリの選択の「リポジトリを追加」で`https://github.com/apps/{APP_SLUG}/installations/new`を開く)
 
 Generate a new client secret と Generate a private key は押さない。
 
 ## 使う人の手順
 
-1. Appのインストールのページ(SMEAPの「repositoryを追加」から開ける)で、ブログのrepositoryを選んで入れる
+1. Appのインストールのページ(SMEAPの「リポジトリを追加」から開ける)で、ブログのrepositoryを選んで入れる
 2. SMEAPの設定画面で「GitHubにログイン」を押し、出たコードをブラウザで入力する
 3. Repositoryの一覧から、ブログのrepositoryを選ぶ

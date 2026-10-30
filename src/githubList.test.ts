@@ -166,17 +166,17 @@ describe('groupArticles', () => {
 
 describe('fetchLineText', () => {
   it('読めたrepositoryと時刻の行', () => {
-    expect(fetchLineText('owner/repo', NOW, false)).toBe(`owner/repo · ${timeOf(NOW)}に読み込み`)
+    expect(fetchLineText('owner/repo', NOW, false)).toBe(`owner/repo · ${timeOf(NOW)}に取得`)
   })
 
   it('失敗して前の時刻があればそれを出す', () => {
     expect(fetchLineText('owner/repo', NOW, true)).toBe(
-      `読み込めませんでした。${timeOf(NOW)}の内容を表示しています`,
+      `読み込みに失敗しました。${timeOf(NOW)}時点の内容を表示しています。`,
     )
   })
 
   it('一度も読めていなければ読み込めなかったことだけを出す', () => {
-    expect(fetchLineText('owner/repo', null, true)).toBe('読み込めませんでした')
+    expect(fetchLineText('owner/repo', null, true)).toBe('読み込みに失敗しました')
   })
 })
 

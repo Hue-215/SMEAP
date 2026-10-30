@@ -1,4 +1,4 @@
-// Commit & Pushのための判断(docs/spec.mdの「Commit & Push」)
+// Commitのための判断(docs/spec.mdの「Commit」)
 import type { CommitKind, CommitPreview, PushProgress } from './api'
 import type { GithubArticleStates } from './githubList'
 import { t } from './i18n'
