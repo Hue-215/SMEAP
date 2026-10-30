@@ -636,7 +636,6 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-text-secondary);
 }
 
-/* 読み込み中のアイコン */
 .icon-spinning {
   animation: icon-spin 1s linear infinite;
 }
