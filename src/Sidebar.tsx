@@ -131,10 +131,7 @@ export default function Sidebar({
       x = rect.left
       y = rect.bottom
     }
-    const menu = { ...target, x, y }
-    // 公開済みの記事は、Android以外では操作が無い
-    if (rowMenuItems(menu).length === 0) return
-    setRowMenu(menu)
+    setRowMenu({ ...target, x, y })
   }
 
   const rowMenuItems = (menu: RowMenu): MenuItem[] => {

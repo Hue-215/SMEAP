@@ -150,7 +150,7 @@ impl GitHub {
     }
 }
 
-// ログアウトすると戻る、今までの保存先。連携している間にも記事の保存先は変えられるので、その都度設定から求める
+// ログアウトすると戻る、今までの保存先
 fn local_dir(default_local_dir: &Path, settings: &settings::Settings) -> PathBuf {
     #[cfg(not(target_os = "android"))]
     if let Some(dir) = settings
