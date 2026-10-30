@@ -32,7 +32,7 @@ impl Default for FrontmatterSettings {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     #[cfg(not(target_os = "android"))]
@@ -44,6 +44,26 @@ pub struct Settings {
     pub github: GithubSettings,
     #[serde(default)]
     pub frontmatter: FrontmatterSettings,
+    #[serde(default = "default_remove_unused_images")]
+    pub remove_unused_images: bool,
+}
+
+fn default_remove_unused_images() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            #[cfg(not(target_os = "android"))]
+            posts_dir: None,
+            #[cfg(target_os = "android")]
+            posts_dir_name: None,
+            github: GithubSettings::default(),
+            frontmatter: FrontmatterSettings::default(),
+            remove_unused_images: default_remove_unused_images(),
+        }
+    }
 }
 
 // デスクトップの設定はStoreが持つので、Androidだけ
@@ -74,12 +94,12 @@ pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, StoreError> {
         .map_err(|error| StoreError::io(Path::new("app_data_dir"), error))
 }
 
-// 読めなくても起動は止めず、既定の設定で始める
+// 読めなくても起動は止めず、既定の設定で始める。ただし画像の片付けは、無効にしていた人の画像を移さないよう止める
 pub fn load(app: &AppHandle) -> Settings {
-    let settings = read(app).unwrap_or_else(|error| {
-        eprintln!("Failed to read settings: {error}");
-        Settings::default()
-    });
+    let settings = match file_path(app) {
+        Ok(file) => load_from(&file),
+        Err(error) => fallback(error),
+    };
     // 検証を通らない名前が残っていたら、無かったものとして扱う(ほかの項目は残す)
     #[cfg(target_os = "android")]
     let settings = {
@@ -95,8 +115,16 @@ pub fn load(app: &AppHandle) -> Settings {
     settings
 }
 
-fn read(app: &AppHandle) -> Result<Settings, StoreError> {
-    read_from(&file_path(app)?)
+fn load_from(file: &Path) -> Settings {
+    read_from(file).unwrap_or_else(fallback)
+}
+
+fn fallback(error: StoreError) -> Settings {
+    eprintln!("Failed to read settings: {error}");
+    Settings {
+        remove_unused_images: false,
+        ..Settings::default()
+    }
 }
 
 pub(crate) fn read_from(file: &Path) -> Result<Settings, StoreError> {
@@ -253,6 +281,27 @@ pub fn set_frontmatter_settings(
     Ok(())
 }
 
+// 起動時に設定を読めなかったときは無効で動いているので、ファイルではなくStoreの値を返す
+#[tauri::command]
+pub fn get_remove_unused_images(store: State<'_, Store>) -> bool {
+    store.remove_unused_images()
+}
+
+#[tauri::command(async)]
+pub fn set_remove_unused_images(
+    app: AppHandle,
+    store: State<'_, Store>,
+    enabled: bool,
+) -> Result<(), StoreError> {
+    let _changes = lock_changes();
+    // ほかの項目を消さないよう、読み直してから1項目だけ替える
+    update(&file_path(&app)?, |settings| {
+        settings.remove_unused_images = enabled;
+    })?;
+    store.set_remove_unused_images(enabled);
+    Ok(())
+}
+
 // 向き先を確かめ、設定を保存できたら保存層の向き先を替える
 pub(crate) fn switch_posts_dir(
     store: &Store,
@@ -362,6 +411,7 @@ mod tests {
                 posts_path: "src/content/posts".to_string(),
             },
             frontmatter: FrontmatterSettings::default(),
+            ..Settings::default()
         };
         save_to(&file, &settings).unwrap();
         assert_eq!(read_from(&file).unwrap(), settings);
@@ -499,6 +549,7 @@ mod tests {
                 ..GithubSettings::default()
             },
             frontmatter: FrontmatterSettings::default(),
+            ..Settings::default()
         };
         let after = github_posts_dir(&tmp.path().join("data"), &repo(), "src/content/blog");
         switch_posts_dir(&store, &file, &settings, after.clone()).unwrap();
@@ -587,6 +638,7 @@ mod tests {
                 hero_image: false,
                 updated_date: true,
             },
+            ..Settings::default()
         };
         save_to(&file, &settings).unwrap();
         assert_eq!(read_from(&file).unwrap(), settings);
@@ -600,5 +652,30 @@ mod tests {
                 updated_date: true,
             }
         );
+    }
+
+    #[test]
+    fn removeUnusedImagesの無い設定は有効でfalseで保存して読み直すと無効() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        fs::write(&file, r#"{"postsDir":"/x/src/content/blog"}"#).unwrap();
+        assert!(read_from(&file).unwrap().remove_unused_images);
+
+        let settings = Settings {
+            posts_dir: Some(PathBuf::from("/x/src/content/blog")),
+            remove_unused_images: false,
+            ..Settings::default()
+        };
+        save_to(&file, &settings).unwrap();
+        assert!(!read_from(&file).unwrap().remove_unused_images);
+    }
+
+    #[test]
+    fn 起動時に設定を読めなければ片付けは無効で無ければ有効() {
+        let tmp = TempDir::new().unwrap();
+        let file = file_of(&tmp);
+        assert!(load_from(&file).remove_unused_images);
+        fs::write(&file, "@").unwrap();
+        assert!(!load_from(&file).remove_unused_images);
     }
 }

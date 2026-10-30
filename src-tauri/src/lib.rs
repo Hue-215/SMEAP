@@ -58,6 +58,7 @@ pub fn run() {
                 let store = store::Store::new(local_dir.clone(), backup_root)?;
                 (store, local_dir.clone(), local_dir)
             };
+            store.set_remove_unused_images(settings.remove_unused_images);
             // 起動時の保存先。token.jsonが読めないときと向き先が使えないときは、今までの保存先で始める
             let (startup_dir, token_error) =
                 github::config::startup_posts_dir(local_dir, &data_dir, &settings.github);
@@ -98,6 +99,8 @@ pub fn run() {
             settings::set_posts_dir_name,
             settings::get_frontmatter_settings,
             settings::set_frontmatter_settings,
+            settings::get_remove_unused_images,
+            settings::set_remove_unused_images,
             github::commands::github_status,
             github::commands::github_start_login,
             github::commands::github_wait_login,
