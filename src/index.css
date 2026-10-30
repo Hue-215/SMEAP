@@ -731,6 +731,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   height: var(--control-size-md);
   padding: 0 var(--space-4);
   border: var(--border-width) solid var(--color-border);
+  white-space: nowrap;
 }
 
 .dialog-buttons button:is([type='submit'], .primary) {
@@ -1237,13 +1238,23 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   width: 1.125rem;
   height: 1.125rem;
   margin: 0;
-  accent-color: var(--color-accent);
+  padding: 0.125rem;
+  border: 0.125rem solid var(--color-field-border);
+  border-radius: 50%;
+  appearance: none;
+  background-clip: content-box;
+  cursor: pointer;
 }
 
-/* 左端の「リポジトリを追加」。枠は要らない */
+.github-repo-option input[type='radio']:checked {
+  background-color: var(--color-accent);
+}
+
+/* 左端の「追加」。枠は要らない */
 .dialog-buttons .github-repo-add {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  padding: 0 var(--space-1);
   border: 0;
 }
