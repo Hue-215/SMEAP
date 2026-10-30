@@ -636,9 +636,14 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   color: var(--color-text-secondary);
 }
 
-/* 読み込み中の更新ボタンのアイコン(Sidebar.tsx) */
+/* 読み込み中のアイコン */
 .icon-spinning {
   animation: icon-spin 1s linear infinite;
+}
+
+/* `sync`のアイコンの矢印に向きを合わせる */
+.icon-spinning-ccw {
+  animation-direction: reverse;
 }
 
 @keyframes icon-spin {

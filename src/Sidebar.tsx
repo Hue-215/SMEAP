@@ -275,7 +275,10 @@ export default function Sidebar({
               onClick={onSync}
               disabled={github.syncing}
             >
-              <Icon name="sync" className={github.syncing ? 'icon-spinning' : undefined} />
+              <Icon
+                name="sync"
+                className={github.syncing ? 'icon-spinning icon-spinning-ccw' : undefined}
+              />
             </button>
           )}
           <button
