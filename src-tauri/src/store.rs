@@ -712,12 +712,12 @@ impl Store {
             pub_date: fields.pub_date.or_else(|| original.fields.pub_date.clone()),
             updated_date: fields
                 .updated_date
-                .unwrap_or(original.fields.updated_date.clone()),
+                .unwrap_or_else(|| original.fields.updated_date.clone()),
             hero_image: original.fields.hero_image.clone(),
             body: fields.body,
         };
-        // 送られた日付と、日付以外が保存されているmdと同じとき、読めない値の行があるとき(上書きして消さないように)は
-        // 自動で替えない
+        // その日付が送られたとき、日付以外が保存されているmdと同じとき、その日付の読めない行があるとき
+        // (上書きして消さないため)は自動で替えない
         if let Some((field, date)) = auto {
             let (sent, key) = match field {
                 DateField::PubDate => (sent_pub, "pubDate"),

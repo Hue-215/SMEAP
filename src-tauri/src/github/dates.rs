@@ -13,7 +13,7 @@ use super::GithubError;
 use crate::store::{DateField, EditedFields, SavedDates, Store};
 
 // 印の書き込みを1つずつにする。保存はStoreのロックより先にこれを取る
-pub static MARKS_LOCK: Mutex<()> = Mutex::new(());
+static MARKS_LOCK: Mutex<()> = Mutex::new(());
 
 fn lock() -> MutexGuard<'static, ()> {
     MARKS_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
@@ -96,17 +96,11 @@ pub fn save(
 
     // 送られた日付の印は、mdより先に書く
     let sent_marks = {
-        let marks = marks.articles.entry(slug.to_string()).or_default();
-        let mut changed = false;
-        if fields.pub_date.is_some() && !marks.pub_date {
-            marks.pub_date = true;
-            changed = true;
-        }
-        if fields.updated_date.is_some() && !marks.updated_date {
-            marks.updated_date = true;
-            changed = true;
-        }
-        changed
+        let entry = marks.articles.entry(slug.to_string()).or_default();
+        let before = entry.clone();
+        entry.pub_date |= fields.pub_date.is_some();
+        entry.updated_date |= fields.updated_date.is_some();
+        *entry != before
     };
     if sent_marks {
         write_marks(&path, &marks)?;
@@ -134,12 +128,12 @@ pub fn save(
     let saved = input.store.save_article(slug, fields, auto)?;
 
     // 公開済みの記事のpubDateの印は、公開されたので外す
-    if field == Some(DateField::UpdatedDate)
-        && marks.articles.get(slug).is_some_and(|marks| marks.pub_date)
-    {
-        if let Some(entry) = marks.articles.get_mut(slug) {
-            entry.pub_date = false;
-        }
+    let published_mark = marks
+        .articles
+        .get_mut(slug)
+        .filter(|entry| field == Some(DateField::UpdatedDate) && entry.pub_date);
+    if let Some(entry) = published_mark {
+        entry.pub_date = false;
         if let Err(error) = write_marks(&path, &marks) {
             eprintln!("Failed to clear the pubDate mark of {slug}: {error}");
         }
@@ -171,15 +165,51 @@ pub fn clear_updated_mark_if(
         return Ok(());
     }
     let mut marks = read_marks(path)?;
-    let Some(entry) = marks.articles.get_mut(slug) else {
-        return Ok(());
-    };
-    if !entry.updated_date {
-        return Ok(());
+    match marks.articles.get_mut(slug) {
+        Some(entry) if entry.updated_date => entry.updated_date = false,
+        _ => return Ok(()),
     }
-    entry.updated_date = false;
-    write_marks(path, &marks)?;
-    Ok(())
+    write_marks(path, &marks)
+}
+
+// 操作は失敗にせず、ログだけ残す
+pub fn clear_marks_logged(data_dir: &Path, repo: &RepoRef, slug: &str) {
+    if let Err(error) = clear_marks(&marks_path(data_dir, repo), slug) {
+        eprintln!("Failed to clear the date marks of {slug}: {error}");
+    }
+}
+
+pub fn clear_updated_mark_logged(data_dir: &Path, repo: &RepoRef, slug: &str) {
+    if let Err(error) = clear_updated_mark(&marks_path(data_dir, repo), slug) {
+        eprintln!("Failed to clear the updatedDate mark of {slug}: {error}");
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn marks_of(entries: &[(&str, bool, bool)]) -> Marks {
+    Marks {
+        articles: entries
+            .iter()
+            .map(|(slug, pub_date, updated_date)| {
+                (
+                    (*slug).to_string(),
+                    DateMarks {
+                        pub_date: *pub_date,
+                        updated_date: *updated_date,
+                    },
+                )
+            })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn updated_mark(path: &Path, slug: &str) -> bool {
+    read_marks(path)
+        .unwrap()
+        .articles
+        .get(slug)
+        .is_some_and(|marks| marks.updated_date)
 }
 
 // newに残っていた印(読み込みで手元から消した記事の印など)は捨てる
@@ -304,17 +334,7 @@ mod tests {
         }
 
         fn write_marks_of(&self, entries: &[(&str, bool, bool)]) {
-            let mut marks = Marks::default();
-            for (slug, pub_date, updated_date) in entries {
-                marks.articles.insert(
-                    (*slug).to_string(),
-                    DateMarks {
-                        pub_date: *pub_date,
-                        updated_date: *updated_date,
-                    },
-                );
-            }
-            write_marks(&self.marks_file, &marks).unwrap();
+            write_marks(&self.marks_file, &marks_of(entries)).unwrap();
         }
 
         // 日付は送らない(手で直していない)保存の入力

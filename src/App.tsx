@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
+  DEFAULT_FRONTMATTER,
   deleteArticle,
   getFrontmatterSettings,
   getPostsDir,
@@ -884,7 +885,7 @@ export default function App() {
                   key={article.slug}
                   ref={editor}
                   article={article.article}
-                  frontmatter={frontmatter ?? { heroImage: true, updatedDate: true }}
+                  frontmatter={frontmatter ?? DEFAULT_FRONTMATTER}
                   paused={
                     saveConfirm !== null ||
                     slugDialog !== null ||

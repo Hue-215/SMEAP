@@ -1156,11 +1156,7 @@ pub fn pull(
         state::write_state(&state_path, &state)?;
         Ok(())
     })?;
-    if let Err(error) =
-        dates::clear_updated_mark(&dates::marks_path(input.data_dir, input.repo), slug)
-    {
-        eprintln!("Failed to clear the updatedDate mark of {slug}: {error}");
-    }
+    dates::clear_updated_mark_logged(input.data_dir, input.repo, slug);
     Ok(())
 }
 
@@ -1195,7 +1191,7 @@ mod tests {
 
     use super::*;
     use crate::github::config::{github_posts_dir, RepoRef};
-    use crate::github::dates;
+    use crate::github::dates::{self, marks_of, updated_mark};
     use crate::github::fake::{
         b64_decode, blob_sha, json_response, read_only_dir, repo_ref, url_of, FakeRepo,
         RouteTransport,
@@ -4170,28 +4166,6 @@ mod tests {
     }
 
     // 日付の印 -------------------------------------------------------------------
-
-    fn updated_mark(path: &std::path::Path, slug: &str) -> bool {
-        dates::read_marks(path)
-            .unwrap()
-            .articles
-            .get(slug)
-            .is_some_and(|marks| marks.updated_date)
-    }
-
-    fn marks_of(entries: &[(&str, bool, bool)]) -> dates::Marks {
-        let mut marks = dates::Marks::default();
-        for (slug, pub_date, updated_date) in entries {
-            marks.articles.insert(
-                (*slug).to_string(),
-                dates::DateMarks {
-                    pub_date: *pub_date,
-                    updated_date: *updated_date,
-                },
-            );
-        }
-        marks
-    }
 
     #[test]
     fn Commit_and_Pushの成功でupdatedDateの印が外れる() {

@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  DEFAULT_FRONTMATTER,
   UnsavedArticleError,
   githubAssetsPath,
   githubLogout,
@@ -9,12 +10,12 @@ import {
   repoFullName,
   validateBranchFormat,
   validatePostsPath,
+  type FrontmatterSettings,
   type GithubError,
   type GithubRepoRef,
   type GithubSettings,
   type GithubStatus,
   type GithubWaitLogin,
-  type FrontmatterSettings,
   type PostsDir,
   type StoreError,
 } from './api'
@@ -202,6 +203,9 @@ export default function Settings({
     else await command()
   }
 
+  const frontmatterMessage =
+    frontmatter === null ? t('settings.frontmatter_unreadable') : frontmatterFailure
+
   const toggleFrontmatter = async (key: keyof FrontmatterSettings) => {
     if (frontmatterBusy || frontmatter === null) return
     setFrontmatterBusy(true)
@@ -331,19 +335,15 @@ export default function Settings({
                       <input
                         type="checkbox"
                         className="settings-check"
-                        checked={frontmatter?.[key] ?? true}
+                        checked={(frontmatter ?? DEFAULT_FRONTMATTER)[key]}
                         disabled={frontmatterBusy || frontmatter === null}
                         onChange={() => void toggleFrontmatter(key)}
                       />
                     </label>
                   ))}
                 </div>
-                {frontmatter === null ? (
-                  <p className="settings-failure">{t('settings.frontmatter_unreadable')}</p>
-                ) : (
-                  frontmatterFailure !== null && (
-                    <p className="settings-failure">{frontmatterFailure}</p>
-                  )
+                {frontmatterMessage !== null && (
+                  <p className="settings-failure">{frontmatterMessage}</p>
                 )}
                 <h2 className="settings-h2">{t('settings.about')}</h2>
                 <div className="settings-rows">

@@ -82,6 +82,9 @@ export interface FrontmatterSettings {
   updatedDate: boolean
 }
 
+// Rust側のFrontmatterSettingsのDefaultとそろえる
+export const DEFAULT_FRONTMATTER: FrontmatterSettings = { heroImage: true, updatedDate: true }
+
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')
 }

@@ -1,6 +1,8 @@
-import type { FrontmatterSettings, SavedDates, Warning } from './api'
+import type { EditedFields, FrontmatterSettings, SavedDates, Warning } from './api'
 
 export type DateKey = 'pubDate' | 'updatedDate'
+
+export const DATE_KEYS: readonly DateKey[] = ['pubDate', 'updatedDate']
 
 export type DateValues = { pubDate: string | null; updatedDate: string | null }
 
@@ -35,9 +37,13 @@ export class DateEdits {
   }
 }
 
-export function datesToSend(fields: DateValues, taken: readonly DateKey[]): Partial<DateValues> {
-  const sent: Partial<DateValues> = {}
-  if (taken.includes('pubDate')) sent.pubDate = fields.pubDate
+// pubDateは欄が必須なので、nullなら送らない
+export function datesToSend(
+  fields: DateValues,
+  taken: readonly DateKey[],
+): Pick<EditedFields, 'pubDate' | 'updatedDate'> {
+  const sent: Pick<EditedFields, 'pubDate' | 'updatedDate'> = {}
+  if (taken.includes('pubDate') && fields.pubDate !== null) sent.pubDate = fields.pubDate
   if (taken.includes('updatedDate')) sent.updatedDate = fields.updatedDate
   return sent
 }

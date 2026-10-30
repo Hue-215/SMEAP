@@ -32,6 +32,7 @@ import { insertImageRefs, insertLink } from './editor'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import {
+  DATE_KEYS,
   DateEdits,
   applySavedDates,
   datesToSend,
@@ -89,8 +90,6 @@ type HeaderFields = {
   updatedDate: string | null
 }
 type HeaderKey = keyof HeaderFields
-
-const DATE_KEYS: DateKey[] = ['pubDate', 'updatedDate']
 
 // runは本文に入れる参照を返す。クリップボードに画像が無ければnull
 interface ImageImport {
@@ -188,14 +187,12 @@ export default function ArticleEditor({
       read: () => {
         if (!view.current) throw new Error('The body editor is missing')
         const taken = dateEdits.take()
-        const dates = datesToSend(latest.current, taken)
         const fields: EditedFields = {
           title: latest.current.title,
           description: latest.current.description,
           body: view.current.state.doc.toString(),
+          ...datesToSend(latest.current, taken),
         }
-        if (dates.pubDate != null) fields.pubDate = dates.pubDate
-        if (dates.updatedDate !== undefined) fields.updatedDate = dates.updatedDate
         takes.current.set(fields, taken)
         return fields
       },
@@ -369,7 +366,7 @@ export default function ArticleEditor({
   const updateFields = (patch: FieldsPatch) => {
     const changes = Object.entries(patch) as Array<[HeaderKey, string | null]>
     for (const [key] of changes) {
-      if (key === 'pubDate' || key === 'updatedDate') dateEdits.edit(key)
+      if (DATE_KEYS.includes(key as DateKey)) dateEdits.edit(key as DateKey)
     }
     if (changes.some(([key, value]) => value !== article[key])) {
       setEdited((keys) => {
