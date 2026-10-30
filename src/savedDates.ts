@@ -35,7 +35,6 @@ export class DateEdits {
   }
 }
 
-// takeで返った日付だけを保存の入力に入れる。updatedDateを外したときはnull
 export function datesToSend(fields: DateValues, taken: readonly DateKey[]): Partial<DateValues> {
   const sent: Partial<DateValues> = {}
   if (taken.includes('pubDate')) sent.pubDate = fields.pubDate
@@ -55,7 +54,6 @@ export function applySavedDates(
   }
 }
 
-// 無効にした項目の警告は出さない
 export function visibleWarnings(warnings: Warning[], frontmatter: FrontmatterSettings): Warning[] {
   return warnings.filter((warning) => {
     if (warning.key === 'heroImage' && !frontmatter.heroImage) return false

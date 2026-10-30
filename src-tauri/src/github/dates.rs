@@ -69,14 +69,12 @@ pub fn auto_field(state: &State, slug: &str) -> Option<DateField> {
     }
 }
 
-// updated_dateは、updatedDateが有効か
 pub struct SaveInput<'a> {
     pub data_dir: &'a Path,
     pub repo: &'a RepoRef,
     pub basis: &'a Basis,
     pub store: &'a Store,
-    pub updated_date: bool,
-    pub lock: &'a Mutex<()>,
+    pub updated_date_enabled: bool,
 }
 
 pub fn save(
@@ -85,7 +83,7 @@ pub fn save(
     fields: EditedFields,
     today: &str,
 ) -> Result<SavedDates, CommandError> {
-    let _guard = input.lock.lock().unwrap_or_else(PoisonError::into_inner);
+    let _guard = lock();
     let path = marks_path(input.data_dir, input.repo);
     // 印を読めないときは、日付を自動で替えず、印も書かない
     let mut marks = match read_marks(&path) {
@@ -128,7 +126,7 @@ pub fn save(
         let marked = match field {
             DateField::PubDate => marks.is_some_and(|marks| marks.pub_date),
             DateField::UpdatedDate => {
-                !input.updated_date || marks.is_some_and(|marks| marks.updated_date)
+                !input.updated_date_enabled || marks.is_some_and(|marks| marks.updated_date)
             }
         };
         (!marked).then_some((field, today))
@@ -206,7 +204,6 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
-    use std::sync::Mutex;
 
     use tempfile::TempDir;
 
@@ -255,7 +252,6 @@ mod tests {
         basis: Basis,
         state_path: PathBuf,
         marks_file: PathBuf,
-        lock: Mutex<()>,
     }
 
     impl DatesTest {
@@ -275,7 +271,6 @@ mod tests {
                 basis,
                 state_path,
                 marks_file,
-                lock: Mutex::new(()),
                 _tmp: tmp,
             }
         }
@@ -286,8 +281,7 @@ mod tests {
                 repo: &self.repo,
                 basis: &self.basis,
                 store: &self.store,
-                updated_date: true,
-                lock: &self.lock,
+                updated_date_enabled: true,
             }
         }
 
@@ -469,7 +463,7 @@ mod tests {
         test.store.create_article("published").unwrap();
         test.store.create_article("draft").unwrap();
         let disabled = SaveInput {
-            updated_date: false,
+            updated_date_enabled: false,
             ..test.input()
         };
 
@@ -559,10 +553,12 @@ mod tests {
         assert!(marks.articles["new"].updated_date);
         assert!(marks.articles["other"].pub_date);
 
+        test.write_marks_of(&[("new", true, true), ("other", true, true)]);
         clear_updated_mark(&test.marks_file, "other").unwrap();
         let marks = test.marks();
         assert!(!marks.articles["other"].updated_date);
         assert!(marks.articles["other"].pub_date);
+        assert!(marks.articles["new"].updated_date);
 
         // 移す先に残っていた印は、元に印が無くても消える
         test.write_marks_of(&[

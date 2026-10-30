@@ -1043,7 +1043,7 @@ pub fn commit_push(
     }
 }
 
-// 送ったmdがまだ手元にあるときだけ、updatedDateの印を外す。送っている間に保存されていれば残す
+// 送ったmdがまだ手元にあるときだけ、updatedDateの印を外す
 fn clear_sent_updated_mark(input: &SyncInput<'_>, slug: &str, sent: &[u8]) {
     let path = dates::marks_path(input.data_dir, input.repo);
     if let Err(error) = dates::clear_updated_mark_if(&path, slug, || {
@@ -4242,6 +4242,20 @@ mod tests {
         result.unwrap();
 
         assert!(updated_mark(&path, SLUG));
+    }
+
+    #[test]
+    fn ベースの記事のslugを変えたCommit_and_PushでもupdatedDateの印が外れる() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        test.mark_renamed_from_base("a", "b");
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        dates::write_marks(&path, &marks_of(&[("b", false, true)])).unwrap();
+        repo.accept_writes(&test.transport);
+
+        test.commit_push("b", "更新", None).unwrap();
+
+        assert!(!updated_mark(&path, "b"));
     }
 
     #[test]

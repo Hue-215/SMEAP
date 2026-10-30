@@ -338,8 +338,12 @@ export default function Settings({
                     </label>
                   ))}
                 </div>
-                {frontmatterFailure !== null && (
-                  <p className="settings-failure">{frontmatterFailure}</p>
+                {frontmatter === null ? (
+                  <p className="settings-failure">{t('settings.frontmatter_unreadable')}</p>
+                ) : (
+                  frontmatterFailure !== null && (
+                    <p className="settings-failure">{frontmatterFailure}</p>
+                  )
                 )}
                 <h2 className="settings-h2">{t('settings.about')}</h2>
                 <div className="settings-rows">

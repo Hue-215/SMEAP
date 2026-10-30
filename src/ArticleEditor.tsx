@@ -192,10 +192,9 @@ export default function ArticleEditor({
         const fields: EditedFields = {
           title: latest.current.title,
           description: latest.current.description,
-          // 送らない日付のpubDateはnullにする(キーが無いのと同じ扱いになる)
-          pubDate: dates.pubDate ?? null,
           body: view.current.state.doc.toString(),
         }
+        if (dates.pubDate != null) fields.pubDate = dates.pubDate
         if (dates.updatedDate !== undefined) fields.updatedDate = dates.updatedDate
         takes.current.set(fields, taken)
         return fields

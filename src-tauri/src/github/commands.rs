@@ -660,7 +660,7 @@ struct Linked {
     repo: RepoRef,
     basis: Basis,
     posts_dir: PathBuf,
-    updated_date: bool,
+    updated_date_enabled: bool,
 }
 
 fn input_of<'a>(
@@ -703,8 +703,7 @@ pub(crate) fn save_article(
         repo: &linked.repo,
         basis: &linked.basis,
         store,
-        updated_date: linked.updated_date,
-        lock: &dates::MARKS_LOCK,
+        updated_date_enabled: linked.updated_date_enabled,
     };
     dates::save(&input, slug, fields, &crate::store::today())
 }
@@ -830,7 +829,7 @@ fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError
         repo,
         basis,
         posts_dir,
-        updated_date: settings.frontmatter.updated_date,
+        updated_date_enabled: settings.frontmatter.updated_date,
     }))
 }
 

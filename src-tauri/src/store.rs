@@ -221,7 +221,7 @@ pub(crate) fn today() -> String {
     Local::now().date_naive().format(DATE_FORMAT).to_string()
 }
 
-// 日付を除いた内容が同じか。heroImageは保存では替わらないので比べない
+// heroImageは保存では替わらないので比べない
 fn same_without_dates(a: &ArticleFields, b: &ArticleFields) -> bool {
     a.title == b.title && a.description == b.description && a.body == b.body
 }
@@ -698,10 +698,10 @@ impl Store {
         fs::copy(&md, &backup)
             .map_err(|error| StoreError::not_found_or_io(slug, &backup, error))?;
         // 画面から渡らない読めなかった部分は、読み直した元の行のままで書く。
-        // 開いたときに読めなかった項目は保存の時点で消費されていることがあるので、
-        // Noneの項目は読み直して読めた値で補う。heroImageは取り込みと外す操作で書き換わるので、いつも読み直した値を使う
+        // Noneの項目(開いたときに読めなかった項目と、画面が送らなかった日付)は読み直して読めた値で補う。
+        // 開いたときに読めなかった項目は保存の時点で消費されていることがあるため。
+        // heroImageは取り込みと外す操作で書き換わるので、いつも読み直した値を使う
         let original = self.read_article(slug)?;
-        // 画面から送られた日付は、自動で替えない
         let sent_pub = fields.pub_date.is_some();
         let sent_updated = fields.updated_date.is_some();
         let mut fields = ArticleFields {
@@ -716,13 +716,18 @@ impl Store {
             hero_image: original.fields.hero_image.clone(),
             body: fields.body,
         };
-        // 日付を除いた内容が保存されているmdと同じなら、自動でも替えない
+        // 送られた日付と、日付以外が保存されているmdと同じとき、読めない値の行があるとき(上書きして消さないように)は
+        // 自動で替えない
         if let Some((field, date)) = auto {
-            let sent = match field {
-                DateField::PubDate => sent_pub,
-                DateField::UpdatedDate => sent_updated,
+            let (sent, key) = match field {
+                DateField::PubDate => (sent_pub, "pubDate"),
+                DateField::UpdatedDate => (sent_updated, "updatedDate"),
             };
-            if !sent && !same_without_dates(&fields, &original.fields) {
+            let unreadable = original
+                .extra
+                .iter()
+                .any(|entry| entry.key_value.as_ref().is_some_and(|(k, _)| k == key));
+            if !sent && !unreadable && !same_without_dates(&fields, &original.fields) {
                 match field {
                     DateField::PubDate => fields.pub_date = Some(date.to_string()),
                     DateField::UpdatedDate => fields.updated_date = Some(date.to_string()),
@@ -3945,12 +3950,10 @@ mod tests {
         let (_tmp, store) = setup();
         let content = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
         let article = md_article(&store, "sent-pub", content);
+        let mut fields = with_dates(&article, Some("2026-03-03"), None);
+        fields.body = "新しい本文".to_string();
         let saved = store
-            .save_article(
-                "sent-pub",
-                with_dates(&article, Some("2026-03-03"), None),
-                Some((DateField::PubDate, "2026-05-01")),
-            )
+            .save_article("sent-pub", fields, Some((DateField::PubDate, "2026-05-01")))
             .unwrap();
         assert_eq!(saved.pub_date.as_deref(), Some("2026-03-03"));
         assert_eq!(
@@ -3992,6 +3995,43 @@ mod tests {
             )
             .unwrap();
         assert_eq!(saved.updated_date, None);
+    }
+
+    #[test]
+    fn autoはタイトルだけ変えた保存でも日付を替える() {
+        let (_tmp, store) = setup();
+        let content = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
+        let article = md_article(&store, "title-only", content);
+        let mut fields = with_dates(&article, None, None);
+        fields.title = Some("新しいタイトル".to_string());
+        let saved = store
+            .save_article(
+                "title-only",
+                fields,
+                Some((DateField::PubDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-05-01"));
+    }
+
+    #[test]
+    fn autoは読めない日付の行を上書きしない() {
+        let (_tmp, store) = setup();
+        let content = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-5-1\n---\n本文\n";
+        let article = md_article(&store, "unreadable-date", content);
+        let mut fields = with_dates(&article, None, None);
+        fields.body = "新しい本文".to_string();
+        let saved = store
+            .save_article(
+                "unreadable-date",
+                fields,
+                Some((DateField::PubDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.pub_date, None);
+        assert!(fs::read_to_string(store.md_path("unreadable-date"))
+            .unwrap()
+            .contains("pubDate: 2026-5-1"));
     }
 
     #[test]

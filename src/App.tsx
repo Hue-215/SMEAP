@@ -99,7 +99,7 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>(initialSaveStatus)
   const [saveConfirm, setSaveConfirm] = useState<PendingAction | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  // 読めるまではnullで、編集画面はどちらも有効として出す
+  // 読めていなければnullで、編集画面はどちらも有効として出す
   const [frontmatter, setFrontmatter] = useState<FrontmatterSettings | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ArticleRef | null>(null)
   const [discardTarget, setDiscardTarget] = useState<ArticleRef | null>(null)

@@ -102,8 +102,8 @@ export default function ArticleHeader({
   const fileInput = useRef<HTMLInputElement>(null)
   // 読めなかった画像のURL。差し替えるとURLが変わるので、読み直す
   const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
-  // 日付の欄は入力途中の値を持てないので制御しない。保存の結果で値が替わったら、
-  // 入力中でない欄だけ書き換える
+  // 入力途中の日付は値が空になるので、日付の欄は制御しない。記事を切り替えたらApp.tsxのkeyで作り直し、
+  // 保存の結果で値が替わったら入力中でない欄だけ書き換える
   const pubDateInput = useRef<HTMLInputElement>(null)
   const updatedDateInput = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -184,7 +184,6 @@ export default function ArticleHeader({
       <div className="article-meta">
         <label className="article-meta-item">
           {t('article_header.pub_date')}
-          {/* 入力途中の日付は値が空になるので制御しない。記事を切り替えたらApp.tsxのkeyで作り直す */}
           <input
             ref={pubDateInput}
             type="date"
@@ -202,8 +201,9 @@ export default function ArticleHeader({
             }}
           />
         </label>
+        {/* 外すボタンが欄と別の行に回らないよう、まとめて包む */}
         {frontmatter.updatedDate && (
-          <>
+          <div className="article-meta-item">
             <label className="article-meta-item">
               {t('article_header.updated_date')}
               <input
@@ -233,7 +233,7 @@ export default function ArticleHeader({
                 <Icon name="close" />
               </button>
             )}
-          </>
+          </div>
         )}
       </div>
     </header>

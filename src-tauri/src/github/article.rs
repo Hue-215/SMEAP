@@ -2842,6 +2842,26 @@ mod tests {
     }
 
     #[test]
+    fn slugの変更が失敗したら印は元のslugに戻る() {
+        let test = ArticleTest::new();
+        let repo = test.new_repo();
+        repo.branch(&test.transport, "main", &[("README.md", README)]);
+        test.sync();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        test.create("draft").unwrap();
+        test.create("taken").unwrap();
+        dates::write_marks(&path, &marks_of(&[("draft", true, true)])).unwrap();
+
+        // 手元に同じslugの記事があるので、ファイルを移せない
+        assert!(test.rename("draft", "taken").is_err());
+
+        let marks = dates::read_marks(&path).unwrap();
+        assert!(marks.articles["draft"].pub_date);
+        assert!(marks.articles["draft"].updated_date);
+        assert!(!marks.articles.contains_key("taken"));
+    }
+
+    #[test]
     fn 記事の作成と削除で印が外れslugの変更で付け替わる() {
         let test = ArticleTest::new();
         let repo = test.new_repo();

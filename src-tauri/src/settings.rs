@@ -590,5 +590,15 @@ mod tests {
         };
         save_to(&file, &settings).unwrap();
         assert_eq!(read_from(&file).unwrap(), settings);
+
+        // 一部の項目だけがあれば、残りは有効
+        fs::write(&file, r#"{"frontmatter":{"heroImage":false}}"#).unwrap();
+        assert_eq!(
+            read_from(&file).unwrap().frontmatter,
+            FrontmatterSettings {
+                hero_image: false,
+                updated_date: true,
+            }
+        );
     }
 }

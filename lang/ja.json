@@ -132,6 +132,7 @@
   "settings.back_to_settings": "設定に戻る",
   "settings.frontmatter": "フロントマター",
   "settings.frontmatter_hero_image": "サムネイル",
+  "settings.frontmatter_unreadable": "フロントマターの設定を読めませんでした",
   "settings.frontmatter_updated_date": "更新日",
   "settings.github": "GitHub",
   "settings.github_account": "アカウント",

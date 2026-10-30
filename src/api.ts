@@ -61,8 +61,12 @@ export interface Article {
 }
 
 // heroImageはimportHeroImageが書き換えるので、保存では渡さない。
-// updatedDateは、キーを送らなければ保存されている値のまま、nullなら外す
-export type EditedFields = Omit<Article, 'slug' | 'warnings' | 'heroImage' | 'updatedDate'> & {
+// 日付は手で変えたものだけを送る。送らなければ保存されている値のまま。updatedDateのnullは外す
+export type EditedFields = Omit<
+  Article,
+  'slug' | 'warnings' | 'heroImage' | 'pubDate' | 'updatedDate'
+> & {
+  pubDate?: string
   updatedDate?: string | null
 }
 
