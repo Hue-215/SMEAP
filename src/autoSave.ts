@@ -1,4 +1,4 @@
-import { saveArticle, type EditedFields } from './api'
+import { saveArticle, type EditedFields, type SavedDates } from './api'
 
 // 仮の間隔(docs/spec.md)。入力が止まってからと、入力が続いていても保存するまで
 const IDLE_DELAY = 15_000
@@ -25,7 +25,8 @@ export interface AutoSaverHost {
   // 保存する内容。保存を頼まれたときに読む。読めなければ投げる
   read: () => EditedFields
   onStatus: (status: SaveStatus) => void
-  onSaved: (fields: EditedFields) => void
+  // fieldsは送った内容、datesは保存で書いた日付
+  onSaved: (fields: EditedFields, dates: SavedDates) => void
 }
 
 // 開いている1つの記事の自動保存。変更のたびに番号を進め、保存した番号と比べて未保存かを見る。
@@ -99,8 +100,9 @@ export class AutoSaver {
   private async write(target: number, fields: EditedFields): Promise<boolean> {
     // 同じ版の保存を続けて頼まれたら、2回目は書かない
     if (target <= this.savedRevision) return true
+    let dates: SavedDates
     try {
-      await saveArticle(this.slug, fields)
+      dates = await saveArticle(this.slug, fields)
     } catch (e) {
       console.error('Failed to save the article', this.slug, e)
       this.setStatus({ savedAt: this.status.savedAt, failed: true })
@@ -112,7 +114,7 @@ export class AutoSaver {
     }
     this.savedRevision = target
     this.setStatus({ savedAt: new Date(), failed: false })
-    this.host?.onSaved(fields)
+    this.host?.onSaved(fields, dates)
     return true
   }
 

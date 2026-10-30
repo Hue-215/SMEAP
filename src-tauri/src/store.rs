@@ -14,7 +14,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::os::unix::fs::PermissionsExt;
 
 use chrono::{Local, NaiveDate};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
@@ -109,6 +109,7 @@ pub struct ArticleFields {
     pub title: Option<String>,
     pub description: Option<String>,
     pub pub_date: Option<String>,
+    pub updated_date: Option<String>,
     pub hero_image: Option<HeroImage>,
     pub body: String,
 }
@@ -120,7 +121,31 @@ pub struct EditedFields {
     pub title: Option<String>,
     pub description: Option<String>,
     pub pub_date: Option<String>,
+    // キーが無ければ保存されている値のまま、nullなら外す
+    #[serde(default, deserialize_with = "deserialize_updated_date")]
+    pub updated_date: Option<Option<String>>,
     pub body: String,
+}
+
+// Option<Option<String>>の既定の読み方では、キーが無いときとnullを区別できない
+fn deserialize_updated_date<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateField {
+    PubDate,
+    UpdatedDate,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedDates {
+    pub pub_date: Option<String>,
+    pub updated_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -192,8 +217,13 @@ pub fn validate_slug(slug: &str) -> Result<(), StoreError> {
     }
 }
 
-fn today() -> String {
+pub(crate) fn today() -> String {
     Local::now().date_naive().format(DATE_FORMAT).to_string()
+}
+
+// 日付を除いた内容が同じか。heroImageは保存では替わらないので比べない
+fn same_without_dates(a: &ArticleFields, b: &ArticleFields) -> bool {
+    a.title == b.title && a.description == b.description && a.body == b.body
 }
 
 // `%m`・`%d`は0埋めの無い`2026-5-1`も通すので、書き戻して元と同じかで確かめる
@@ -651,7 +681,12 @@ impl Store {
         Ok((dir, ext))
     }
 
-    pub fn save_article(&self, slug: &str, fields: EditedFields) -> Result<(), StoreError> {
+    pub fn save_article(
+        &self,
+        slug: &str,
+        fields: EditedFields,
+        auto: Option<(DateField, &str)>,
+    ) -> Result<SavedDates, StoreError> {
         validate_slug(slug)?;
         let _guard = self.lock_guard();
         let md = self.md_path(slug);
@@ -666,24 +701,53 @@ impl Store {
         // 開いたときに読めなかった項目は保存の時点で消費されていることがあるので、
         // Noneの項目は読み直して読めた値で補う。heroImageは取り込みと外す操作で書き換わるので、いつも読み直した値を使う
         let original = self.read_article(slug)?;
-        let fields = ArticleFields {
-            title: fields.title.or(original.fields.title),
-            description: fields.description.or(original.fields.description),
-            pub_date: fields.pub_date.or(original.fields.pub_date),
-            hero_image: original.fields.hero_image,
+        // 画面から送られた日付は、自動で替えない
+        let sent_pub = fields.pub_date.is_some();
+        let sent_updated = fields.updated_date.is_some();
+        let mut fields = ArticleFields {
+            title: fields.title.or_else(|| original.fields.title.clone()),
+            description: fields
+                .description
+                .or_else(|| original.fields.description.clone()),
+            pub_date: fields.pub_date.or_else(|| original.fields.pub_date.clone()),
+            updated_date: fields
+                .updated_date
+                .unwrap_or(original.fields.updated_date.clone()),
+            hero_image: original.fields.hero_image.clone(),
             body: fields.body,
         };
-        if let Some(date) = &fields.pub_date {
+        // 日付を除いた内容が保存されているmdと同じなら、自動でも替えない
+        if let Some((field, date)) = auto {
+            let sent = match field {
+                DateField::PubDate => sent_pub,
+                DateField::UpdatedDate => sent_updated,
+            };
+            if !sent && !same_without_dates(&fields, &original.fields) {
+                match field {
+                    DateField::PubDate => fields.pub_date = Some(date.to_string()),
+                    DateField::UpdatedDate => fields.updated_date = Some(date.to_string()),
+                }
+            }
+        }
+        for date in [&fields.pub_date, &fields.updated_date]
+            .into_iter()
+            .flatten()
+        {
             if !is_valid_date(date) {
                 return Err(StoreError::InvalidDate { date: date.clone() });
             }
         }
+        let saved = SavedDates {
+            pub_date: fields.pub_date.clone(),
+            updated_date: fields.updated_date.clone(),
+        };
         self.write_md(&Article {
             slug: slug.to_string(),
             fields,
             warnings: Vec::new(),
             extra: original.extra,
-        })
+        })?;
+        Ok(saved)
     }
 
     pub fn rename_article(&self, old: &str, new: &str) -> Result<Article, StoreError> {
@@ -1016,6 +1080,10 @@ fn render_md(article: &Article) -> String {
         md.push_str(&format!("pubDate: {pub_date}\n"));
         written.push("pubDate");
     }
+    if let Some(updated_date) = &fields.updated_date {
+        md.push_str(&format!("updatedDate: {updated_date}\n"));
+        written.push("updatedDate");
+    }
     if let Some(hero_image) = &fields.hero_image {
         let path = if hero_image.shared {
             format!("{SHARED_ASSETS_REF}{}", hero_image.name)
@@ -1073,7 +1141,13 @@ pub(crate) struct Entry {
 }
 
 // 既知のkeyの並び。重複の警告がこの並びで出る
-const KNOWN_KEYS: [&str; 4] = ["title", "description", "pubDate", "heroImage"];
+const KNOWN_KEYS: [&str; 5] = [
+    "title",
+    "description",
+    "pubDate",
+    "updatedDate",
+    "heroImage",
+];
 
 const REQUIRED_KEYS: [&str; 3] = ["title", "description", "pubDate"];
 
@@ -1236,6 +1310,10 @@ fn parse_frontmatter(slug: &str, frontmatter: &str, body: &str) -> Article {
                 fields.pub_date = read_string(value).filter(|date| is_valid_date(date));
                 fields.pub_date.is_some()
             }
+            "updatedDate" => {
+                fields.updated_date = read_string(value).filter(|date| is_valid_date(date));
+                fields.updated_date.is_some()
+            }
             "heroImage" => {
                 fields.hero_image = read_string(value).and_then(|path| {
                     image_ref_from(slug, &path).map(|(name, shared)| HeroImage {
@@ -1301,6 +1379,7 @@ mod tests {
 
     fn input(title: &str, pub_date: &str) -> EditedFields {
         EditedFields {
+            updated_date: None,
             title: Some(title.to_string()),
             description: Some(String::new()),
             pub_date: Some(pub_date.to_string()),
@@ -1311,6 +1390,7 @@ mod tests {
     // 読んだ記事を保存の入力にする
     fn edited(article: &Article) -> EditedFields {
         EditedFields {
+            updated_date: None,
             title: article.fields.title.clone(),
             description: article.fields.description.clone(),
             pub_date: article.fields.pub_date.clone(),
@@ -1325,6 +1405,7 @@ mod tests {
                 title: fields.title.clone(),
                 description: fields.description.clone(),
                 pub_date: fields.pub_date.clone(),
+                updated_date: fields.updated_date.clone().flatten(),
                 hero_image: hero_image.map(|name| HeroImage {
                     name: name.to_string(),
                     shared: false,
@@ -1419,9 +1500,12 @@ mod tests {
             title: Some("改行\nとコロン: と\"引用符\"".to_string()),
             description: Some("説明\n2行目: これも".to_string()),
             pub_date: Some("2026-02-14".to_string()),
+            updated_date: None,
             body: "本文1行目\n2行目\n\n最終行".to_string(),
         };
-        store.save_article("roundtrip", original.clone()).unwrap();
+        store
+            .save_article("roundtrip", original.clone(), None)
+            .unwrap();
         // 取り込んだhero.pngは残る
         assert_eq!(
             store.read_article("roundtrip").unwrap(),
@@ -1434,7 +1518,7 @@ mod tests {
         // 元々heroImageの無い記事は、保存でもヒーローの行は書かれない
         store.create_article("no-hero").unwrap();
         let fields = input("t", "2026-01-01");
-        store.save_article("no-hero", fields.clone()).unwrap();
+        store.save_article("no-hero", fields.clone(), None).unwrap();
         assert_eq!(
             store.read_article("no-hero").unwrap(),
             article_of("no-hero", &fields, None)
@@ -1448,13 +1532,13 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("backup-test").unwrap();
         store
-            .save_article("backup-test", input("v2", "2026-03-01"))
+            .save_article("backup-test", input("v2", "2026-03-01"), None)
             .unwrap();
         let backup = fs::read_to_string(store.backup_path("backup-test")).unwrap();
         assert!(backup.contains("title: \"\""));
 
         store
-            .save_article("backup-test", input("v3", "2026-03-02"))
+            .save_article("backup-test", input("v3", "2026-03-02"), None)
             .unwrap();
         let backup = fs::read_to_string(store.backup_path("backup-test")).unwrap();
         assert!(backup.contains("title: \"v2\""));
@@ -1466,7 +1550,7 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("dup").unwrap();
         store
-            .save_article("dup", input("v1", "2026-01-01"))
+            .save_article("dup", input("v1", "2026-01-01"), None)
             .unwrap();
         let before = fs::read_to_string(store.md_path("dup")).unwrap();
         assert!(matches!(
@@ -1536,7 +1620,7 @@ mod tests {
             Err(StoreError::NotFound { .. })
         ));
         assert!(matches!(
-            store.save_article("missing", input("t", "2026-01-01")),
+            store.save_article("missing", input("t", "2026-01-01"), None),
             Err(StoreError::NotFound { .. })
         ));
     }
@@ -1551,7 +1635,7 @@ mod tests {
             ("d-post", "2025-08-09"),
         ] {
             store.create_article(slug).unwrap();
-            store.save_article(slug, input("", date)).unwrap();
+            store.save_article(slug, input("", date), None).unwrap();
         }
 
         // postsの下に記事でないもの、assetsの下にmdの無いディレクトリがあっても、
@@ -1639,7 +1723,7 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("good").unwrap();
         store
-            .save_article("good", input("G", "2026-01-01"))
+            .save_article("good", input("G", "2026-01-01"), None)
             .unwrap();
         store.create_article("unlisted").unwrap();
         // mdを消してもassetsは残る
@@ -1655,7 +1739,7 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("good").unwrap();
         store
-            .save_article("good", input("G", "2026-01-01"))
+            .save_article("good", input("G", "2026-01-01"), None)
             .unwrap();
 
         // UTF-8でないmd
@@ -1698,7 +1782,9 @@ mod tests {
         // 同じ日付ならslug順
         for slug in ["m-post", "n-post"] {
             store.create_article(slug).unwrap();
-            store.save_article(slug, input("", "2026-01-01")).unwrap();
+            store
+                .save_article(slug, input("", "2026-01-01"), None)
+                .unwrap();
         }
 
         let list = store.list_articles().unwrap();
@@ -1729,15 +1815,16 @@ mod tests {
             title: Some("タイトル".to_string()),
             description: Some(String::new()),
             pub_date: Some("2026-04-01".to_string()),
+            updated_date: None,
             body: "![絵](../../assets/old-slug/pic.png)".to_string(),
         };
-        store.save_article("old-slug", first.clone()).unwrap();
+        store.save_article("old-slug", first.clone(), None).unwrap();
         let revised = EditedFields {
             title: Some("改訂".to_string()),
             pub_date: Some("2026-04-02".to_string()),
             ..first
         };
-        store.save_article("old-slug", revised).unwrap();
+        store.save_article("old-slug", revised, None).unwrap();
         let backup = fs::read_to_string(store.backup_path("old-slug")).unwrap();
         assert!(backup.contains("title: \"タイトル\""));
 
@@ -1774,7 +1861,7 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("del-post").unwrap();
         store
-            .save_article("del-post", input("v2", "2026-07-01"))
+            .save_article("del-post", input("v2", "2026-07-01"), None)
             .unwrap();
         fs::write(store.assets_dir("del-post").join("01.png"), [1u8, 2, 3]).unwrap();
         assert!(store.backup_path("del-post").exists());
@@ -1827,7 +1914,9 @@ mod tests {
         let (_tmp, store) = setup();
         for slug in ["a", "a-b"] {
             store.create_article(slug).unwrap();
-            store.save_article(slug, input("t", "2026-01-01")).unwrap();
+            store
+                .save_article(slug, input("t", "2026-01-01"), None)
+                .unwrap();
             assert!(store.backup_path(slug).exists());
         }
 
@@ -1846,12 +1935,12 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("gone").unwrap();
         store
-            .save_article("gone", input("t", "2026-01-01"))
+            .save_article("gone", input("t", "2026-01-01"), None)
             .unwrap();
         store.delete_article("gone").unwrap();
 
         assert!(matches!(
-            store.save_article("gone", input("t", "2026-01-02")),
+            store.save_article("gone", input("t", "2026-01-02"), None),
             Err(StoreError::NotFound { slug }) if slug == "gone"
         ));
         assert!(!store.md_path("gone").exists());
@@ -1884,7 +1973,7 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("from").unwrap();
         store
-            .save_article("from", input("F", "2026-01-01"))
+            .save_article("from", input("F", "2026-01-01"), None)
             .unwrap();
         // mdを外で消して、assetsの空ディレクトリだけ残す
         store.create_article("to").unwrap();
@@ -1901,7 +1990,7 @@ mod tests {
         let (_tmp, store) = setup();
         store.create_article("from").unwrap();
         store
-            .save_article("from", input("F", "2026-01-01"))
+            .save_article("from", input("F", "2026-01-01"), None)
             .unwrap();
         fs::create_dir_all(store.assets_dir("to")).unwrap();
         fs::write(store.assets_dir("to").join("01.png"), [1u8, 2, 3]).unwrap();
@@ -1925,7 +2014,7 @@ mod tests {
             bad_input.pub_date = Some(bad.to_string());
             assert!(
                 matches!(
-                    store.save_article("checks", bad_input),
+                    store.save_article("checks", bad_input, None),
                     Err(StoreError::InvalidDate { date }) if date == bad
                 ),
                 "{bad} は不正な日付のはず"
@@ -1994,7 +2083,7 @@ mod tests {
     fn フロントマターの無い記事は本文だけ直して保存しても本文が変わらない() {
         let (_tmp, store) = setup();
         let article = md_article(&store, "no-fm", "本文です\n");
-        store.save_article("no-fm", edited(&article)).unwrap();
+        store.save_article("no-fm", edited(&article), None).unwrap();
         let read = store.read_article("no-fm").unwrap();
         assert_eq!(read.fields.body, "本文です\n");
         assert!(read.extra.is_empty());
@@ -2239,6 +2328,7 @@ mod tests {
                 "title": "タイトル",
                 "description": "",
                 "pubDate": "2026-01-01",
+                "updatedDate": null,
                 "heroImage": null,
                 "body": "",
                 "warnings": [],
@@ -2255,6 +2345,7 @@ mod tests {
         assert_eq!(
             fields,
             EditedFields {
+                updated_date: None,
                 title: Some("タイトル".to_string()),
                 description: Some("説明".to_string()),
                 pub_date: Some("2026-01-01".to_string()),
@@ -2292,7 +2383,7 @@ mod tests {
         store.create_article("first").unwrap();
         store.create_article("second").unwrap();
         store
-            .save_article("first", input("F", "2026-01-01"))
+            .save_article("first", input("F", "2026-01-01"), None)
             .unwrap();
         assert!(matches!(
             store.rename_article("first", "second"),
@@ -2308,7 +2399,7 @@ mod tests {
         store.create_article("a").unwrap();
         let mut fields = input("", "2026-01-01");
         fields.body = "![絵](../../assets/a-b/x.png)".to_string();
-        store.save_article("a", fields).unwrap();
+        store.save_article("a", fields, None).unwrap();
 
         store.rename_article("a", "b").unwrap();
         let read = store.read_article("b").unwrap();
@@ -2505,7 +2596,7 @@ mod tests {
             store.import_hero_image("swap", &jpeg()).unwrap(),
             "hero.jpg"
         );
-        store.save_article("swap", edited(&opened)).unwrap();
+        store.save_article("swap", edited(&opened), None).unwrap();
 
         let read = store.read_article("swap").unwrap();
         assert_eq!(
@@ -2571,7 +2662,9 @@ mod tests {
         );
         let opened = store.read_article("keep-rest").unwrap();
         store.remove_hero_image("keep-rest").unwrap();
-        store.save_article("keep-rest", edited(&opened)).unwrap();
+        store
+            .save_article("keep-rest", edited(&opened), None)
+            .unwrap();
 
         assert_eq!(
             fs::read_to_string(store.md_path("keep-rest")).unwrap(),
@@ -2677,9 +2770,11 @@ mod tests {
             .save_article(
                 "keep",
                 EditedFields {
+                    updated_date: None,
                     pub_date: None,
                     ..edited(&article)
                 },
+                None,
             )
             .unwrap();
         assert_eq!(fs::read_to_string(store.md_path("keep")).unwrap(), content);
@@ -2694,9 +2789,11 @@ mod tests {
             .save_article(
                 "keep",
                 EditedFields {
+                    updated_date: None,
                     pub_date: Some("2026-05-01".to_string()),
                     ..edited(&article)
                 },
+                None,
             )
             .unwrap();
         assert_eq!(
@@ -2714,7 +2811,9 @@ mod tests {
         let article = md_article(&store, "keep-extras", content);
         assert_eq!(extra_md(&article), "tags:\n  - a\n  - b\nnote: めも");
 
-        store.save_article("keep-extras", edited(&article)).unwrap();
+        store
+            .save_article("keep-extras", edited(&article), None)
+            .unwrap();
         assert_eq!(
             fs::read_to_string(store.md_path("keep-extras")).unwrap(),
             content
@@ -2780,7 +2879,7 @@ mod tests {
         let (tmp, store) = setup();
         store.create_article("post").unwrap();
         store
-            .save_article("post", input("タイトル", "2026-01-01"))
+            .save_article("post", input("タイトル", "2026-01-01"), None)
             .unwrap();
         store.import_body_image("post", &jpeg()).unwrap();
         store.import_body_image("post", &png()).unwrap();
@@ -2890,10 +2989,10 @@ mod tests {
         let (tmp, store) = setup();
         store.create_article("post").unwrap();
         store
-            .save_article("post", input("v2", "2026-01-01"))
+            .save_article("post", input("v2", "2026-01-01"), None)
             .unwrap();
         store
-            .save_article("post", input("v3", "2026-01-02"))
+            .save_article("post", input("v3", "2026-01-02"), None)
             .unwrap();
         assert!(store.backup_path("post").exists());
 
@@ -2917,7 +3016,9 @@ mod tests {
         // 保存までに外のエディタがmdを読める値に直す
         let fixed = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
         fs::write(store.md_path("late-fix"), fixed).unwrap();
-        store.save_article("late-fix", edited(&article)).unwrap();
+        store
+            .save_article("late-fix", edited(&article), None)
+            .unwrap();
         assert_eq!(
             fs::read_to_string(store.md_path("late-fix")).unwrap(),
             fixed
@@ -2934,7 +3035,9 @@ mod tests {
         assert_eq!(warn_messages(&article.warnings), ["titleが重複しています"]);
 
         // Noneのままの保存は2行とも残す。読めなかった項目は書かないので、書かれる順はextraの並びになる
-        store.save_article("dup-title", edited(&article)).unwrap();
+        store
+            .save_article("dup-title", edited(&article), None)
+            .unwrap();
         assert_eq!(
             fs::read_to_string(store.md_path("dup-title")).unwrap(),
             "---\ndescription: \"\"\npubDate: 2026-01-01\ntitle: \"t\"\ntitle: \"t2\"\n---\n本文\n"
@@ -2945,9 +3048,11 @@ mod tests {
             .save_article(
                 "dup-title",
                 EditedFields {
+                    updated_date: None,
                     title: Some("t3".to_string()),
                     ..edited(&article)
                 },
+                None,
             )
             .unwrap();
         let md = fs::read_to_string(store.md_path("dup-title")).unwrap();
@@ -3169,6 +3274,7 @@ mod tests {
                 "title": null,
                 "description": null,
                 "pubDate": null,
+                "updatedDate": null,
                 "heroImage": null,
                 "body": "",
                 "warnings": [
@@ -3277,14 +3383,14 @@ mod tests {
 
         store_a.create_article("same").unwrap();
         store_a
-            .save_article("same", input("a", "2026-01-01"))
+            .save_article("same", input("a", "2026-01-01"), None)
             .unwrap();
         store_b.create_article("same").unwrap();
         store_b
-            .save_article("same", input("b", "2026-01-01"))
+            .save_article("same", input("b", "2026-01-01"), None)
             .unwrap();
         store_b
-            .save_article("same", input("b2", "2026-01-02"))
+            .save_article("same", input("b2", "2026-01-02"), None)
             .unwrap();
 
         // それぞれ別のディレクトリに、上書き前の内容が残る
@@ -3306,7 +3412,7 @@ mod tests {
         // bでrenameしてもaのバックアップは残る
         store_b.create_article("same").unwrap();
         store_b
-            .save_article("same", input("b2", "2026-01-01"))
+            .save_article("same", input("b2", "2026-01-01"), None)
             .unwrap();
         store_b.rename_article("same", "renamed").unwrap();
         assert!(store_b.backup_path("renamed").exists());
@@ -3392,7 +3498,7 @@ mod tests {
         let article = md_article(&store, "post", SHARED_HERO_MD);
         let mut fields = edited(&article);
         fields.title = Some("新しいタイトル".to_string());
-        store.save_article("post", fields).unwrap();
+        store.save_article("post", fields, None).unwrap();
 
         let md = fs::read_to_string(store.md_path("post")).unwrap();
         assert!(md.contains("heroImage: \"../../assets/blog-placeholder-3.jpg\""));
@@ -3556,5 +3662,350 @@ mod tests {
                 "src/assets/post/01.png".to_string(),
             ]
         );
+    }
+
+    // updatedDate ----------------------------------------------------------------
+
+    // 読んだ記事の保存の入力。日付は送るものだけを指定する(Noneなら送らない)
+    fn with_dates(
+        article: &Article,
+        pub_date: Option<&str>,
+        updated_date: Option<Option<&str>>,
+    ) -> EditedFields {
+        EditedFields {
+            pub_date: pub_date.map(str::to_string),
+            updated_date: updated_date.map(|date| date.map(str::to_string)),
+            ..edited(article)
+        }
+    }
+
+    #[test]
+    fn updatedDateを読み書きする() {
+        let (_tmp, store) = setup();
+        let article = md_article(
+            &store,
+            "updated",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nupdatedDate: 2026-01-02\nheroImage: \"../../assets/updated/hero.png\"\n---\n本文\n",
+        );
+        assert_eq!(article.fields.updated_date.as_deref(), Some("2026-01-02"));
+        assert!(article.warnings.is_empty());
+
+        store
+            .save_article(
+                "updated",
+                with_dates(&article, None, Some(Some("2026-01-02"))),
+                None,
+            )
+            .unwrap();
+        let md = fs::read_to_string(store.md_path("updated")).unwrap();
+        let pub_at = md.find("pubDate: ").expect("pubDateの行があるはず");
+        let updated_at = md.find("updatedDate: ").expect("updatedDateの行があるはず");
+        let hero_at = md.find("heroImage: ").expect("heroImageの行があるはず");
+        assert!(pub_at < updated_at && updated_at < hero_at, "{md}");
+    }
+
+    #[test]
+    fn 読めないupdatedDateは警告にして元の行のまま残す() {
+        let (_tmp, store) = setup();
+        for (slug, value) in [("quoted", "'Jul 08 2022'"), ("invalid-day", "2026-02-30")] {
+            let line = format!("updatedDate: {value}");
+            let content =
+                format!("---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n{line}\n---\n");
+            let article = md_article(&store, slug, &content);
+            assert_eq!(article.fields.updated_date, None);
+            let message = format!("updatedDateを読めません: {value}");
+            assert_eq!(
+                warn_messages(&article.warnings),
+                [message.as_str()],
+                "{slug}"
+            );
+            assert_eq!(extra_md(&article), line);
+
+            store.save_article(slug, edited(&article), None).unwrap();
+            assert!(
+                fs::read_to_string(store.md_path(slug))
+                    .unwrap()
+                    .contains(&line),
+                "{slug}"
+            );
+        }
+
+        let article = md_article(
+            &store,
+            "duplicated",
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nupdatedDate: 2026-01-01\nupdatedDate: 2026-01-02\n---\n",
+        );
+        assert_eq!(article.fields.updated_date, None);
+        assert_eq!(
+            warn_messages(&article.warnings),
+            ["updatedDateが重複しています"]
+        );
+        assert!(extra_md(&article).contains("updatedDate: 2026-01-01"));
+        assert!(extra_md(&article).contains("updatedDate: 2026-01-02"));
+    }
+
+    #[test]
+    fn 保存のupdatedDateは無いキーなら残しnullなら外す() {
+        let (_tmp, store) = setup();
+        store.create_article("dates").unwrap();
+        let article = with_dates(
+            &store.read_article("dates").unwrap(),
+            None,
+            Some(Some("2026-01-02")),
+        );
+        store.save_article("dates", article, None).unwrap();
+        let article = store.read_article("dates").unwrap();
+        assert_eq!(article.fields.updated_date.as_deref(), Some("2026-01-02"));
+
+        // キーが無い(送っていない)保存では、保存されている値のまま
+        let saved = store
+            .save_article("dates", with_dates(&article, None, None), None)
+            .unwrap();
+        assert_eq!(saved.updated_date.as_deref(), Some("2026-01-02"));
+        assert_eq!(
+            store
+                .read_article("dates")
+                .unwrap()
+                .fields
+                .updated_date
+                .as_deref(),
+            Some("2026-01-02")
+        );
+
+        // nullなら行が消える
+        let saved = store
+            .save_article("dates", with_dates(&article, None, Some(None)), None)
+            .unwrap();
+        assert_eq!(saved.updated_date, None);
+        assert_eq!(
+            store.read_article("dates").unwrap().fields.updated_date,
+            None
+        );
+        assert!(!fs::read_to_string(store.md_path("dates"))
+            .unwrap()
+            .contains("updatedDate"));
+
+        // 不正な日付は失敗する
+        assert!(matches!(
+            store.save_article("dates", with_dates(&article, None, Some(Some("2026-02-30"))), None),
+            Err(StoreError::InvalidDate { date }) if date == "2026-02-30"
+        ));
+    }
+
+    #[test]
+    fn 保存のedited_fieldsはupdatedDateのキーの有無を区別する() {
+        let fields =
+            |json: serde_json::Value| -> EditedFields { serde_json::from_value(json).unwrap() };
+
+        assert_eq!(
+            fields(serde_json::json!({
+                "title": "t",
+                "description": "",
+                "pubDate": "2026-01-01",
+                "body": "本文",
+            }))
+            .updated_date,
+            None
+        );
+        assert_eq!(
+            fields(serde_json::json!({
+                "title": "t",
+                "description": "",
+                "pubDate": "2026-01-01",
+                "updatedDate": null,
+                "body": "本文",
+            }))
+            .updated_date,
+            Some(None)
+        );
+        assert_eq!(
+            fields(serde_json::json!({
+                "title": "t",
+                "description": "",
+                "pubDate": "2026-01-01",
+                "updatedDate": "2026-01-02",
+                "body": "本文",
+            }))
+            .updated_date,
+            Some(Some("2026-01-02".to_string()))
+        );
+    }
+
+    #[test]
+    fn 保存のpubDateがnoneなら保存されている値のまま() {
+        let (_tmp, store) = setup();
+        store.create_article("keep-pub").unwrap();
+        let article = with_dates(
+            &store.read_article("keep-pub").unwrap(),
+            Some("2026-01-01"),
+            None,
+        );
+        store.save_article("keep-pub", article, None).unwrap();
+
+        let mut fields = with_dates(&store.read_article("keep-pub").unwrap(), None, None);
+        fields.body = "新しい本文".to_string();
+        store.save_article("keep-pub", fields, None).unwrap();
+        let article = store.read_article("keep-pub").unwrap();
+        assert_eq!(article.fields.pub_date.as_deref(), Some("2026-01-01"));
+        assert_eq!(article.fields.body, "新しい本文");
+    }
+
+    #[test]
+    fn autoのpubDateは本文が変わっていれば今日になる() {
+        let (_tmp, store) = setup();
+        store.create_article("auto-pub").unwrap();
+        let mut fields = with_dates(&store.read_article("auto-pub").unwrap(), None, None);
+        fields.body = "新しい本文".to_string();
+
+        let saved = store
+            .save_article("auto-pub", fields, Some((DateField::PubDate, "2026-05-01")))
+            .unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-05-01"));
+        assert_eq!(
+            store
+                .read_article("auto-pub")
+                .unwrap()
+                .fields
+                .pub_date
+                .as_deref(),
+            Some("2026-05-01")
+        );
+    }
+
+    #[test]
+    fn autoのupdatedDateは行の無い記事にも足される() {
+        let (_tmp, store) = setup();
+        store.create_article("auto-updated").unwrap();
+        let mut fields = with_dates(&store.read_article("auto-updated").unwrap(), None, None);
+        fields.body = "新しい本文".to_string();
+        assert!(fields.updated_date.is_none());
+
+        let saved = store
+            .save_article(
+                "auto-updated",
+                fields,
+                Some((DateField::UpdatedDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.updated_date.as_deref(), Some("2026-05-01"));
+        let article = store.read_article("auto-updated").unwrap();
+        assert_eq!(article.fields.updated_date.as_deref(), Some("2026-05-01"));
+        assert!(fs::read_to_string(store.md_path("auto-updated"))
+            .unwrap()
+            .contains("updatedDate: 2026-05-01"));
+    }
+
+    #[test]
+    fn 日付を除いた内容が同じならautoでも日付は替えない() {
+        let (_tmp, store) = setup();
+        let content =
+            "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\nx-note: めも\n---\n本文\n";
+        let article = md_article(&store, "same-content", content);
+        // 日付も本文も変えない保存
+        let saved = store
+            .save_article(
+                "same-content",
+                with_dates(&article, None, None),
+                Some((DateField::PubDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-01-01"));
+        assert_eq!(
+            fs::read_to_string(store.md_path("same-content")).unwrap(),
+            content
+        );
+
+        // 手でpubDateだけ変えた保存では、autoのupdatedDateは替わらない
+        let article = md_article(&store, "manual-pub", content);
+        let saved = store
+            .save_article(
+                "manual-pub",
+                with_dates(&article, Some("2026-03-03"), None),
+                Some((DateField::UpdatedDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-03-03"));
+        assert_eq!(saved.updated_date, None);
+
+        // 手でupdatedDateだけ変えた保存では、autoのpubDateは替わらない
+        let article = md_article(&store, "manual-updated", content);
+        let saved = store
+            .save_article(
+                "manual-updated",
+                with_dates(&article, None, Some(Some("2026-03-03"))),
+                Some((DateField::PubDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-01-01"));
+        assert_eq!(saved.updated_date.as_deref(), Some("2026-03-03"));
+    }
+
+    #[test]
+    fn autoと同じ日付を送っていれば送った値になる() {
+        let (_tmp, store) = setup();
+        let content = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
+        let article = md_article(&store, "sent-pub", content);
+        let saved = store
+            .save_article(
+                "sent-pub",
+                with_dates(&article, Some("2026-03-03"), None),
+                Some((DateField::PubDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-03-03"));
+        assert_eq!(
+            store
+                .read_article("sent-pub")
+                .unwrap()
+                .fields
+                .pub_date
+                .as_deref(),
+            Some("2026-03-03")
+        );
+    }
+
+    #[test]
+    fn autoと同じupdatedDateを送っていれば送った値になる() {
+        let (_tmp, store) = setup();
+        let content = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
+        let article = md_article(&store, "sent-updated", content);
+        let mut fields = with_dates(&article, None, Some(Some("2026-03-03")));
+        fields.body = "新しい本文".to_string();
+        let saved = store
+            .save_article(
+                "sent-updated",
+                fields,
+                Some((DateField::UpdatedDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.updated_date.as_deref(), Some("2026-03-03"));
+
+        // 外したときも、足されない
+        let article = store.read_article("sent-updated").unwrap();
+        let mut fields = with_dates(&article, None, Some(None));
+        fields.body = "また新しい本文".to_string();
+        let saved = store
+            .save_article(
+                "sent-updated",
+                fields,
+                Some((DateField::UpdatedDate, "2026-05-01")),
+            )
+            .unwrap();
+        assert_eq!(saved.updated_date, None);
+    }
+
+    #[test]
+    fn autoがnoneなら本文が変わっても日付は替えない() {
+        let (_tmp, store) = setup();
+        let content = "---\ntitle: \"t\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n本文\n";
+        let article = md_article(&store, "local-only", content);
+        let mut fields = with_dates(&article, None, None);
+        fields.body = "新しい本文".to_string();
+        let saved = store.save_article("local-only", fields, None).unwrap();
+        assert_eq!(saved.pub_date.as_deref(), Some("2026-01-01"));
+        assert_eq!(saved.updated_date, None);
+        let article = store.read_article("local-only").unwrap();
+        assert_eq!(article.fields.pub_date.as_deref(), Some("2026-01-01"));
+        assert_eq!(article.fields.updated_date, None);
     }
 }

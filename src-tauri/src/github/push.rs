@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 
 use super::config;
+use super::dates;
 use super::git::{self, NewTreeEntry};
 use super::remote;
 use super::state::{self, ArticleFiles, AssetRecord, Basis, BranchSnapshot, LocalBodies, Record};
@@ -776,7 +778,7 @@ pub fn commit_push(
     if let Some(old_slug) = renamed_from {
         let record = record.expect("renamed_from is only on a record");
         if record.branch.is_none() {
-            return push_renamed_from_base(
+            let result = push_renamed_from_base(
                 input,
                 RenamedPush {
                     slug,
@@ -788,7 +790,9 @@ pub fn commit_push(
                     overwrite,
                 },
                 progress,
-            );
+            )?;
+            clear_sent_updated_mark(input, slug, &md.1);
+            return Ok(result);
         }
         let old_branch = record.branch.as_deref().ok_or(GithubError::BranchGone)?;
         // 元の記事を移したブランチなら、その元のslugを新しいブランチにも書く
@@ -911,6 +915,7 @@ pub fn commit_push(
                 result.kept_branch = Some(old_branch.to_string());
             }
         }
+        clear_sent_updated_mark(input, slug, &md.1);
         return Ok(result);
     }
 
@@ -1005,6 +1010,7 @@ pub fn commit_push(
                     kept_branch: None,
                 };
                 save_pushed(input, slug, &result, merged, &diff, &md, None, &state_path)?;
+                clear_sent_updated_mark(input, slug, &md.1);
                 return Ok(result);
             }
             Err(error @ GithubError::Status { status: 422 | 404 }) if recorded_branch => {
@@ -1034,6 +1040,25 @@ pub fn commit_push(
             }
             Err(error) => return Err(error),
         }
+    }
+}
+
+// 送ったmdがまだ手元にあるときだけ、updatedDateの印を外す。送っている間に保存されていれば残す
+fn clear_sent_updated_mark(input: &SyncInput<'_>, slug: &str, sent: &[u8]) {
+    let path = dates::marks_path(input.data_dir, input.repo);
+    if let Err(error) = dates::clear_updated_mark_if(&path, slug, || {
+        input.store.with_lock(|posts_dir, _| {
+            let md = posts_dir.join(format!("{slug}.md"));
+            match fs::read(&md) {
+                Ok(current) => current == sent,
+                Err(error) => {
+                    eprintln!("Failed to read {} after pushing it: {error}", md.display());
+                    false
+                }
+            }
+        })
+    }) {
+        eprintln!("Failed to clear the updatedDate mark of {slug}: {error}");
     }
 }
 
@@ -1130,7 +1155,13 @@ pub fn pull(
         record.applying = None;
         state::write_state(&state_path, &state)?;
         Ok(())
-    })
+    })?;
+    if let Err(error) =
+        dates::clear_updated_mark(&dates::marks_path(input.data_dir, input.repo), slug)
+    {
+        eprintln!("Failed to clear the updatedDate mark of {slug}: {error}");
+    }
+    Ok(())
 }
 
 // まだ無いバックアップのディレクトリ。同じ名前があれば{backup_name}-2、-3…を探す
@@ -1153,6 +1184,7 @@ fn backup_dir(input: &SyncInput<'_>, backup_name: &str) -> Result<PathBuf, Githu
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::path::PathBuf;
@@ -1163,6 +1195,7 @@ mod tests {
 
     use super::*;
     use crate::github::config::{github_posts_dir, RepoRef};
+    use crate::github::dates;
     use crate::github::fake::{
         b64_decode, blob_sha, json_response, read_only_dir, repo_ref, url_of, FakeRepo,
         RouteTransport,
@@ -4134,5 +4167,92 @@ mod tests {
             .requests()
             .iter()
             .all(|request| request.method == Method::Get));
+    }
+
+    // 日付の印 -------------------------------------------------------------------
+
+    fn updated_mark(path: &std::path::Path, slug: &str) -> bool {
+        dates::read_marks(path)
+            .unwrap()
+            .articles
+            .get(slug)
+            .is_some_and(|marks| marks.updated_date)
+    }
+
+    fn marks_of(entries: &[(&str, bool, bool)]) -> dates::Marks {
+        let mut marks = dates::Marks::default();
+        for (slug, pub_date, updated_date) in entries {
+            marks.articles.insert(
+                (*slug).to_string(),
+                dates::DateMarks {
+                    pub_date: *pub_date,
+                    updated_date: *updated_date,
+                },
+            );
+        }
+        marks
+    }
+
+    #[test]
+    fn Commit_and_Pushの成功でupdatedDateの印が外れる() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        dates::write_marks(&path, &marks_of(&[(SLUG, false, true)])).unwrap();
+
+        test.write_md(A_LOCAL);
+        repo.accept_writes(&test.transport);
+        test.commit_push(SLUG, "更新", None).unwrap();
+
+        assert!(!updated_mark(&path, SLUG));
+    }
+
+    #[test]
+    fn Commit_and_Pushが失敗したらupdatedDateの印は残る() {
+        let test = PushTest::new();
+        test.article_synced();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        dates::write_marks(&path, &marks_of(&[(SLUG, false, true)])).unwrap();
+
+        // 手元に変更が無いので送らない
+        assert!(matches!(
+            test.commit_push(SLUG, "更新", None),
+            Err(GithubError::NothingToCommit)
+        ));
+
+        assert!(updated_mark(&path, SLUG));
+    }
+
+    #[test]
+    fn 送った後に手元のmdが変わっていればupdatedDateの印は残る() {
+        let test = PushTest::new();
+        let repo = test.article_synced();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        dates::write_marks(&path, &marks_of(&[(SLUG, false, true)])).unwrap();
+
+        test.write_md(A_LOCAL);
+        repo.accept_writes(&test.transport);
+        // 送っている間に手元を保存したことにする
+        let changed = Cell::new(false);
+        let result = commit_push(&test.input(), SLUG, "更新", None, &|_| {
+            if !changed.replace(true) {
+                test.write_md(b"---\ntitle: \"A\"\n---\nX-a\nX-b\nline-c\nline-d\nline-e\nZ-g\n");
+            }
+        });
+        result.unwrap();
+
+        assert!(updated_mark(&path, SLUG));
+    }
+
+    #[test]
+    fn PullでupdatedDateの印が外れる() {
+        let test = PushTest::new();
+        let (_repo, _head) = test.branch_synced();
+        let path = dates::marks_path(&test.data_dir, &test.repo_of);
+        dates::write_marks(&path, &marks_of(&[(SLUG, false, true)])).unwrap();
+
+        test.pull(SLUG, None, BACKUP_NAME).unwrap();
+
+        assert!(!updated_mark(&path, SLUG));
     }
 }

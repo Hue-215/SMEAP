@@ -54,13 +54,29 @@ export interface Article {
   title: string | null
   description: string | null
   pubDate: string | null
+  updatedDate: string | null
   heroImage: HeroImage | null
   body: string
   warnings: Warning[]
 }
 
-// heroImageはimportHeroImageが書き換えるので、保存では渡さない
-export type EditedFields = Omit<Article, 'slug' | 'warnings' | 'heroImage'>
+// heroImageはimportHeroImageが書き換えるので、保存では渡さない。
+// updatedDateは、キーを送らなければ保存されている値のまま、nullなら外す
+export type EditedFields = Omit<Article, 'slug' | 'warnings' | 'heroImage' | 'updatedDate'> & {
+  updatedDate?: string | null
+}
+
+// Rust側のSavedDates(src-tauri/src/store.rs)とそろえる
+export interface SavedDates {
+  pubDate: string | null
+  updatedDate: string | null
+}
+
+// Rust側のFrontmatterSettings(src-tauri/src/settings.rs)とそろえる
+export interface FrontmatterSettings {
+  heroImage: boolean
+  updatedDate: boolean
+}
 
 export function listArticles(): Promise<ArticleList> {
   return invoke<ArticleList>('list_articles')
@@ -70,8 +86,8 @@ export function readArticle(slug: string): Promise<Article> {
   return invoke<Article>('read_article', { slug })
 }
 
-export function saveArticle(slug: string, fields: EditedFields): Promise<void> {
-  return invoke('save_article', { slug, fields })
+export function saveArticle(slug: string, fields: EditedFields): Promise<SavedDates> {
+  return invoke<SavedDates>('save_article', { slug, fields })
 }
 
 export function createArticle(slug: string): Promise<Article> {
@@ -137,6 +153,14 @@ export function getPostsDirName(): Promise<string> {
 // Androidだけ呼べる
 export function setPostsDirName(name: string): Promise<void> {
   return invoke('set_posts_dir_name', { name })
+}
+
+export function getFrontmatterSettings(): Promise<FrontmatterSettings> {
+  return invoke<FrontmatterSettings>('get_frontmatter_settings')
+}
+
+export function setFrontmatterSettings(frontmatter: FrontmatterSettings): Promise<void> {
+  return invoke('set_frontmatter_settings', { frontmatter })
 }
 
 // Rust側のExportOutcome(src-tauri/src/export.rs)とそろえる

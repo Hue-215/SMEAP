@@ -19,7 +19,9 @@ import {
   removeHeroImage,
   type Article,
   type EditedFields,
+  type FrontmatterSettings,
   type HeroImage,
+  type SavedDates,
   type StoreError,
   type Warning,
 } from './api'
@@ -29,6 +31,13 @@ import Editor from './Editor'
 import { insertImageRefs, insertLink } from './editor'
 import { t } from './i18n'
 import { isAndroid } from './platform'
+import {
+  DateEdits,
+  applySavedDates,
+  datesToSend,
+  visibleWarnings,
+  type DateKey,
+} from './savedDates'
 import {
   findMatches,
   findNextMatch,
@@ -59,12 +68,13 @@ export interface ArticleEditorHandle {
 interface ArticleEditorProps {
   // 開いたときの内容。記事を切り替えたら、keyで作り直す
   article: Article
+  frontmatter: FrontmatterSettings
   // trueの間は決まった間隔での保存をしない
   paused: boolean
   // 削除予定の記事は入力できない
   readOnly: boolean
   onSaveStatus: (status: SaveStatus) => void
-  onSaved: (fields: EditedFields) => void
+  onSaved: (fields: EditedFields, dates: SavedDates) => void
   // エラーとして出す文言
   onNotice: (text: string) => void
   // 本文・選択・検索の文字が変わり、進み具合が前と違うときに知らせる
@@ -72,8 +82,15 @@ interface ArticleEditorProps {
   ref: Ref<ArticleEditorHandle>
 }
 
-type HeaderFields = Omit<EditedFields, 'body'>
+type HeaderFields = {
+  title: string | null
+  description: string | null
+  pubDate: string | null
+  updatedDate: string | null
+}
 type HeaderKey = keyof HeaderFields
+
+const DATE_KEYS: DateKey[] = ['pubDate', 'updatedDate']
 
 // runは本文に入れる参照を返す。クリップボードに画像が無ければnull
 interface ImageImport {
@@ -126,17 +143,10 @@ async function importImages(
   else if (unsupported > 0) onNotice(t('article_editor.images_unsupported', { count: unsupported }))
 }
 
-function readFields(
-  latest: RefObject<HeaderFields>,
-  view: RefObject<EditorView | null>,
-): EditedFields {
-  if (!view.current) throw new Error('The body editor is missing')
-  return { ...latest.current, body: view.current.state.doc.toString() }
-}
-
 // 開いている記事の入力欄と、その自動保存。
 export default function ArticleEditor({
   article,
+  frontmatter,
   paused,
   readOnly,
   onSaveStatus,
@@ -149,6 +159,7 @@ export default function ArticleEditor({
     title: article.title,
     description: article.description,
     pubDate: article.pubDate,
+    updatedDate: article.updatedDate,
   }))
   // サムネイルの表示。保存の入力には含まれないので、fieldsとは別に持つ
   const [hero, setHero] = useState<{ image: HeroImage | null; version: number }>({
@@ -167,13 +178,38 @@ export default function ArticleEditor({
     readOnlyRef.current = readOnly
   })
   const [saver] = useState(() => new AutoSaver(article.slug))
+  // 手で変えた日付と、保存を頼んだときに送った日付
+  const [dateEdits] = useState(() => new DateEdits())
+  const takes = useRef(new WeakMap<EditedFields, DateKey[]>())
 
   // 前の記事の保存の状態が見えないよう、描く前に知らせる
   useLayoutEffect(() => {
     saver.attach({
-      read: () => readFields(latest, view),
+      read: () => {
+        if (!view.current) throw new Error('The body editor is missing')
+        const taken = dateEdits.take()
+        const dates = datesToSend(latest.current, taken)
+        const fields: EditedFields = {
+          title: latest.current.title,
+          description: latest.current.description,
+          // 送らない日付のpubDateはnullにする(キーが無いのと同じ扱いになる)
+          pubDate: dates.pubDate ?? null,
+          body: view.current.state.doc.toString(),
+        }
+        if (dates.updatedDate !== undefined) fields.updatedDate = dates.updatedDate
+        takes.current.set(fields, taken)
+        return fields
+      },
       onStatus: (status) => callbacks.current.onSaveStatus(status),
-      onSaved: (fields) => callbacks.current.onSaved(fields),
+      onSaved: (fields, dates) => {
+        const taken = takes.current.get(fields) ?? []
+        takes.current.delete(fields)
+        const changed = DATE_KEYS.filter((key) => dateEdits.changedSince(taken, key))
+        dateEdits.saved(taken)
+        latest.current = { ...latest.current, ...applySavedDates(latest.current, dates, changed) }
+        setFields(latest.current)
+        callbacks.current.onSaved(fields, dates)
+      },
     })
     // Androidでは、裏へ回したアプリが知らせなく終了されることがある。確認のダイアログを出している間も保存する
     const onVisibilityChange = () => {
@@ -184,7 +220,7 @@ export default function ArticleEditor({
       document.removeEventListener('visibilitychange', onVisibilityChange)
       saver.detach()
     }
-  }, [saver])
+  }, [saver, dateEdits])
 
   useEffect(() => saver.setPaused(paused || readOnly), [saver, paused, readOnly])
 
@@ -333,6 +369,9 @@ export default function ArticleEditor({
 
   const updateFields = (patch: FieldsPatch) => {
     const changes = Object.entries(patch) as Array<[HeaderKey, string | null]>
+    for (const [key] of changes) {
+      if (key === 'pubDate' || key === 'updatedDate') dateEdits.edit(key)
+    }
     if (changes.some(([key, value]) => value !== article[key])) {
       setEdited((keys) => {
         const next = new Set(keys)
@@ -345,7 +384,7 @@ export default function ArticleEditor({
     saver.changed()
   }
 
-  const warnings = article.warnings.filter((warning: Warning) => {
+  const warnings = visibleWarnings(article.warnings, frontmatter).filter((warning: Warning) => {
     // heroImageの警告は、サムネイルを取り込むか外したら出さない(どちらもmdの行を書き直す)
     if (warning.key === 'heroImage' && hero.version > 0) return false
     return warning.key === null || !edited.has(warning.key as HeaderKey)
@@ -357,6 +396,7 @@ export default function ArticleEditor({
         fields={fields}
         warnings={warnings}
         onChange={updateFields}
+        frontmatter={frontmatter}
         hero={
           hero.image === null
             ? null

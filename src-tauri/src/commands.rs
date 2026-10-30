@@ -8,7 +8,7 @@ use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, State};
 
 use crate::clipboard;
-use crate::store::{self, Article, ArticleList, EditedFields, Store, StoreError};
+use crate::store::{self, Article, ArticleList, EditedFields, SavedDates, Store, StoreError};
 
 #[tauri::command]
 pub fn validate_slug(slug: String) -> Result<(), StoreError> {
@@ -37,11 +37,12 @@ pub fn read_article(store: State<'_, Store>, slug: String) -> Result<Article, St
 
 #[tauri::command(async)]
 pub fn save_article(
+    app: AppHandle,
     store: State<'_, Store>,
     slug: String,
     fields: EditedFields,
-) -> Result<(), StoreError> {
-    store.save_article(&slug, fields)
+) -> Result<SavedDates, crate::github::commands::CommandError> {
+    crate::github::commands::save_article(&app, &store, &slug, fields)
 }
 
 #[tauri::command(async)]

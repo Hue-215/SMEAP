@@ -164,7 +164,7 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   line-height: 1.6;
 }
 
-/* 記事のタイトル・説明・サムネイル・公開日(ArticleHeader.tsx)。サムネイルはタイトルと説明の右に置く。 */
+/* 記事のタイトル・説明・サムネイル・公開日・更新日(ArticleHeader.tsx)。サムネイルはタイトルと説明の右に置く。 */
 .article-head {
   display: flex;
   align-items: center;
@@ -1037,6 +1037,15 @@ button:not(:disabled, [aria-disabled='true'], [type='submit'], .primary):active 
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+}
+
+/* フロントマターの節(Settings.tsx)のチェックボックス。 */
+.settings-check {
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--color-accent);
 }
 
 .settings-filter {
