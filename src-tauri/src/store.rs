@@ -655,7 +655,11 @@ impl Store {
                 }
             };
             let name = entry.file_name();
-            if name.to_str().is_some_and(|name| used.contains(name)) {
+            // `:`入りなどの名前は参照を読めず、使っているか分からないので移さない
+            if name
+                .to_str()
+                .is_some_and(|name| used.contains(name) || !is_filename(name))
+            {
                 continue;
             }
             // 下のディレクトリとシンボリックリンクは対象にしない
@@ -1440,11 +1444,13 @@ fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
 }
 
 // `..`を含む名前はまとめて弾く。`.`だけの名前も弾く
+// Windowsでは`C:x`をjoinすると元のパスが捨てられ、`a:b`は代替データストリームになるので`:`も弾く
 pub(crate) fn is_filename(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && !name.contains('/')
         && !name.contains('\\')
+        && !name.contains(':')
         && !name.contains("..")
 }
 
@@ -1987,6 +1993,8 @@ mod tests {
             reference("a\\b.png"),
             reference("a..b.png"),
             reference("."),
+            reference("C:x.png"),
+            "../../assets/C:x.png".to_string(),
         ] {
             assert!(
                 matches!(
@@ -3845,7 +3853,7 @@ mod tests {
         for ok in ["blog", "posts"] {
             assert!(validate_posts_dir_name(ok).is_ok(), "{ok} は妥当なはず");
         }
-        for ng in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x"] {
+        for ng in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x", "C:x"] {
             assert!(
                 matches!(
                     validate_posts_dir_name(ng),
@@ -4534,6 +4542,8 @@ mod tests {
         fs::write(store.assets_base().join("01.png"), b"shared").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(dir.join("01.png"), dir.join("08.png")).unwrap();
+        #[cfg(unix)]
+        fs::write(dir.join("a:b.png"), b"colon").unwrap();
 
         store.save_article(slug, body_input(body), None).unwrap();
 
@@ -4561,6 +4571,8 @@ mod tests {
         assert!(store.assets_base().join("01.png").exists());
         #[cfg(unix)]
         assert!(dir.join("08.png").exists());
+        #[cfg(unix)]
+        assert!(dir.join("a:b.png").exists());
         assert_eq!(
             removed_names(&store, slug),
             ["04.png", "05.png", "06.png", "notes.txt"]

@@ -1085,7 +1085,7 @@ mod tests {
     const ABOUT_PNG: &[u8] = b"about-1\n";
     const UNUSED_PNG: &[u8] = b"unused-1\n";
     const MISSING_MD: &[u8] = b"---\ntitle: \"missing\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/missing.png\"\n---\n![about](../../assets/about.png)\n";
-    const DOTDOT_MD: &[u8] = b"---\ntitle: \"dotdot\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n![x](../../assets/..)\n![about](../../assets/about.png)\n";
+    const DOTDOT_MD: &[u8] = b"---\ntitle: \"dotdot\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n![x](../../assets/..)\n![y](../../assets/C:x.png)\n![about](../../assets/about.png)\n";
     const DRAFT_MD: &[u8] = b"---\ntitle: \"draft\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/shared.png\"\n---\n";
 
     fn basis() -> Basis {
@@ -2799,9 +2799,12 @@ mod tests {
         test.edit_state(|state| {
             state["articles"]["post"]["assets"]["../evil.png"] =
                 serde_json::json!({ "sha": blob_sha(PNG), "fetched": false });
+            state["articles"]["post"]["assets"]["C:evil.png"] =
+                serde_json::json!({ "sha": blob_sha(PNG), "fetched": false });
         });
         test.fetch_images("post").unwrap();
         assert!(!test.assets_base.join("evil.png").exists());
+        assert!(!test.assets_dir("post").join("C:evil.png").exists());
         assert_eq!(fs::read(test.image_path("post/01.png")).unwrap(), PNG);
     }
 
@@ -3148,6 +3151,8 @@ mod tests {
         // ファイル名でない名前を、共有の画像の一覧に手で入れる
         test.edit_state(|state| {
             state["remote"]["base"]["sharedAssets"][".."] = Value::String(blob_sha(SHARED_PNG));
+            state["remote"]["base"]["sharedAssets"]["C:x.png"] =
+                Value::String(blob_sha(SHARED_PNG));
         });
 
         let before = test.transport.requests().len();
