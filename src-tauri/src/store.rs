@@ -1440,11 +1440,13 @@ fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
 }
 
 // `..`を含む名前はまとめて弾く。`.`だけの名前も弾く
+// `:`はWindowsで`C:x`がjoin先を置き換えるので弾く
 pub(crate) fn is_filename(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && !name.contains('/')
         && !name.contains('\\')
+        && !name.contains(':')
         && !name.contains("..")
 }
 
@@ -3845,7 +3847,7 @@ mod tests {
         for ok in ["blog", "posts"] {
             assert!(validate_posts_dir_name(ok).is_ok(), "{ok} は妥当なはず");
         }
-        for ng in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x"] {
+        for ng in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x", "C:x"] {
             assert!(
                 matches!(
                     validate_posts_dir_name(ng),

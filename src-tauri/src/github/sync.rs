@@ -2799,9 +2799,12 @@ mod tests {
         test.edit_state(|state| {
             state["articles"]["post"]["assets"]["../evil.png"] =
                 serde_json::json!({ "sha": blob_sha(PNG), "fetched": false });
+            state["articles"]["post"]["assets"]["C:evil.png"] =
+                serde_json::json!({ "sha": blob_sha(PNG), "fetched": false });
         });
         test.fetch_images("post").unwrap();
         assert!(!test.assets_base.join("evil.png").exists());
+        assert!(!test.assets_dir("post").join("C:evil.png").exists());
         assert_eq!(fs::read(test.image_path("post/01.png")).unwrap(), PNG);
     }
 
