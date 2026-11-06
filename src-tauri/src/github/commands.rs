@@ -970,7 +970,7 @@ mod tests {
         assert_eq!(settings.github.repo, Some(repo()));
         assert_eq!(
             settings.posts_dir,
-            Some(std::path::PathBuf::from("/local/src/content/blog"))
+            Some(PathBuf::from("/local/src/content/blog"))
         );
     }
 
