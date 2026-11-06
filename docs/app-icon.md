@@ -16,4 +16,4 @@ Androidのアダプティブアイコンは、前景の中央の72/108までし�
 npx tauri icon src-tauri/icons/icon.json
 ```
 
-Android用は`src-tauri/gen/android/`に直接書き込まれる。iOS向けなど使わないファイルもできるが、`.gitignore`で除いている。
+Android用は`src-tauri/gen/android/`に直接書き込まれる。iOSやWindowsのストア向けなど使わないファイルもできるが、`.gitignore`で除いている。`icon.ico`は設定から参照していないが、Windowsでビルドするときに`tauri-build`が求めるのでコミットしている。

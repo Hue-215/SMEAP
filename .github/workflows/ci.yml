@@ -61,7 +61,7 @@ jobs:
       - name: テスト
         run: cargo test --lib --locked
 
-  # 書式はOSで変わらないので、rustのジョブだけで見る
+  # 書式はOSで変わらないので、`rust`のジョブだけで見る
   rust-windows:
     runs-on: windows-latest
     timeout-minutes: 30
