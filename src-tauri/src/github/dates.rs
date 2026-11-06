@@ -349,6 +349,7 @@ mod tests {
             }
         }
 
+        #[cfg(unix)]
         fn md(&self, slug: &str) -> String {
             fs::read_to_string(self.store.posts_dir().join(format!("{slug}.md"))).unwrap()
         }

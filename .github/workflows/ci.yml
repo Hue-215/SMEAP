@@ -61,6 +61,28 @@ jobs:
       - name: テスト
         run: cargo test --lib --locked
 
+  # 書式はOSで変わらないので、rustのジョブだけで見る
+  rust-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: cargoのキャッシュ
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src-tauri
+          save-if: ${{ github.event_name == 'push' }}
+
+      - name: clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: テスト
+        run: cargo test --lib --locked
+
   # Android向けにだけ有効になるcfgは、ほかのジョブではコンパイルされない。APKは作らず(JDK・
   # Android SDK・NDKの用意が要る)、コンパイルが通ることだけを確かめる
   rust-android:

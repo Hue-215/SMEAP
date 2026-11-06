@@ -841,7 +841,7 @@ fn sleep(seconds: u64) {
 #[allow(non_snake_case)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
@@ -849,7 +849,9 @@ mod tests {
 
     use super::*;
     use crate::github::config::{github_posts_dir, token_path};
-    use crate::github::fake::{read_only_dir, FakeTransport};
+    #[cfg(unix)]
+    use crate::github::fake::read_only_dir;
+    use crate::github::fake::FakeTransport;
     use crate::github::token;
     use crate::store::Store;
 
@@ -968,7 +970,7 @@ mod tests {
         assert_eq!(settings.github.repo, Some(repo()));
         assert_eq!(
             settings.posts_dir,
-            Some(PathBuf::from("/local/src/content/blog"))
+            Some(std::path::PathBuf::from("/local/src/content/blog"))
         );
     }
 
