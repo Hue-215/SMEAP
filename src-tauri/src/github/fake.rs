@@ -1533,7 +1533,7 @@ impl super::token::SecretStore for FakeSecret {
     }
 }
 
-// デスクトップの置き場所。資格情報の保存先は偽物で、token.jsonはdata_dirの下
+// デスクトップの置き場所。資格情報の保存先は偽物で、token.jsonはdata_dirの下。openと違い、token.jsonを移さない
 pub fn desktop_tokens(data_dir: &std::path::Path) -> (super::token::TokenStore, Arc<FakeSecret>) {
     desktop_tokens_with(data_dir, FakeSecret::default())
 }

@@ -177,7 +177,7 @@ pub fn startup_posts_dir(
     tokens: &TokenStore,
     settings: &GithubSettings,
 ) -> (PathBuf, Option<GithubError>) {
-    // Repositoryを選んでいなければ向き先は替わらないので、トークンを読まない(Secret Serviceのロック解除を求めないため)
+    // Repositoryを選んでいなければ向き先は替わらないので、トークンを読まない(LinuxのSecret Serviceのロック解除を求めないため)
     if settings.repo.is_none() {
         return (local, None);
     }

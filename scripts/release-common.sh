@@ -13,9 +13,13 @@ if ! command -v cargo-about >/dev/null; then
   exit 1
 fi
 
-# WindowsではGit Bashで動かす。rustcに渡るパスは/c/...ではなくC:\...の形になる
+# WindowsではGit for Windowsのbash(Git Bash)で動かす。rustcに渡るパスは/c/...ではなくC:\...の形になる
 case "$(uname -s)" in
   MINGW* | MSYS*) windows=1 ;;
+  CYGWIN*)
+    echo "WindowsではGit for Windowsのbashで実行してください" >&2
+    exit 1
+    ;;
   *) windows=0 ;;
 esac
 
@@ -27,9 +31,10 @@ native_path() {
 # リンクを解決したパスの両方を持つ。
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 root_physical="$(cd "$root" && pwd -P)"
-home="$HOME"
+# WindowsのcargoはHOMEではなくUSERPROFILEをホームにする
+if ((windows)); then home="$(cygpath -u "$USERPROFILE")"; else home="$HOME"; fi
 home_physical="$(cd "$home" && pwd -P)"
-cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+cargo_home="${CARGO_HOME:-$home/.cargo}"
 cargo_home_physical="$(cd "$cargo_home" && pwd -P)"
 
 if [[ "$home" != /?* || "$home_physical" == / ]]; then
@@ -59,7 +64,7 @@ export_remap_flags() {
 check_no_absolute_paths() {
   local dir="$1" found=0 found_list path pattern status file
   local paths=() patterns=() grep_options=()
-  # ホームの親(/home等)は、上のどれでもない形(別のリンク越しの場所等)で焼き込まれた分を拾うため。
+  # 末尾のホームの親(/home・C:\Users等)は、上のどれでもない形(別のリンク越しの場所等)で焼き込まれた分を拾うため。
   for path in "$home" "$home_physical" "$cargo_home" "$cargo_home_physical" "$root" "$root_physical" \
     "$(dirname "$home")" "$(dirname "$home_physical")"; do
     [[ "$path" == / || " ${paths[*]-} " == *" $path "* ]] || paths+=("$path")
@@ -73,7 +78,7 @@ check_no_absolute_paths() {
       patterns+=("$path/")
     fi
   done
-  ((windows)) && grep_options+=(-i)
+  if ((windows)); then grep_options+=(-i); fi
   found_list="$(mktemp)"
   for pattern in "${patterns[@]}"; do
     # grepは見つからないと1、読めないファイルがあると2で終わる。2は検査の漏れなので止める。

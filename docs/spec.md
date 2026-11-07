@@ -8,7 +8,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 
 - 対応OSはAndroid・Linux(Kubuntu)・Windows。LinuxとWindowsは実行ファイルを置いて使い、インストーラーは作らない
 - Windowsの実行ファイルは署名しない(SmartScreenの警告が出る)。WebView2ランタイムが要る
-- 配布用のビルドは`scripts/release-build.sh`(Linux・Windows)と`scripts/release-build-android.sh`で行う。ビルドした人の絶対パスを実行ファイルに残さない
+- 配布用のビルドは`scripts/release-build.sh`(Linux・Windows)と`scripts/release-build-android.sh`で行う。ビルドした人の絶対パスを配布物に残さない
 
 ### 技術
 

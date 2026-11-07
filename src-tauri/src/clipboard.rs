@@ -25,7 +25,7 @@ pub fn read_image_png(app: &AppHandle) -> Result<Option<Vec<u8>>, StoreError> {
     rx.recv().map_err(clipboard_error)?.map_err(clipboard_error)
 }
 
-// Androidでは画面側のclipboardDataで受ける
+// Linux以外では画面側のclipboardDataで受ける
 #[cfg(not(target_os = "linux"))]
 pub fn read_image_png(_app: &AppHandle) -> Result<Option<Vec<u8>>, StoreError> {
     Ok(None)

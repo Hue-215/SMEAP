@@ -631,6 +631,21 @@ mod tests {
     }
 
     #[test]
+    fn logoutでトークンを消せなければ向き先を戻さずにエラー() {
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().join("data");
+        let github_dir = github_posts_dir(&data_dir, &repo(), "src/content/blog");
+        let store = store::Store::new(github_dir.clone(), tmp.path().join("backup")).unwrap();
+        let (tokens, secret) = desktop_tokens(&data_dir);
+        tokens.write(&token_set()).unwrap();
+        secret.fail_delete(true);
+        let local = tmp.path().join("local/src/content/blog");
+        assert!(logout(&store, &tokens, &data_dir, local).is_err());
+        assert!(secret.value().is_some());
+        assert_eq!(store.posts_dir(), github_dir);
+    }
+
+    #[test]
     fn frontmatterの無い設定はどちらも有効で保存して読み直すと同じ値() {
         let tmp = TempDir::new().unwrap();
         let file = file_of(&tmp);

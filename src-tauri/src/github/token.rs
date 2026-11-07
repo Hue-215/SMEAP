@@ -48,7 +48,7 @@ pub struct TokenStore {
 }
 
 impl TokenStore {
-    // 起動時に、コマンドを受け付ける前に呼ぶ
+    // token.jsonを移すので、起動時に1度だけ呼ぶ
     #[cfg(not(target_os = "android"))]
     pub fn open(identifier: &str, data_dir: &Path) -> Self {
         Self::open_with(
@@ -432,8 +432,6 @@ mod tests {
         };
     }
 
-    // ファイル版
-
     #[test]
     fn 書いて読み直すと同じ組になる() {
         let tmp = TempDir::new().unwrap();
@@ -509,8 +507,6 @@ mod tests {
         assert!(!debug.contains("ACCESS"));
         assert!(!debug.contains("REFRESH"));
     }
-
-    // TokenManager
 
     both_stores!(
         invalidateは同じaccess_tokenのときだけ消す,
@@ -682,8 +678,6 @@ mod tests {
             Some(tokens(NOW + 1, NOW + 10_000))
         );
     }
-
-    // 資格情報の保存先版
 
     #[test]
     fn 資格情報の保存先に書いた組が読めtoken_jsonはできない() {

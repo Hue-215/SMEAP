@@ -899,7 +899,6 @@ mod tests {
             .to_string()
     }
 
-    // 偽物の資格情報の保存先を使う
     fn manager_of(data_dir: &Path) -> TokenManager {
         TokenManager::new(
             desktop_tokens(data_dir).0,
