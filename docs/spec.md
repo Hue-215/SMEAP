@@ -179,9 +179,10 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 - SMEAP用のGitHub Appを登録し、デバイスフローで利用者の認可を得る。client IDはコードに持つ。client secretは使わない(デバイスフローで得たトークンは、secretなしで更新できる)
 - Appの権限はContents(読み書き)とMetadata(読み取り)だけ。トークンが触れられるのは、Appを入れたリポジトリ(入れるときに選んだもの)のうち、利用者も触れられるものだけになる
 - Appの設定でトークンの期限切れを有効にしておく(既定)。トークンは8時間、更新用のトークンは6か月で切れる。期限が切れていたら更新用のトークンで取り直し、取り直せなければもう一度ログインさせる。更新のたびに更新用のトークンも替わるので、新しい組を書き終えてから古い組を捨てる
-- トークンはアプリのデータ領域の`github/token.json`に置き、画面には渡さない。ログ・エラー文にも出さない
-  - Linuxでは作るときから権限を`0600`にする(今の`write_temp`は`0644`で作るので使わない)
-  - AndroidではOSのバックアップの対象から外す(マニフェストの`dataExtractionRules`・`fullBackupContent`)
+- トークンは画面には渡さない。ログ・エラー文にも出さない
+  - デスクトップでは、OSの資格情報の保存先(Windowsは資格情報マネージャー、LinuxはSecret Service)に、サービス名`net.niigo.smeap`・ユーザー名`github`の項目で置く。使えなければログインできない(ファイルには置かない)
+  - 前の版がデータ領域に作った`github/token.json`は、起動時に資格情報の保存先へ移して消す
+  - Androidはアプリのデータ領域の`github/token.json`に置き、OSのバックアップの対象から外す(マニフェストの`dataExtractionRules`・`fullBackupContent`)
 - 通信はRust側で`ureq`(rustls、ルート証明書は同梱)で行う
   - 宛先は`https://api.github.com/`と、`https://github.com/login/device/code`・`https://github.com/login/oauth/access_token`に限り、それ以外のURLは組み立てた時点で弾く。リダイレクトは追わない
   - `User-Agent`と`X-GitHub-Api-Version`を付ける

@@ -41,6 +41,10 @@ base64 = "0.22"
 # Commit & Pushのダイアログの、元にしたmdとの行単位の差分(src/github/push.rs)
 similar = "2"
 
+# GitHubのトークンをOSの資格情報の保存先に置く(src/github/token.rs)
+[target.'cfg(not(target_os = "android"))'.dependencies]
+keyring = "4"
+
 # 貼り付けた画像をクリップボードから読む(src/clipboard.rs)。TauriがLinuxで使っている版にそろえる
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

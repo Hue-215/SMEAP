@@ -22,6 +22,12 @@ pub fn run() {
         .setup(|app| {
             let settings = settings::load(app.handle());
             let data_dir = settings::data_dir(app.handle())?;
+            // トークンを読む前に、資格情報の保存先にしてtoken.jsonを移す
+            #[cfg(not(target_os = "android"))]
+            github::token::init(
+                &app.config().identifier,
+                &github::config::token_path(&data_dir),
+            );
             let backup_root = data_dir.join("backup");
             // 今までの保存先(GitHub連携より前の向き先)と、設定に保存先が無いときの既定
             #[cfg(not(target_os = "android"))]
