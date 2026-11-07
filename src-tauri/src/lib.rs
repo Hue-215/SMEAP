@@ -11,11 +11,6 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // WebKitGTKの<input type="date">の書式は端末のロケール(LANG・LC_ALL)に従い、jaでもen_USでも
-    // `2026-07-02`の形にはならない。ISO 8601になるen_CAを、GTKの初期化より前に設定する。
-    // LC_ALLはプロセス全体に効くので、GTKのファイルダイアログなどの文言もen_CAになる
-    #[cfg(target_os = "linux")]
-    std::env::set_var("LC_ALL", "en_CA.UTF-8");
     // fsとdialogとopenerはRust側からだけ使う(src/export.rs・src/settings.rs・src/github/commands.rs)。
     // 画面に権限は与えない
     let builder = image_protocol::register(tauri::Builder::default())
@@ -26,7 +21,7 @@ pub fn run() {
     builder
         .setup(|app| {
             let settings = settings::load(app.handle());
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = settings::data_dir(app.handle())?;
             let backup_root = data_dir.join("backup");
             // 今までの保存先(GitHub連携より前の向き先)と、設定に保存先が無いときの既定
             #[cfg(not(target_os = "android"))]

@@ -1,4 +1,4 @@
-//! 記事の保存先の設定と、それを変えるコマンド。app_config_dirの下のsettings.jsonに持つ。
+//! 記事の保存先の設定と、それを変えるコマンド。app_config_dir(Windowsはapp_local_data_dir)の下のsettings.jsonに持つ。
 
 use std::fs;
 use std::io;
@@ -81,17 +81,23 @@ impl SettingsState {
     }
 }
 
+// Windowsのapp_config_dirはRoamingで、ほかの端末へ同期されることがある。記事の保存先は端末ごとの絶対パスなので置かない
 pub(crate) fn file_path(app: &AppHandle) -> Result<PathBuf, StoreError> {
-    app.path()
-        .app_config_dir()
-        .map(|dir| dir.join("settings.json"))
-        .map_err(|error| StoreError::io(Path::new("app_config_dir"), error))
+    #[cfg(windows)]
+    let (dir, name) = (app.path().app_local_data_dir(), "app_local_data_dir");
+    #[cfg(not(windows))]
+    let (dir, name) = (app.path().app_config_dir(), "app_config_dir");
+    dir.map(|dir| dir.join("settings.json"))
+        .map_err(|error| StoreError::io(Path::new(name), error))
 }
 
+// Windowsのapp_data_dirはRoamingなので、バックアップや取得した記事・トークンを置かない
 pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, StoreError> {
-    app.path()
-        .app_data_dir()
-        .map_err(|error| StoreError::io(Path::new("app_data_dir"), error))
+    #[cfg(not(target_os = "android"))]
+    let (dir, name) = (app.path().app_local_data_dir(), "app_local_data_dir");
+    #[cfg(target_os = "android")]
+    let (dir, name) = (app.path().app_data_dir(), "app_data_dir");
+    dir.map_err(|error| StoreError::io(Path::new(name), error))
 }
 
 // 読めなくても起動は止めず、既定の設定で始める。ただし画像の片付けは、無効にしていた人の画像を移さないよう止める

@@ -28,7 +28,7 @@ import {
 import ArticleHeader, { type FieldsPatch } from './ArticleHeader'
 import { AutoSaver, type SaveStatus } from './autoSave'
 import Editor from './Editor'
-import { insertImageRefs, insertLink } from './editor'
+import { insertImageRefs, insertLink } from './codemirror'
 import { t } from './i18n'
 import { isAndroid } from './platform'
 import {

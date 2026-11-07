@@ -1,6 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 import type { GithubArticleState, GithubArticleStates, GithubSkipped } from './githubList'
-import { isAndroid } from './platform'
+import { customSchemeOrigin } from './platform'
 
 // Rust側のエラー。種類によってpath・reasonを持つ
 export interface StoreError {
@@ -191,11 +191,12 @@ export function isValidSlug(slug: string): boolean {
   return /^[a-z0-9-]+$/.test(slug)
 }
 
-// Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。AndroidのTauriは`http://{scheme}.localhost`で受ける。
+const articleImageOrigin = customSchemeOrigin('article-image', navigator.userAgent)
+
+// Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。
 // referenceは本文に書いた参照のまま渡し、記事の画像かどうかはRust側が判断する。
 export function articleImageUrl(slug: string, reference: string): string {
-  const path = `/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`
-  return isAndroid ? `http://article-image.localhost${path}` : `article-image://localhost${path}`
+  return `${articleImageOrigin}/${encodeURIComponent(slug)}/${encodeURIComponent(reference)}`
 }
 
 // 記事ファイルから画像を指すときの相対パス。Rust側のSHARED_ASSETS_REFとassets_ref(src-tauri/src/store.rs)とそろえる
