@@ -177,6 +177,10 @@ pub fn startup_posts_dir(
     data_dir: &Path,
     settings: &GithubSettings,
 ) -> (PathBuf, Option<GithubError>) {
+    // Repositoryを選んでいなければ向き先は替わらないので、資格情報の保存先に問い合わせない
+    if settings.repo.is_none() {
+        return (local, None);
+    }
     match token::read(&token_path(data_dir)) {
         Ok(Some(_)) => (choose_posts_dir(local, data_dir, settings, true), None),
         Ok(None) => (local, None),

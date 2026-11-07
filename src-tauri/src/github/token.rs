@@ -72,8 +72,11 @@ pub fn delete(path: &Path) -> Result<(), GithubError> {
     }
 }
 
+// GithubError::Ioのパスの代わり
+const SECRET_LABEL: &str = "credential store";
+
 fn secret_error(error: String) -> GithubError {
-    GithubError::io(Path::new("credential store"), error)
+    GithubError::io(Path::new(SECRET_LABEL), error)
 }
 
 fn parse(content: &str, path: &Path) -> Result<TokenSet, GithubError> {
@@ -84,7 +87,7 @@ fn read_secret(secret: &dyn SecretStore) -> Result<Option<TokenSet>, GithubError
     secret
         .get()
         .map_err(secret_error)?
-        .map(|content| parse(&content, Path::new("credential store")))
+        .map(|content| parse(&content, Path::new(SECRET_LABEL)))
         .transpose()
 }
 
