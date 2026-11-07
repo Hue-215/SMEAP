@@ -41,8 +41,9 @@ unset SMEAP_ANDROID_KEYSTORE_PASSWORD
 build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1 || true)"
 apksigner="$build_tools/apksigner"
 zipalign="$build_tools/zipalign"
-if [[ -z "$build_tools" || ! -x "$apksigner" || ! -x "$zipalign" ]]; then
-  echo "apksigner・zipalign がありません(SDK Managerで「Android SDK Build-Tools」を入れてください)" >&2
+aapt2="$build_tools/aapt2"
+if [[ -z "$build_tools" || ! -x "$apksigner" || ! -x "$zipalign" || ! -x "$aapt2" ]]; then
+  echo "apksigner・zipalign・aapt2 がありません(SDK Managerで「Android SDK Build-Tools」を入れてください)" >&2
   exit 1
 fi
 
@@ -74,6 +75,13 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 unzip -q "$built" -d "$work/unpacked"
+
+# tauri.conf.jsonにversionが無いと、Cargo.tomlの版は使われず1.0になる。
+apk_version="$("$aapt2" dump badging "$built" | sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p")"
+if [[ "$apk_version" != "$version" ]]; then
+  echo "APKの版が src-tauri/Cargo.toml と違います: $apk_version(想定: $version)" >&2
+  exit 1
+fi
 
 abis="$(find "$work/unpacked/lib" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
 if [[ "$abis" != "$abi " ]]; then
