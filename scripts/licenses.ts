@@ -161,7 +161,8 @@ function platformLicenses(target: string): License[] {
     ]
   }
   // tauri・プラグインのAndroid側と、src-tauri/gen/android/app/build.gradle.ktsが使うライブラリ。
-  // Gradleから集めていないので、依存が増えたら手で足す
+  // Gradleから集めていないので、依存が増えたら手で足す。依存はsrc-tauri/gen/androidで
+  // ./gradlew :app:dependencies --configuration universalReleaseRuntimeClasspath で見られる
   if (target.includes('-android')) {
     const apache = (name: string): License => ({
       name,
@@ -172,7 +173,11 @@ function platformLicenses(target: string): License[] {
     return [
       apache('AndroidX'),
       apache('Material Components for Android'),
-      apache('Kotlin / kotlinx.coroutines'),
+      apache('Kotlin / kotlinx.coroutines / kotlinx.serialization'),
+      apache('JetBrains Java Annotations'),
+      apache('JSpecify'),
+      apache('Guava ListenableFuture'),
+      apache('Error Prone Annotations'),
       {
         name: 'Jackson',
         version: '',
