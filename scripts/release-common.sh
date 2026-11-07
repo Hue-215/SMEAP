@@ -1,7 +1,8 @@
 # 配布用のビルドのスクリプト(release-build.sh・release-build-android.sh)が読み込む共通の部分。
 # ビルドした人の絶対パス(ホームディレクトリ・CARGO_HOME・このリポジトリの場所)を、バイナリに
 # 焼き込まれるパス(依存クレートのパニックの位置等)から外す指定と、外れたことの検査を持つ。
-# 画面のライセンスの一覧を作るcargo-aboutが入っているかと、一覧にOSごとの項目が載ったかの検査も持つ。
+# 画面のライセンスの一覧を作るcargo-aboutが入っているかと、一覧にOSごとの項目が載ったかの検査、
+# Cargo.tomlとtauri.conf.jsonの版がそろっているかの検査も持つ。
 
 if [[ -n "${RUSTFLAGS:-}" || -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
   echo "RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS を外してから実行してください(指定がこのスクリプトの置き換えの指定で黙って捨てられるため)" >&2
@@ -39,6 +40,18 @@ cargo_home_physical="$(cd "$cargo_home" && pwd -P)"
 
 if [[ "$home" != /?* || "$home_physical" == / ]]; then
   echo "HOME がルートか相対パスです。置き換えがすべてのパスに当たるので止めます: $home" >&2
+  exit 1
+fi
+
+version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/src-tauri/Cargo.toml" | head -1)"
+if [[ -z "$version" ]]; then
+  echo "src-tauri/Cargo.toml から版を読めません" >&2
+  exit 1
+fi
+# 配布物の版はtauri.conf.jsonのものになる。
+conf_version="$(node -p 'require(process.argv[1]).version' "$(native_path "$root/src-tauri/tauri.conf.json")")"
+if [[ "$conf_version" != "$version" ]]; then
+  echo "src-tauri/tauri.conf.json の版($conf_version)を src-tauri/Cargo.toml の版($version)に合わせてください" >&2
   exit 1
 fi
 
