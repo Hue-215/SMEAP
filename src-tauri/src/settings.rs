@@ -91,7 +91,7 @@ pub(crate) fn file_path(app: &AppHandle) -> Result<PathBuf, StoreError> {
         .map_err(|error| StoreError::io(Path::new(name), error))
 }
 
-// Windowsのapp_data_dirはRoamingなので、バックアップや取得した記事・トークンを置かない。ほかのOSでは同じ場所
+// Windowsのapp_data_dirはRoamingなので、バックアップや取得した記事・トークンを置かない。ほかのOSではapp_data_dirと同じ場所
 pub(crate) fn data_dir(app: &AppHandle) -> Result<PathBuf, StoreError> {
     app.path()
         .app_local_data_dir()
