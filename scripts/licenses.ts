@@ -145,10 +145,12 @@ function licenseTexts(...files: string[]): string {
 }
 
 // cargo aboutにもnode_modulesにも出てこないが、ターゲットによって配るものに入るもの。
-// 文はscripts/license-textsに、配布元のパッケージ(NuGet・Maven Central)から取って置いている。
+// 文はscripts/license-textsに写してある。WebView2はNuGetのMicrosoft.Web.WebView2 1.0.3650.58、
+// JacksonはMaven Centralのjackson-core 2.15.3のMETA-INF、FastDoubleParserのMITの文はjarに無いので
+// GitHubの522be16eから。
 function platformLicenses(target: string): License[] {
-  // webview2-com-sysが、MicrosoftのWebView2 SDKのWebView2LoaderStatic.libを静的にリンクする
-  if (target.endsWith('-windows-msvc')) {
+  // webview2-com-sysが、MicrosoftのWebView2 SDKのWebView2Loaderをリンクする(msvcでは静的に、gnuではDLLで)
+  if (target.includes('-windows-')) {
     return [
       {
         name: 'WebView2 SDK',
@@ -158,7 +160,8 @@ function platformLicenses(target: string): License[] {
       },
     ]
   }
-  // tauri・プラグインのAndroid側と、src-tauri/gen/android/app/build.gradle.ktsが使うライブラリ
+  // tauri・プラグインのAndroid側と、src-tauri/gen/android/app/build.gradle.ktsが使うライブラリ。
+  // Gradleから集めていないので、依存が増えたら手で足す
   if (target.includes('-android')) {
     const apache = (name: string): License => ({
       name,
@@ -173,7 +176,7 @@ function platformLicenses(target: string): License[] {
       {
         name: 'Jackson',
         version: '',
-        // jackson-coreがFastDoubleParser(MIT)と、その中にbigint(BSD-2-Clause)を含む
+        // jackson-coreがFastDoubleParser(MIT)を含み、その中にbigint(BSD-2-Clause)のコードがある
         license: 'Apache-2.0 AND MIT AND BSD-2-Clause',
         text: licenseTexts(
           'Jackson-NOTICE.txt',
@@ -188,8 +191,8 @@ function platformLicenses(target: string): License[] {
   return []
 }
 
-// ライセンスの一覧。targetはtauri buildが渡すターゲットの三つ組で、あるときはRustのクレートと、
-// ターゲットのOSで配るものに入るものも集める。
+// ライセンスの一覧。targetはtauri buildが渡すターゲットの三つ組で、あるときはRustのクレートと
+// platformLicensesのものも集める。
 async function collectLicenses(target: string | undefined): Promise<License[]> {
   const app: License = {
     name: 'SMEAP',
@@ -244,7 +247,7 @@ export default function licenses(): Plugin {
     },
     async load(id) {
       if (id !== '\0virtual:licenses') return null
-      // クレートは、tauri buildがTAURI_ENV_*を渡したときだけ集める。素のvite build(CIのフロントエンドの
+      // クレートとplatformLicensesのものは、tauri buildがTAURI_ENV_*を渡したときだけ集める。素のvite build(CIのフロントエンドの
       // ジョブ)と開発サーバーでは集めない
       const target = process.env.TAURI_ENV_TARGET_TRIPLE
       if (

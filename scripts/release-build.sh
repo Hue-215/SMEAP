@@ -45,3 +45,4 @@ if [[ ! -f "$binary" ]]; then
 fi
 check_no_absolute_paths "$binary"
 echo "絶対パスは残っていません: $binary"
+if ((windows)); then check_licenses_include 'WebView2 SDK'; fi

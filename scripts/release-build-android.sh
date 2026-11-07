@@ -82,6 +82,7 @@ if [[ "$abis" != "$abi " ]]; then
 fi
 check_no_absolute_paths "$work/unpacked"
 echo "絶対パスは残っていません"
+check_licenses_include 'Material Components for Android'
 
 # 署名はAPKの中のファイルを変えないので、上の検査は署名したものにも当てはまる。
 # 署名の前に、中のファイルの位置が揃っていること(署名の後には直せない)を確かめる。
