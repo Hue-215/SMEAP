@@ -23,6 +23,12 @@ describe('githubErrorText', () => {
     expect(githubErrorText({ kind: 'outOfSync' })).toBe(t('common.github_out_of_sync'))
   })
 
+  it('資格情報の保存先の失敗はその文言にする', () => {
+    expect(githubErrorText({ kind: 'credentialStore', reason: 'locked' })).toBe(
+      t('common.github_credential_store'),
+    )
+  })
+
   it('種類ごとの文言が無い失敗は、呼び出し側の文言に任せる', () => {
     expect(githubFailureText({ kind: 'notFound' })).toBeNull()
     expect(githubErrorText({ kind: 'notFound' })).toBe(t('common.change_failed'))

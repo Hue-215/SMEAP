@@ -269,6 +269,7 @@ export type GithubError =
   | { kind: 'invalidPostsPath' }
   | { kind: 'invalidRepository' }
   | { kind: 'io'; path: string; reason: string }
+  | { kind: 'credentialStore'; reason: string }
   | { kind: 'baseBranchNotFound' }
   | { kind: 'invalidLayout'; path: string }
   | { kind: 'stateUnreadable' }

@@ -56,6 +56,7 @@
   "common.github_base_branch_not_found": "GitHub上に存在しないベースブランチです",
   "common.github_branch_moved": "GitHub上のブランチが更新されています",
   "common.github_conflicted": "GitHub上の内容と競合しています",
+  "common.github_credential_store": "OSの資格情報の保存先を使えませんでした",
   "common.github_failed": "GitHubとのやり取りに失敗しました",
   "common.github_invalid_layout": "GitHub上の{path}は想定と異なる形式です",
   "common.github_io": "ファイルの読み書きに失敗しました: {path}",

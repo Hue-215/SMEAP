@@ -53,9 +53,23 @@ pub fn init(identifier: &str, path: &Path) {
 
 pub fn read(path: &Path) -> Result<Option<TokenSet>, GithubError> {
     match SECRET.get() {
-        Some(secret) => read_secret(secret.as_ref()),
+        Some(secret) => {
+            ensure_moved(path)?;
+            read_secret(secret.as_ref())
+        }
         None => read_file(path),
     }
+}
+
+// 起動時に移せなかったtoken.jsonが残っていれば、ログアウトしたように見せずにエラーで知らせる
+fn ensure_moved(path: &Path) -> Result<(), GithubError> {
+    if path
+        .try_exists()
+        .map_err(|error| GithubError::io(path, error))?
+    {
+        return Err(GithubError::io(path, "not moved to the credential store"));
+    }
+    Ok(())
 }
 
 pub fn write(path: &Path, tokens: &TokenSet) -> Result<(), GithubError> {
@@ -72,11 +86,8 @@ pub fn delete(path: &Path) -> Result<(), GithubError> {
     }
 }
 
-// GithubError::Ioのパスの代わり
-const SECRET_LABEL: &str = "credential store";
-
-fn secret_error(error: String) -> GithubError {
-    GithubError::io(Path::new(SECRET_LABEL), error)
+fn secret_error(reason: String) -> GithubError {
+    GithubError::CredentialStore { reason }
 }
 
 fn parse(content: &str, path: &Path) -> Result<TokenSet, GithubError> {
@@ -87,7 +98,10 @@ fn read_secret(secret: &dyn SecretStore) -> Result<Option<TokenSet>, GithubError
     secret
         .get()
         .map_err(secret_error)?
-        .map(|content| parse(&content, Path::new(SECRET_LABEL)))
+        .map(|content| {
+            serde_json::from_str(&content)
+                .map_err(|_| secret_error("not a valid token set".to_string()))
+        })
         .transpose()
 }
 
@@ -112,7 +126,7 @@ fn delete_secret(secret: &dyn SecretStore, path: &Path) -> Result<(), GithubErro
     secret.delete().map_err(secret_error)
 }
 
-// 保存先に組があっても上書きする。保存先を使う間はtoken.jsonを残さないので、token.jsonの方が新しい
+// 保存先に組があっても上書きする。token.jsonが残っている間は保存先を書き換えないので、token.jsonの方が新しいか同じ
 #[cfg_attr(target_os = "android", allow(dead_code))]
 fn migrate(secret: &dyn SecretStore, path: &Path) -> Result<(), GithubError> {
     let Some(tokens) = read_file(path)? else {
@@ -174,8 +188,16 @@ mod keyring_store {
             }
         }
 
+        // 保存先を初期化できなかった理由は、Entry::newのNoDefaultStoreではなくstore_statusにだけ残る
         fn entry(&self) -> Result<keyring::Entry, String> {
-            keyring::Entry::new(&self.service, "github").map_err(|error| error.to_string())
+            keyring::Entry::new(&self.service, "github").map_err(|error| {
+                match (error, keyring::Entry::store_status()) {
+                    (keyring::Error::NoDefaultStore, Err(cause)) => {
+                        format!("the credential store is unavailable: {cause}")
+                    }
+                    (error, _) => error.to_string(),
+                }
+            })
         }
     }
 
@@ -687,6 +709,26 @@ mod tests {
     }
 
     #[test]
+    fn 資格情報の保存先の失敗は専用のエラーにする() {
+        let failing = FakeSecret {
+            fail_get: true,
+            ..FakeSecret::default()
+        };
+        assert!(matches!(
+            read_secret(&failing),
+            Err(GithubError::CredentialStore { .. })
+        ));
+        let broken = FakeSecret {
+            value: Mutex::new(Some("@".to_string())),
+            ..FakeSecret::default()
+        };
+        assert!(matches!(
+            read_secret(&broken),
+            Err(GithubError::CredentialStore { .. })
+        ));
+    }
+
+    #[test]
     fn 資格情報の保存先の失敗はエラーにしてtoken_jsonを作らない() {
         let tmp = TempDir::new().unwrap();
         let path = file_of(&tmp);
@@ -715,6 +757,27 @@ mod tests {
             Some(tokens(NOW + 3600, NOW + 7200))
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn 壊れたtoken_jsonは移さずに残す() {
+        let tmp = TempDir::new().unwrap();
+        let path = file_of(&tmp);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "@").unwrap();
+        let secret = FakeSecret::holding(&tokens(NOW, NOW));
+        assert!(migrate(&secret, &path).is_err());
+        assert!(path.exists());
+        assert_eq!(read_secret(&secret).unwrap(), Some(tokens(NOW, NOW)));
+    }
+
+    #[test]
+    fn 移せなかったtoken_jsonが残っていればエラー() {
+        let tmp = TempDir::new().unwrap();
+        let path = file_of(&tmp);
+        ensure_moved(&path).unwrap();
+        write_file(&path, &tokens(NOW, NOW)).unwrap();
+        assert!(matches!(ensure_moved(&path), Err(GithubError::Io { .. })));
     }
 
     #[test]

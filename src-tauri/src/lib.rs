@@ -22,7 +22,7 @@ pub fn run() {
         .setup(|app| {
             let settings = settings::load(app.handle());
             let data_dir = settings::data_dir(app.handle())?;
-            // トークンを読む前に、資格情報の保存先にしてtoken.jsonを移す
+            // トークンを読む前に呼ぶ
             #[cfg(not(target_os = "android"))]
             github::token::init(
                 &app.config().identifier,
@@ -60,7 +60,7 @@ pub fn run() {
                 (store, local_dir.clone(), local_dir)
             };
             store.set_remove_unused_images(settings.remove_unused_images);
-            // 起動時の保存先。token.jsonが読めないときと向き先が使えないときは、今までの保存先で始める
+            // 起動時の保存先。トークンが読めないときと向き先が使えないときは、今までの保存先で始める
             let (startup_dir, token_error) =
                 github::config::startup_posts_dir(local_dir, &data_dir, &settings.github);
             if let Some(error) = token_error {
