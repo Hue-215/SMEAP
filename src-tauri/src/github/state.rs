@@ -398,10 +398,11 @@ pub fn same_as_remote(record: Option<&Record>, local: &LocalFiles, remote: &Arti
     }
     let not_fetched =
         |record: &Record, name: &str| record.assets.get(name).is_none_or(|asset| !asset.fetched);
+    let collisions = crate::store::case_collisions(remote.assets.keys().map(String::as_str));
     let mut wanted = remote
         .assets
         .keys()
-        .filter(|name| crate::store::is_filename(name));
+        .filter(|name| crate::store::is_filename(name) && !collisions.contains(*name));
     match record {
         None => wanted.all(|name| local.assets.contains_key(name)),
         Some(record) => {
@@ -804,6 +805,31 @@ mod tests {
             ),
             &remote
         ));
+    }
+
+    #[test]
+    fn 大文字小文字だけが違う名前の画像は手元に無くてもリモートと同じで変更でもない() {
+        let remote = files_of(
+            "sha-md-a",
+            &[
+                ("A.png", "sha-png-1"),
+                ("a.png", "sha-png-2"),
+                ("01.png", "sha-png-r"),
+            ],
+        );
+        let local = local_of(Some("sha-md-a"), &[("01.png", "sha-png-r")]);
+        assert!(same_as_remote(None, &local, &remote));
+        let record = record_of(
+            None,
+            &[
+                ("A.png", asset("sha-png-1", false)),
+                ("a.png", asset("sha-png-2", false)),
+                ("01.png", asset("sha-png-r", true)),
+            ],
+        );
+        assert!(same_as_remote(Some(&record), &local, &remote));
+        // 取ってこなかった画像はfetchedがfalseのままなので、Commitで消すものにならない
+        assert!(!is_dirty(Some(&record), &local));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
@@ -27,6 +27,8 @@ const DATE_FORMAT: &str = "%Y-%m-%d";
 pub enum StoreError {
     #[error("slugが不正です: {slug}")]
     InvalidSlug { slug: String },
+    #[error("Windowsの予約名のslugです: {slug}")]
+    WindowsReservedSlug { slug: String },
     #[error("記事が既にあります: {slug}")]
     AlreadyExists { slug: String },
     #[error("記事がありません: {slug}")]
@@ -209,13 +211,17 @@ pub fn validate_slug(slug: &str) -> Result<(), StoreError> {
         && slug
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
-    if valid {
-        Ok(())
-    } else {
-        Err(StoreError::InvalidSlug {
+    if !valid {
+        return Err(StoreError::InvalidSlug {
             slug: slug.to_string(),
-        })
+        });
     }
+    if is_windows_reserved(slug) {
+        return Err(StoreError::WindowsReservedSlug {
+            slug: slug.to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn today() -> String {
@@ -1444,14 +1450,53 @@ fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
 }
 
 // `..`を含む名前はまとめて弾く。`.`だけの名前も弾く
-// Windowsでは`C:x`をjoinすると元のパスが捨てられ、`a:b`は代替データストリームになるので`:`も弾く
+// Windowsでは`C:x`をjoinすると元のパスが捨てられ、`a:b`は代替データストリームになるので`:`も弾く。
+// ほかにもWindowsで作れない名前は、どのOSでも弾く(同じリポジトリをWindowsでも扱うため)。
+// 末尾の`.`と空白は、Windowsが取り除いて別の名前と同じファイルにする
 pub(crate) fn is_filename(name: &str) -> bool {
     !name.is_empty()
         && name != "."
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.contains(':')
         && !name.contains("..")
+        && !name
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c < ' ')
+        && !name.ends_with(['.', ' '])
+        && !is_windows_reserved(name)
+}
+
+// Windowsは、最初の`.`より前(末尾の空白を除く)が予約名の名前を、拡張子があってもデバイスとして扱う
+fn is_windows_reserved(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ')
+        .to_lowercase();
+    if matches!(
+        stem.as_str(),
+        "con" | "prn" | "aux" | "nul" | "conin$" | "conout$"
+    ) {
+        return true;
+    }
+    let mut chars = stem.chars();
+    let prefix: String = chars.by_ref().take(3).collect();
+    let rest: Vec<char> = chars.collect();
+    matches!(prefix.as_str(), "com" | "lpt")
+        && matches!(rest.as_slice(), [c] if c.is_ascii_digit() || matches!(c, '¹' | '²' | '³'))
+}
+
+// ほかの名前と大文字小文字だけが違う名前。Windowsでは同じファイルになる
+pub(crate) fn case_collisions<'a>(names: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
+    let mut groups: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for name in names {
+        groups.entry(name.to_lowercase()).or_default().push(name);
+    }
+    groups
+        .into_values()
+        .filter(|group| group.len() > 1)
+        .flatten()
+        .map(str::to_string)
+        .collect()
 }
 
 // `src/content/`の下のディレクトリ名を確かめる。`.`で始まる名前はAstroのglobが読まないので断る
@@ -1864,6 +1909,133 @@ mod tests {
                 "{ng} は不正なはず"
             );
         }
+        for ok in ["com10", "console", "con-1", "nul2"] {
+            assert!(validate_slug(ok).is_ok(), "{ok} は妥当なはず");
+        }
+        for reserved in ["con", "prn", "aux", "nul", "com0", "com9", "lpt0", "lpt9"] {
+            assert!(
+                matches!(
+                    validate_slug(reserved),
+                    Err(StoreError::WindowsReservedSlug { .. })
+                ),
+                "{reserved} はWindowsの予約名のはず"
+            );
+        }
+    }
+
+    #[test]
+    fn ファイル名の検証() {
+        for ok in [
+            "01.png",
+            "console.png",
+            "com10.png",
+            "a b.png",
+            ".hidden.png",
+            "a.con",
+            ".con",
+        ] {
+            assert!(is_filename(ok), "{ok} は通るはず");
+        }
+        for ng in [
+            // 前からの決まり
+            "",
+            ".",
+            "a/b.png",
+            "a\\b.png",
+            "C:x.png",
+            "a..b.png",
+            // Windowsの予約名
+            "nul.png",
+            "con.tar.gz",
+            "CON",
+            "Con.png",
+            "con .png",
+            "COM¹.txt",
+            "lpt³",
+            "conin$",
+            "CONOUT$.png",
+            // Windowsで使えない文字
+            "a?.png",
+            "a<b.png",
+            "a>b.png",
+            "a\"b.png",
+            "a|b.png",
+            "a*.png",
+            "a\u{1}b.png",
+            "a\u{1f}b.png",
+            // 末尾の.と空白
+            "a.png.",
+            "a.png ",
+        ] {
+            assert!(!is_filename(ng), "{ng:?} は断るはず");
+        }
+    }
+
+    #[test]
+    fn ディレクトリ名の検証() {
+        assert!(validate_posts_dir_name("blog").is_ok());
+        for ng in ["nul", "a?"] {
+            assert!(
+                matches!(
+                    validate_posts_dir_name(ng),
+                    Err(StoreError::InvalidPostsDirName { .. })
+                ),
+                "{ng} は断るはず"
+            );
+        }
+    }
+
+    #[test]
+    fn 大文字小文字だけが違う名前() {
+        let collisions = |names: &[&str]| -> Vec<String> {
+            case_collisions(names.iter().copied()).into_iter().collect()
+        };
+        assert_eq!(collisions(&["A.png", "a.png", "b.png"]), ["A.png", "a.png"]);
+        assert!(collisions(&["a.png", "b.png"]).is_empty());
+        assert_eq!(
+            collisions(&["A.png", "a.PNG", "A.PNG"]),
+            ["A.PNG", "A.png", "a.PNG"]
+        );
+        assert_eq!(collisions(&["É.png", "é.png"]), ["É.png", "é.png"]);
+    }
+
+    #[test]
+    fn Windowsの予約名のslugの記事は作れない() {
+        let (_tmp, store) = setup();
+        assert!(matches!(
+            store.create_article("con"),
+            Err(StoreError::WindowsReservedSlug { .. })
+        ));
+        // Windowsでは予約名のパスのexistsが真になることがあるので、ディレクトリの中身で見る
+        let names = |dir: &Path| -> Vec<String> {
+            fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(names(&store.posts_dir()).is_empty());
+        assert!(names(&store.assets_base()).is_empty());
+    }
+
+    #[test]
+    fn Windowsの予約名のslugのmdは一覧に載せない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        // Windowsでは書き込みがデバイスへのものになり、ファイルができないことがある。できたときだけ確かめる
+        let _ = fs::write(store.posts_dir().join("con.md"), "");
+        let placed = fs::read_dir(store.posts_dir())
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "con.md");
+        if !placed {
+            return;
+        }
+        let list = store.list_articles().unwrap();
+        assert_eq!(slugs(&list.articles), ["post"]);
+        assert!(list.unreadable.is_empty());
+        assert!(list.broken.is_empty());
     }
 
     #[test]
@@ -1995,6 +2167,8 @@ mod tests {
             reference("."),
             reference("C:x.png"),
             "../../assets/C:x.png".to_string(),
+            reference("a?.png"),
+            "../../assets/nul.png".to_string(),
         ] {
             assert!(
                 matches!(
@@ -2010,6 +2184,10 @@ mod tests {
                 Err(StoreError::InvalidSlug { .. })
             ));
         }
+        assert!(matches!(
+            store.read_image("con", "../../assets/con/01.png"),
+            Err(StoreError::WindowsReservedSlug { .. })
+        ));
         assert!(matches!(
             store.read_image("image", &reference("02.png")),
             Err(StoreError::ImageNotFound { .. })
@@ -2724,6 +2902,12 @@ mod tests {
                     slug: "a".to_string(),
                 },
                 "invalidSlug",
+            ),
+            (
+                StoreError::WindowsReservedSlug {
+                    slug: "con".to_string(),
+                },
+                "windowsReservedSlug",
             ),
         ] {
             assert_eq!(serde_json::to_value(error).unwrap()["kind"], kind);

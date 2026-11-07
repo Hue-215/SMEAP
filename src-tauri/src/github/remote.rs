@@ -677,6 +677,8 @@ mod tests {
             // slugとして正しくない
             ("blog/{slug}", "blog/First-Post"),
             ("{slug}", "a_b"),
+            // Windowsの予約名
+            ("blog/{slug}", "blog/con"),
         ] {
             assert_eq!(
                 slug_of_branch(format, branch),
@@ -880,6 +882,7 @@ mod tests {
                 ("src/content/blog/README.md", OTHER_MD),
                 ("src/content/blog/Foo.md", OTHER_MD),
                 ("src/content/blog/a.txt", OTHER_MD),
+                ("src/content/blog/con.md", OTHER_MD),
             ],
         );
 

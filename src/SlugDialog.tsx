@@ -1,5 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { createArticle, renameArticle, isValidSlug, type Article, type StoreError } from './api'
+import {
+  createArticle,
+  renameArticle,
+  isValidSlug,
+  isWindowsReservedSlug,
+  type Article,
+  type StoreError,
+} from './api'
 import Dialog from './Dialog'
 import { t, type MessageKey } from './i18n'
 
@@ -32,6 +39,7 @@ const texts = {
 const failureMessages = new Map<string, MessageKey>([
   ['alreadyExists', 'slug_dialog.already_exists'],
   ['invalidSlug', 'slug_dialog.invalid'],
+  ['windowsReservedSlug', 'slug_dialog.windows_reserved'],
   ['notFound', 'slug_dialog.not_found'],
   ['slugReserved', 'common.github_slug_reserved'],
   ['slugInUse', 'common.github_slug_in_use'],
@@ -62,7 +70,13 @@ export default function SlugDialog({
     inputRef.current?.select()
   }, [])
 
-  const error = failure ?? (value !== '' && !isValidSlug(value) ? 'slug_dialog.invalid' : null)
+  const error =
+    failure ??
+    (value === '' || isValidSlug(value)
+      ? null
+      : isWindowsReservedSlug(value)
+        ? 'slug_dialog.windows_reserved'
+        : 'slug_dialog.invalid')
   const submitDisabled = submitting || !isValidSlug(value) || value === currentSlug
   const shownSlug = value || '{slug}'
 

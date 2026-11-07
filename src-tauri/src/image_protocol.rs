@@ -33,6 +33,7 @@ fn response_for<R: Runtime>(app: &tauri::AppHandle<R>, path: &str) -> Response<V
         Err(
             StoreError::ImageNotFound { .. }
             | StoreError::InvalidSlug { .. }
+            | StoreError::WindowsReservedSlug { .. }
             | StoreError::InvalidImageReference { .. },
         ) => empty(StatusCode::NOT_FOUND),
         Err(error) => {

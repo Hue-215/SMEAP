@@ -187,7 +187,11 @@ export function exportZip(slug: string): Promise<ExportOutcome> {
 
 // 入力中の案内に使う。Rust側のvalidate_slug(src-tauri/src/store.rs)とそろえる
 export function isValidSlug(slug: string): boolean {
-  return /^[a-z0-9-]+$/.test(slug)
+  return /^[a-z0-9-]+$/.test(slug) && !isWindowsReservedSlug(slug)
+}
+
+export function isWindowsReservedSlug(slug: string): boolean {
+  return /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(slug)
 }
 
 // Rust側の独自プロトコル(src-tauri/src/image_protocol.rs)のURL。
