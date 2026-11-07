@@ -88,15 +88,19 @@ fn read_secret(secret: &dyn SecretStore) -> Result<Option<TokenSet>, GithubError
         .transpose()
 }
 
-// token.jsonが残っていると次の起動で古い組が移ってくるので、消せなければエラーにする
+// token.jsonが残っていると次の起動で古い組が移ってくるので、先に消し、消せなければ書かずにエラーにする
 fn write_secret(
     secret: &dyn SecretStore,
     path: &Path,
     tokens: &TokenSet,
 ) -> Result<(), GithubError> {
+    delete_file(path)?;
+    set_secret(secret, tokens)
+}
+
+fn set_secret(secret: &dyn SecretStore, tokens: &TokenSet) -> Result<(), GithubError> {
     let json = serde_json::to_string(tokens).expect("TokenSet should serialize");
-    secret.set(&json).map_err(secret_error)?;
-    delete_file(path)
+    secret.set(&json).map_err(secret_error)
 }
 
 // token.jsonを先に消す。保存先だけ消えてtoken.jsonが残ると、次の起動で消したはずの組が移ってくるため
@@ -111,7 +115,9 @@ fn migrate(secret: &dyn SecretStore, path: &Path) -> Result<(), GithubError> {
     let Some(tokens) = read_file(path)? else {
         return Ok(());
     };
-    write_secret(secret, path, &tokens)
+    // 書けなければtoken.jsonを残す
+    set_secret(secret, &tokens)?;
+    delete_file(path)
 }
 
 fn read_file(path: &Path) -> Result<Option<TokenSet>, GithubError> {
@@ -241,7 +247,7 @@ impl TokenManager {
                 write(&self.path, &tokens)?;
                 Ok(tokens.access_token)
             }
-            // token.jsonが消せるのは、ログインし直しが必要なとき。通信の失敗や5xxでは残し、次にもう一度取り直す
+            // トークンを消すのは、ログインし直しが必要なとき。通信の失敗や5xxでは残し、次にもう一度取り直す
             Err(GithubError::LoginRequired) => {
                 delete(&self.path)?;
                 Err(GithubError::LoginRequired)
@@ -270,7 +276,7 @@ impl TokenManager {
         Ok(())
     }
 
-    // ログイン・ログアウトでtoken.jsonを書き換える間に取る。取っている間はaccess_tokenを呼ばない(同じロックを取る)
+    // ログイン・ログアウトでトークンを書き換える間に取る。取っている間はaccess_tokenを呼ばない(同じロックを取る)
     pub(crate) fn lock(&self) -> MutexGuard<'_, ()> {
         self.refresh_lock
             .lock()
@@ -647,10 +653,12 @@ mod tests {
         write_secret(&secret, &path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
         assert!(!path.exists());
 
-        // 消せなければエラー
+        // 消せなければ、保存先に書かずにエラー
         let tmp = TempDir::new().unwrap();
         let path = undeletable_file(&tmp);
+        let secret = FakeSecret::default();
         assert!(write_secret(&secret, &path, &tokens(NOW + 3600, NOW + 7200)).is_err());
+        assert_eq!(secret.value(), None);
     }
 
     #[test]
@@ -748,6 +756,12 @@ mod tests {
         }
         assert_eq!(deleted(Ok(())), Ok(()));
         assert_eq!(deleted(Err(keyring::Error::NoEntry)), Ok(()));
-        assert!(deleted(Err(keyring::Error::NoStorageAccess(platform()))).is_err());
+        for error in [
+            keyring::Error::NoStorageAccess(platform()),
+            keyring::Error::PlatformFailure(platform()),
+            keyring::Error::NoDefaultStore,
+        ] {
+            assert!(deleted(Err(error)).is_err());
+        }
     }
 }

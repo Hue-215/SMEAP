@@ -171,7 +171,7 @@ pub fn linked(data_dir: &Path, settings: &GithubSettings) -> bool {
         && token::read(&token_path(data_dir)).is_ok_and(|tokens| tokens.is_some())
 }
 
-// 起動時。token.jsonを読んでchoose_posts_dirする。読めなければログインしていない扱いにし、そのエラーも返す
+// 起動時。トークンを読んでchoose_posts_dirする。読めなければログインしていない扱いにし、そのエラーも返す
 pub fn startup_posts_dir(
     local: PathBuf,
     data_dir: &Path,
