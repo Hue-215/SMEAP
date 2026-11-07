@@ -72,11 +72,13 @@ export default function SlugDialog({
 
   const error =
     failure ??
-    (value === '' || isValidSlug(value)
+    (value === ''
       ? null
       : isWindowsReservedSlug(value)
         ? 'slug_dialog.windows_reserved'
-        : 'slug_dialog.invalid')
+        : isValidSlug(value)
+          ? null
+          : 'slug_dialog.invalid')
   const submitDisabled = submitting || !isValidSlug(value) || value === currentSlug
   const shownSlug = value || '{slug}'
 

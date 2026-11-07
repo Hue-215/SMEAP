@@ -1470,32 +1470,36 @@ fn is_windows_reserved(name: &str) -> bool {
         .split('.')
         .next()
         .unwrap_or_default()
-        .trim_end_matches(' ')
-        .to_lowercase();
-    if matches!(
-        stem.as_str(),
-        "con" | "prn" | "aux" | "nul" | "conin$" | "conout$"
-    ) {
+        .trim_end_matches(' ');
+    let is = |word: &str| stem.eq_ignore_ascii_case(word);
+    if ["con", "prn", "aux", "nul", "conin$", "conout$"]
+        .into_iter()
+        .any(is)
+    {
         return true;
     }
-    let mut chars = stem.chars();
-    let prefix: String = chars.by_ref().take(3).collect();
-    let rest: Vec<char> = chars.collect();
-    matches!(prefix.as_str(), "com" | "lpt")
-        && matches!(rest.as_slice(), [c] if c.is_ascii_digit() || matches!(c, '¹' | '²' | '³'))
+    // COM・LPTは3バイトのASCIIなので、4バイト目からが番号
+    let (Some(prefix), Some(number)) = (stem.get(..3), stem.get(3..)) else {
+        return false;
+    };
+    (prefix.eq_ignore_ascii_case("com") || prefix.eq_ignore_ascii_case("lpt"))
+        && matches!(
+            number,
+            "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
 }
 
-// ほかの名前と大文字小文字だけが違う名前。Windowsでは同じファイルになる
-pub(crate) fn case_collisions<'a>(names: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
+// GitHubから取ってきてよい名前。is_filenameで断る名前と、ほかと大文字小文字だけが違う名前
+// (Windowsでは同じファイルになる)を除く
+pub(crate) fn fetchable_names<'a>(names: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
     let mut groups: BTreeMap<String, Vec<&str>> = BTreeMap::new();
-    for name in names {
+    for name in names.into_iter().filter(|name| is_filename(name)) {
         groups.entry(name.to_lowercase()).or_default().push(name);
     }
     groups
         .into_values()
-        .filter(|group| group.len() > 1)
+        .filter(|group| group.len() == 1)
         .flatten()
-        .map(str::to_string)
         .collect()
 }
 
@@ -1986,17 +1990,20 @@ mod tests {
     }
 
     #[test]
-    fn 大文字小文字だけが違う名前() {
-        let collisions = |names: &[&str]| -> Vec<String> {
-            case_collisions(names.iter().copied()).into_iter().collect()
+    fn GitHubから取ってきてよい名前() {
+        let fetchable = |names: &[&str]| -> Vec<String> {
+            fetchable_names(names.iter().copied())
+                .into_iter()
+                .map(str::to_string)
+                .collect()
         };
-        assert_eq!(collisions(&["A.png", "a.png", "b.png"]), ["A.png", "a.png"]);
-        assert!(collisions(&["a.png", "b.png"]).is_empty());
-        assert_eq!(
-            collisions(&["A.png", "a.PNG", "A.PNG"]),
-            ["A.PNG", "A.png", "a.PNG"]
-        );
-        assert_eq!(collisions(&["É.png", "é.png"]), ["É.png", "é.png"]);
+        // 大文字小文字だけが違う名前は、どれも取らない
+        assert_eq!(fetchable(&["A.png", "a.png", "b.png"]), ["b.png"]);
+        assert_eq!(fetchable(&["a.png", "b.png"]), ["a.png", "b.png"]);
+        assert!(fetchable(&["A.png", "a.PNG", "A.PNG"]).is_empty());
+        assert!(fetchable(&["É.png", "é.png"]).is_empty());
+        // is_filenameで断る名前も取らない
+        assert_eq!(fetchable(&["a?.png", "nul.png", "b.png"]), ["b.png"]);
     }
 
     #[test]

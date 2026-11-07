@@ -398,11 +398,8 @@ pub fn same_as_remote(record: Option<&Record>, local: &LocalFiles, remote: &Arti
     }
     let not_fetched =
         |record: &Record, name: &str| record.assets.get(name).is_none_or(|asset| !asset.fetched);
-    let collisions = crate::store::case_collisions(remote.assets.keys().map(String::as_str));
-    let mut wanted = remote
-        .assets
-        .keys()
-        .filter(|name| crate::store::is_filename(name) && !collisions.contains(*name));
+    let mut wanted =
+        crate::store::fetchable_names(remote.assets.keys().map(String::as_str)).into_iter();
     match record {
         None => wanted.all(|name| local.assets.contains_key(name)),
         Some(record) => {

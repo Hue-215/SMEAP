@@ -743,17 +743,13 @@ pub fn wanted_images(
     };
     let local = store
         .with_lock(|posts_dir, assets_base| state::local_files(posts_dir, assets_base, slug))?;
-    let collisions = crate::store::case_collisions(record.assets.keys().map(String::as_str));
+    // 名前はGitHub上のツリーから来るので、assets/{slug}/の外を指すものなどは取らない
+    let fetchable = crate::store::fetchable_names(record.assets.keys().map(String::as_str));
     Ok(record
         .assets
         .iter()
         .filter(|(name, asset)| {
-            // 名前はGitHub上のツリーから来るので、assets/{slug}/の外を指すものや、
-            // Windowsで1つのファイルになるものは取らない
-            crate::store::is_filename(name)
-                && !collisions.contains(*name)
-                && !asset.fetched
-                && !local.assets.contains_key(*name)
+            fetchable.contains(name.as_str()) && !asset.fetched && !local.assets.contains_key(*name)
         })
         .map(|(name, asset)| (name.clone(), asset.sha.clone()))
         .collect())
@@ -818,10 +814,10 @@ pub fn wanted_shared_images(
         .map(|content| shared_names(slug, &String::from_utf8_lossy(&content)))
         .unwrap_or_default();
     let assets_base = store.assets_base();
-    let collisions = crate::store::case_collisions(shared_assets.keys().map(String::as_str));
+    let fetchable = crate::store::fetchable_names(shared_assets.keys().map(String::as_str));
     let mut wanted = Vec::new();
     for name in names {
-        if collisions.contains(&name) {
+        if !fetchable.contains(name.as_str()) {
             continue;
         }
         let Some(sha) = shared_assets.get(&name) else {
@@ -882,11 +878,11 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
         input.store.with_lock(|posts_dir, assets_base| {
             check_unchanged(input, posts_dir)?;
             let mut state = state::read_state(&state_path, input.basis)?;
-            let collides = state.articles.get(slug).is_some_and(|record| {
-                crate::store::case_collisions(record.assets.keys().map(String::as_str))
-                    .contains(&name)
+            let fetchable = state.articles.get(slug).is_some_and(|record| {
+                crate::store::fetchable_names(record.assets.keys().map(String::as_str))
+                    .contains(name.as_str())
             });
-            if collides {
+            if !fetchable {
                 return Ok(());
             }
             let Some(asset) = state
@@ -897,9 +893,6 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
             else {
                 return Ok(());
             };
-            if !crate::store::is_filename(&name) {
-                return Ok(());
-            }
             let path = assets_base.join(slug).join(&name);
             if path.exists() {
                 return Ok(());
@@ -923,10 +916,11 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
             let state = state::read_state(&state_path, input.basis)?;
             let shared = base_shared_assets(&state);
             let current = shared.and_then(|shared| shared.get(&name));
-            let collides = shared.is_some_and(|shared| {
-                crate::store::case_collisions(shared.keys().map(String::as_str)).contains(&name)
+            let fetchable = shared.is_some_and(|shared| {
+                crate::store::fetchable_names(shared.keys().map(String::as_str))
+                    .contains(name.as_str())
             });
-            if current != Some(&sha) || collides || !crate::store::is_filename(&name) {
+            if current != Some(&sha) || !fetchable {
                 return Ok(());
             }
             let path = assets_base.join(&name);
