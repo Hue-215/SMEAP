@@ -135,6 +135,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 - 設定画面の中身は、今のところGitHub、記事の保存先、フロントマター、画像(使っていない画像の片付け)、このアプリのライセンス、オープンソースライセンスの画面への入口
   - 設定は`settings.json`に持つ。Linuxは`~/.config/net.niigo.smeap/settings.json`、Windowsは`%LOCALAPPDATA%\net.niigo.smeap\settings.json`(Roamingにすると、端末ごとの記事の保存先がほかの端末へ同期されることがあるため)
   - オープンソースライセンスの画面は、使っているパッケージ(JS・Rustのクレート・フォント)を1件1行で並べ、押すと全文を出す。名前で絞り込める。一覧はビルドのときに作る(`scripts/licenses.ts`)。Rustのクレートが載るのは`tauri build`のときだけ
+  - Windowsでは、exeに組み込まれるWebView2 SDKのWebView2Loaderも載せる。Androidでは、APKに入るJava・Kotlinのライブラリを、AndroidX・Material Components・Kotlin・Jacksonのプロジェクトごとに1件で載せる(Gradleの依存を集める仕組みは持たない)
   - ライセンスの種類ごとにはまとめない。MITなどは著作権表示がパッケージごとに違い、それも載せる必要があるため
 - 新しい記事・slugの変更のダイアログでは、slugに使えない文字やWindowsの予約名が入るとその場で知らせ、書き出し先のパスも見せる
 - 保存の確認のダイアログのボタンは、左から「破棄」「キャンセル」「保存」。「破棄」は左端に置き、キャンセルと保存はほかのダイアログと同じく右寄せで並べる

@@ -138,8 +138,58 @@ async function collectRustLicenses(target: string): Promise<License[]> {
   }))
 }
 
-// ライセンスの一覧。targetはtauri buildが渡すターゲットの三つ組で、あるときはRustのクレートも
-// 集める。
+function licenseTexts(...files: string[]): string {
+  return files
+    .map((file) => readFileSync(join(rootDir, 'scripts/license-texts', file), 'utf8'))
+    .join('\n\n\n')
+}
+
+// cargo aboutにもnode_modulesにも出てこないが、ターゲットによって配るものに入るもの。
+// 文はscripts/license-textsに、配布元のパッケージ(NuGet・Maven Central)から取って置いている。
+function platformLicenses(target: string): License[] {
+  // webview2-com-sysが、MicrosoftのWebView2 SDKのWebView2LoaderStatic.libを静的にリンクする
+  if (target.endsWith('-windows-msvc')) {
+    return [
+      {
+        name: 'WebView2 SDK',
+        version: '',
+        license: 'BSD-3-Clause',
+        text: licenseTexts('WebView2-LICENSE.txt'),
+      },
+    ]
+  }
+  // tauri・プラグインのAndroid側と、src-tauri/gen/android/app/build.gradle.ktsが使うライブラリ
+  if (target.includes('-android')) {
+    const apache = (name: string): License => ({
+      name,
+      version: '',
+      license: 'Apache-2.0',
+      text: licenseTexts('Apache-2.0.txt'),
+    })
+    return [
+      apache('AndroidX'),
+      apache('Material Components for Android'),
+      apache('Kotlin / kotlinx.coroutines'),
+      {
+        name: 'Jackson',
+        version: '',
+        // jackson-coreがFastDoubleParser(MIT)と、その中にbigint(BSD-2-Clause)を含む
+        license: 'Apache-2.0 AND MIT AND BSD-2-Clause',
+        text: licenseTexts(
+          'Jackson-NOTICE.txt',
+          'Apache-2.0.txt',
+          'FastDoubleParser-NOTICE.txt',
+          'FastDoubleParser-LICENSE.txt',
+          'bigint-LICENSE.txt',
+        ),
+      },
+    ]
+  }
+  return []
+}
+
+// ライセンスの一覧。targetはtauri buildが渡すターゲットの三つ組で、あるときはRustのクレートと、
+// ターゲットのOSで配るものに入るものも集める。
 async function collectLicenses(target: string | undefined): Promise<License[]> {
   const app: License = {
     name: 'SMEAP',
@@ -148,7 +198,9 @@ async function collectLicenses(target: string | undefined): Promise<License[]> {
     text: readFileSync(join(rootDir, 'LICENSE'), 'utf8'),
   }
   const rest = collectJsLicenses()
-  if (target !== undefined) rest.push(...(await collectRustLicenses(target)))
+  if (target !== undefined) {
+    rest.push(...(await collectRustLicenses(target)), ...platformLicenses(target))
+  }
   rest.push(
     {
       name: 'Noto Sans JP / Noto Serif JP',
