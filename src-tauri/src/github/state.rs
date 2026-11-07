@@ -456,6 +456,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    #[cfg(unix)]
     use crate::github::fake::read_only_dir;
 
     fn basis() -> Basis {

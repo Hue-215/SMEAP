@@ -1057,9 +1057,10 @@ mod tests {
 
     use super::*;
     use crate::github::config::github_posts_dir;
+    #[cfg(unix)]
+    use crate::github::fake::read_only_dir;
     use crate::github::fake::{
-        blob_sha, json_response, matching_refs_url, read_only_dir, repo_ref, url_of, FakeRepo,
-        RouteTransport,
+        blob_sha, json_response, matching_refs_url, repo_ref, url_of, FakeRepo, RouteTransport,
     };
     use crate::github::http::{Method, Response};
     use crate::github::push;

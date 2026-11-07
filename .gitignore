@@ -10,7 +10,6 @@ dist/
 /src-tauri/icons/Square*Logo.png
 /src-tauri/icons/StoreLogo.png
 /src-tauri/icons/icon.icns
-/src-tauri/icons/icon.ico
 /src-tauri/icons/ios/
 
 # Androidの署名の鍵。リポジトリの外に置くが、誤って置いたときのため
