@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { EditorView } from '@codemirror/view'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
-import { editorExtensions } from './editor'
+import { editorExtensions } from './codemirror'
 
 interface EditorProps {
   slug: string

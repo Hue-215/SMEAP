@@ -79,7 +79,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
   - Androidはアプリが閉じられるのを知る手段が無いので、ダイアログは出さず、アプリが裏へ回ったときに保存する
   - 新しい記事のダイアログと、開いている記事のslugの変更のダイアログは、開く前に保存する。保存できなければ開かない
 - 上書きの前に直前の1世代をバックアップとして残す。バックアップは書き出しの形の外に置き、リポジトリに重ねたときに入り込まないようにする
-  - アプリのデータ領域の`backup/{記事のディレクトリのパスのハッシュ}/{slug}.md`。Linuxは`~/.local/share/net.niigo.smeap/backup/`。別のプロジェクトにある同じslugの記事とは分ける
+  - アプリのデータ領域の`backup/{記事のディレクトリのパスのハッシュ}/{slug}.md`。Linuxは`~/.local/share/net.niigo.smeap/backup/`、Windowsは`%LOCALAPPDATA%\net.niigo.smeap\backup\`。別のプロジェクトにある同じslugの記事とは分ける
 - 記事を削除すると、mdと`assets/{slug}/`、バックアップ、移した画像を消す。元には戻せないので、確認のダイアログを出す
   - 開いている記事を消したら、何も選んでいない状態にする。未保存の変更は確かめずに捨てる
 - GitHubと連携しているときは、保存先と、記事の一覧・slugの変更・削除の扱いが変わる([GitHub連携](#github連携))
@@ -93,7 +93,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 - 任意の項目はheroImageとupdatedDate。項目は[astro-blog-frontmatter.md](astro-blog-frontmatter.md)を参照
   - 設定画面の「フロントマター」の節で、項目ごとに有効・無効を切り替える。設定はアプリ全体で1つで、既定はどちらも有効
   - 無効にした項目は、編集画面の欄と警告を出さない。mdに書いてある値はそのまま残す
-- pubDateは、説明の下に仕切り線で挟んだ行に置く。日付の入力欄にする。Linuxでは`2026-07-02`の形で表示し、Androidは端末の設定に従う
+- pubDateは、説明の下に仕切り線で挟んだ行に置く。日付の入力欄にする。表示の形は端末の言語・地域の設定に従う
 - updatedDateは、pubDateの行の右(幅が足りなければ次の行)に「更新日」の日付の入力欄で置く。値があれば右に外すボタンを置く。読み書きはpubDateと同じで、書く位置はpubDateの次
   - GitHubと連携している間は、保存したときに日付を自動で替える([日付の自動の更新](#日付の自動の更新))
 - heroImageはタイトルと説明の右に画像で出し、押すと選び直す。未設定のときは「サムネイル未設定」と出す。右上のボタンで外せる(外すと画像のファイルを「使っていない画像」と同じ場所へ移す。本文が参照していれば残す)
@@ -130,7 +130,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
   - 文字を選んだ状態でURLを貼り付けると`[文字](URL)`にする
   - URLだけを書いた場合はそのままにする。AstroのMarkdownはGFMが既定で有効なので、URLだけでもリンクになる。編集欄ではURLに下線を付けてリンクだと分かるようにする
 - 設定画面の中身は、今のところGitHub、記事の保存先、フロントマター、画像(使っていない画像の片付け)、このアプリのライセンス、オープンソースライセンスの画面への入口
-  - 設定はアプリの設定領域の`settings.json`に持つ。Linuxは`~/.config/net.niigo.smeap/settings.json`
+  - 設定は`settings.json`に持つ。Linuxは`~/.config/net.niigo.smeap/settings.json`、Windowsは`%LOCALAPPDATA%\net.niigo.smeap\settings.json`(Roamingにすると、端末ごとの記事の保存先がほかの端末へ同期されることがあるため)
   - オープンソースライセンスの画面は、使っているパッケージ(JS・Rustのクレート・フォント)を1件1行で並べ、押すと全文を出す。名前で絞り込める。一覧はビルドのときに作る(`scripts/licenses.ts`)。Rustのクレートが載るのは`tauri build`のときだけ
   - ライセンスの種類ごとにはまとめない。MITなどは著作権表示がパッケージごとに違い、それも載せる必要があるため
 - 新しい記事・slugの変更のダイアログでは、slugに使えない文字が入るとその場で知らせ、書き出し先のパスも見せる
