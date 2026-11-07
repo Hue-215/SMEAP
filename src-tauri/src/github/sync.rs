@@ -743,12 +743,13 @@ pub fn wanted_images(
     };
     let local = store
         .with_lock(|posts_dir, assets_base| state::local_files(posts_dir, assets_base, slug))?;
+    // 名前はGitHub上のツリーから来るので、assets/{slug}/の外を指すものなどは取らない
+    let fetchable = crate::store::fetchable_names(record.assets.keys().map(String::as_str));
     Ok(record
         .assets
         .iter()
         .filter(|(name, asset)| {
-            // 名前はGitHub上のツリーから来るので、assets/{slug}/の外を指すものは取らない
-            crate::store::is_filename(name) && !asset.fetched && !local.assets.contains_key(*name)
+            fetchable.contains(name.as_str()) && !asset.fetched && !local.assets.contains_key(*name)
         })
         .map(|(name, asset)| (name.clone(), asset.sha.clone()))
         .collect())
@@ -813,8 +814,12 @@ pub fn wanted_shared_images(
         .map(|content| shared_names(slug, &String::from_utf8_lossy(&content)))
         .unwrap_or_default();
     let assets_base = store.assets_base();
+    let fetchable = crate::store::fetchable_names(shared_assets.keys().map(String::as_str));
     let mut wanted = Vec::new();
     for name in names {
+        if !fetchable.contains(name.as_str()) {
+            continue;
+        }
         let Some(sha) = shared_assets.get(&name) else {
             continue;
         };
@@ -873,6 +878,13 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
         input.store.with_lock(|posts_dir, assets_base| {
             check_unchanged(input, posts_dir)?;
             let mut state = state::read_state(&state_path, input.basis)?;
+            let fetchable = state.articles.get(slug).is_some_and(|record| {
+                crate::store::fetchable_names(record.assets.keys().map(String::as_str))
+                    .contains(name.as_str())
+            });
+            if !fetchable {
+                return Ok(());
+            }
             let Some(asset) = state
                 .articles
                 .get_mut(slug)
@@ -881,9 +893,6 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
             else {
                 return Ok(());
             };
-            if !crate::store::is_filename(&name) {
-                return Ok(());
-            }
             let path = assets_base.join(slug).join(&name);
             if path.exists() {
                 return Ok(());
@@ -905,8 +914,13 @@ pub fn fetch_images(input: &SyncInput<'_>, slug: &str) -> Result<usize, GithubEr
         input.store.with_lock(|posts_dir, assets_base| {
             check_unchanged(input, posts_dir)?;
             let state = state::read_state(&state_path, input.basis)?;
-            let current = base_shared_assets(&state).and_then(|shared| shared.get(&name));
-            if current != Some(&sha) || !crate::store::is_filename(&name) {
+            let shared = base_shared_assets(&state);
+            let current = shared.and_then(|shared| shared.get(&name));
+            let fetchable = shared.is_some_and(|shared| {
+                crate::store::fetchable_names(shared.keys().map(String::as_str))
+                    .contains(name.as_str())
+            });
+            if current != Some(&sha) || !fetchable {
                 return Ok(());
             }
             let path = assets_base.join(&name);
@@ -1048,7 +1062,7 @@ pub fn article_state(
 #[allow(non_snake_case)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::mpsc;
     use std::sync::Arc;
 
@@ -1086,6 +1100,10 @@ mod tests {
     const ABOUT_PNG: &[u8] = b"about-1\n";
     const UNUSED_PNG: &[u8] = b"unused-1\n";
     const MISSING_MD: &[u8] = b"---\ntitle: \"missing\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/missing.png\"\n---\n![about](../../assets/about.png)\n";
+    // 共有の画像のA.pngとb.pngを参照する
+    const CASE_MD: &[u8] = b"---\ntitle: \"case\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/A.png\"\n---\n![b](../../assets/b.png)\n";
+    // 共有の画像のb.pngだけを参照する
+    const B_ONLY_MD: &[u8] = b"---\ntitle: \"b\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n![b](../../assets/b.png)\n";
     const DOTDOT_MD: &[u8] = b"---\ntitle: \"dotdot\"\ndescription: \"\"\npubDate: 2026-01-01\n---\n![x](../../assets/..)\n![y](../../assets/C:x.png)\n![about](../../assets/about.png)\n";
     const DRAFT_MD: &[u8] = b"---\ntitle: \"draft\"\ndescription: \"\"\npubDate: 2026-01-01\nheroImage: \"../../assets/shared.png\"\n---\n";
 
@@ -2792,7 +2810,178 @@ mod tests {
         assert!(!test.assets_dir("post").join("sub").exists());
     }
 
-    // 画像の取得: 1つ取れなくても残りは取り、取れなかった件数を返す
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap())
+                    .filter(|entry| entry.file_type().unwrap().is_file())
+                    .map(|entry| entry.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    }
+
+    fn blob_urls(test: &SyncTest, from: usize) -> Vec<String> {
+        test.transport.requests()[from..]
+            .iter()
+            .map(|request| request.url.clone())
+            .filter(|url| url.contains("/git/blobs/"))
+            .collect()
+    }
+
+    #[test]
+    fn 大文字小文字だけが違う名前の画像は取らない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", MD),
+                ("src/assets/post/A.png", PNG),
+                ("src/assets/post/a.png", PNG2),
+                ("src/assets/post/b.png", PNG3),
+            ],
+        );
+        test.sync().unwrap();
+
+        let before = test.transport.requests().len();
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert_eq!(file_names(&test.assets_dir("post")), ["b.png"]);
+        let urls = blob_urls(&test, before);
+        assert!(
+            !urls
+                .iter()
+                .any(|url| url.contains(&blob_sha(PNG)) || url.contains(&blob_sha(PNG2))),
+            "{urls:?}"
+        );
+        let record = &test.state()["articles"]["post"];
+        assert_eq!(record["assets"]["A.png"]["fetched"], false);
+        assert_eq!(record["assets"]["a.png"]["fetched"], false);
+    }
+
+    #[test]
+    fn Windowsで使えない名前の画像は取らない() {
+        let test = SyncTest::new();
+        let _repo = test.post_synced();
+        // リポジトリに無いblobなので、取りに行けば応答の登録が無くて失敗する
+        test.edit_state(|state| {
+            state["articles"]["post"]["assets"]["a?.png"] =
+                serde_json::json!({ "sha": blob_sha(PNG2), "fetched": false });
+            state["articles"]["post"]["assets"]["nul.png"] =
+                serde_json::json!({ "sha": blob_sha(PNG3), "fetched": false });
+        });
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert_eq!(file_names(&test.assets_dir("post")), ["01.png"]);
+    }
+
+    #[test]
+    fn 通信の間に記録が替わって大文字小文字だけが違う名前になったら書かない() {
+        let test = SyncTest::new();
+        let _repo = test.post_synced();
+        let sha = blob_sha(PNG);
+        let state_path = test.state_path.clone();
+        test.transport.on(
+            Method::Get,
+            &url_of(
+                &["repos", "owner", "blog", "git", "blobs", sha.as_str()],
+                &[],
+            ),
+            Box::new(move |_| {
+                // 通信の間に、読み込みで01.PNGが記録に入る
+                let mut state: Value =
+                    serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+                state["articles"]["post"]["assets"]["01.PNG"] =
+                    serde_json::json!({ "sha": blob_sha(PNG2), "fetched": false });
+                fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+                Ok(raw_response(200, PNG.to_vec()))
+            }),
+        );
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert!(file_names(&test.assets_dir("post")).is_empty());
+        assert_eq!(
+            test.state()["articles"]["post"]["assets"]["01.png"]["fetched"],
+            false
+        );
+    }
+
+    #[test]
+    fn 大文字小文字だけが違う名前の共有の画像は取らない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", CASE_MD),
+                ("src/assets/A.png", SHARED_PNG),
+                ("src/assets/a.png", ABOUT_PNG),
+                ("src/assets/b.png", PNG),
+            ],
+        );
+        test.sync().unwrap();
+
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert_eq!(file_names(&test.assets_base), ["b.png"]);
+    }
+
+    #[test]
+    fn 参照していない共有の画像どうしが衝突していても参照している画像は取る() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", B_ONLY_MD),
+                ("src/assets/X.png", SHARED_PNG),
+                ("src/assets/x.png", ABOUT_PNG),
+                ("src/assets/b.png", PNG),
+            ],
+        );
+        test.sync().unwrap();
+
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert_eq!(file_names(&test.assets_base), ["b.png"]);
+    }
+
+    #[test]
+    fn 通信の間にベースの共有の画像が衝突するようになったら書かない() {
+        let test = SyncTest::new();
+        let repo = test.new_repo();
+        repo.branch(
+            &test.transport,
+            "main",
+            &[
+                ("src/content/blog/post.md", B_ONLY_MD),
+                ("src/assets/b.png", PNG),
+            ],
+        );
+        test.sync().unwrap();
+        let sha = blob_sha(PNG);
+        let state_path = test.state_path.clone();
+        test.transport.on(
+            Method::Get,
+            &url_of(
+                &["repos", "owner", "blog", "git", "blobs", sha.as_str()],
+                &[],
+            ),
+            Box::new(move |_| {
+                // 通信の間に、読み込みでB.pngがベースに入る
+                let mut state: Value =
+                    serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+                state["remote"]["base"]["sharedAssets"]["B.png"] = Value::String(blob_sha(PNG2));
+                fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+                Ok(raw_response(200, PNG.to_vec()))
+            }),
+        );
+        assert_eq!(test.fetch_images("post").unwrap(), 0);
+        assert!(file_names(&test.assets_base).is_empty());
+    }
+
     #[test]
     fn assetsの外を指す名前の画像は取らない() {
         let test = SyncTest::new();
@@ -2809,6 +2998,7 @@ mod tests {
         assert_eq!(fs::read(test.image_path("post/01.png")).unwrap(), PNG);
     }
 
+    // 画像の取得: 1つ取れなくても残りは取り、取れなかった件数を返す
     #[test]
     fn 画像を1つ取れなくても残りは取り取れなかった件数を返す() {
         let test = SyncTest::new();

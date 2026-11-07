@@ -1,7 +1,7 @@
 //! ブログ記事のファイルを読み書きする保存層。Tauriには依存しない。
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs;
@@ -27,6 +27,8 @@ const DATE_FORMAT: &str = "%Y-%m-%d";
 pub enum StoreError {
     #[error("slugが不正です: {slug}")]
     InvalidSlug { slug: String },
+    #[error("Windowsの予約名のslugです: {slug}")]
+    WindowsReservedSlug { slug: String },
     #[error("記事が既にあります: {slug}")]
     AlreadyExists { slug: String },
     #[error("記事がありません: {slug}")]
@@ -209,13 +211,17 @@ pub fn validate_slug(slug: &str) -> Result<(), StoreError> {
         && slug
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
-    if valid {
-        Ok(())
-    } else {
-        Err(StoreError::InvalidSlug {
+    if !valid {
+        return Err(StoreError::InvalidSlug {
             slug: slug.to_string(),
-        })
+        });
     }
+    if is_windows_reserved(slug) {
+        return Err(StoreError::WindowsReservedSlug {
+            slug: slug.to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn today() -> String {
@@ -1443,15 +1449,59 @@ fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
     }
 }
 
-// `..`を含む名前はまとめて弾く。`.`だけの名前も弾く
-// Windowsでは`C:x`をjoinすると元のパスが捨てられ、`a:b`は代替データストリームになるので`:`も弾く
+// `..`を含む名前はまとめて弾く。`.`だけの名前も弾く。
+// Windowsでは`C:x`をjoinすると元のパスが捨てられ、`a:b`は代替データストリームになるので`:`も弾く。
+// ほかにもWindowsで作れない名前は、どのOSでも弾く(同じリポジトリをWindowsでも扱うため)。
+// 末尾の`.`と空白は、Windowsが取り除いて別の名前と同じファイルにする。
 pub(crate) fn is_filename(name: &str) -> bool {
     !name.is_empty()
         && name != "."
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !name.contains(':')
         && !name.contains("..")
+        && !name
+            .chars()
+            .any(|c| matches!(c, '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*') || c < ' ')
+        && !name.ends_with(['.', ' '])
+        && !is_windows_reserved(name)
+}
+
+// Windowsは、最初の`.`より前(末尾の空白を除く)が予約名の名前を、拡張子があってもデバイスとして扱う。
+// `conin$`・`conout$`は拡張子付きの扱いが確かめられないので、多めに断る
+fn is_windows_reserved(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(' ');
+    let is = |word: &str| stem.eq_ignore_ascii_case(word);
+    if ["con", "prn", "aux", "nul", "conin$", "conout$"]
+        .into_iter()
+        .any(is)
+    {
+        return true;
+    }
+    // COM・LPTは3バイトのASCIIなので、4バイト目からが番号
+    let (Some(prefix), Some(number)) = (stem.get(..3), stem.get(3..)) else {
+        return false;
+    };
+    (prefix.eq_ignore_ascii_case("com") || prefix.eq_ignore_ascii_case("lpt"))
+        && matches!(
+            number,
+            "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
+}
+
+// GitHubから取ってきてよい名前。is_filenameで断る名前と、ほかと大文字小文字だけが違う名前
+// (Windowsでは同じファイルになる)を除く。to_lowercaseはNTFSの対応表と一部の文字(ケルビン記号など)で違うが、除きすぎる側に外れるだけ
+pub(crate) fn fetchable_names<'a>(names: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
+    let mut groups: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for name in names.into_iter().filter(|name| is_filename(name)) {
+        groups.entry(name.to_lowercase()).or_default().push(name);
+    }
+    groups
+        .into_values()
+        .filter(|group| group.len() == 1)
+        .flatten()
+        .collect()
 }
 
 // `src/content/`の下のディレクトリ名を確かめる。`.`で始まる名前はAstroのglobが読まないので断る
@@ -1864,6 +1914,138 @@ mod tests {
                 "{ng} は不正なはず"
             );
         }
+        for ok in ["com10", "console", "con-1", "nul2"] {
+            assert!(validate_slug(ok).is_ok(), "{ok} は妥当なはず");
+        }
+        for reserved in ["con", "prn", "aux", "nul", "com0", "com9", "lpt0", "lpt9"] {
+            assert!(
+                matches!(
+                    validate_slug(reserved),
+                    Err(StoreError::WindowsReservedSlug { .. })
+                ),
+                "{reserved} はWindowsの予約名のはず"
+            );
+        }
+    }
+
+    #[test]
+    fn ファイル名の検証() {
+        for ok in [
+            "01.png",
+            "console.png",
+            "com10.png",
+            "a b.png",
+            ".hidden.png",
+            "a.con",
+            ".con",
+            // 3バイト目が文字の途中になる名前
+            "éé.png",
+        ] {
+            assert!(is_filename(ok), "{ok} は通るはず");
+        }
+        for ng in [
+            // パスとして使えない名前
+            "",
+            ".",
+            "a/b.png",
+            "a\\b.png",
+            "C:x.png",
+            "a..b.png",
+            // Windowsの予約名
+            "nul.png",
+            "con.tar.gz",
+            "CON",
+            "Con.png",
+            "con .png",
+            "COM¹.txt",
+            "lpt³",
+            "conin$",
+            "CONOUT$.png",
+            // Windowsで使えない文字
+            "a?.png",
+            "a<b.png",
+            "a>b.png",
+            "a\"b.png",
+            "a|b.png",
+            "a*.png",
+            "a\u{1}b.png",
+            "a\u{1f}b.png",
+            // 末尾の.と空白
+            "a.png.",
+            "a.png ",
+        ] {
+            assert!(!is_filename(ng), "{ng:?} は断るはず");
+        }
+    }
+
+    #[test]
+    fn ディレクトリ名の検証() {
+        assert!(validate_posts_dir_name("blog").is_ok());
+        for ng in ["nul", "a?"] {
+            assert!(
+                matches!(
+                    validate_posts_dir_name(ng),
+                    Err(StoreError::InvalidPostsDirName { .. })
+                ),
+                "{ng} は断るはず"
+            );
+        }
+    }
+
+    #[test]
+    fn GitHubから取ってきてよい名前() {
+        let fetchable = |names: &[&str]| -> Vec<String> {
+            fetchable_names(names.iter().copied())
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        };
+        // 大文字小文字だけが違う名前は、どれも取らない
+        assert_eq!(fetchable(&["A.png", "a.png", "b.png"]), ["b.png"]);
+        assert_eq!(fetchable(&["a.png", "b.png"]), ["a.png", "b.png"]);
+        assert!(fetchable(&["A.png", "a.PNG", "A.PNG"]).is_empty());
+        assert!(fetchable(&["É.png", "é.png"]).is_empty());
+        // is_filenameで断る名前も取らない
+        assert_eq!(fetchable(&["a?.png", "nul.png", "b.png"]), ["b.png"]);
+    }
+
+    #[test]
+    fn Windowsの予約名のslugの記事は作れない() {
+        let (_tmp, store) = setup();
+        assert!(matches!(
+            store.create_article("con"),
+            Err(StoreError::WindowsReservedSlug { .. })
+        ));
+        // Windowsでは予約名のパスのexistsが真になることがあるので、ディレクトリの中身で見る
+        let names = |dir: &Path| -> Vec<String> {
+            fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(names(&store.posts_dir()).is_empty());
+        assert!(names(&store.assets_base()).is_empty());
+    }
+
+    #[test]
+    fn Windowsの予約名のslugのmdは一覧に載せない() {
+        let (_tmp, store) = setup();
+        store.create_article("post").unwrap();
+        // Windowsでは書き込みがデバイスへのものになり、ファイルができないことがある。できたときだけ確かめる
+        let _ = fs::write(store.posts_dir().join("con.md"), "");
+        let placed = fs::read_dir(store.posts_dir())
+            .unwrap()
+            .any(|entry| entry.unwrap().file_name() == "con.md");
+        if !placed {
+            return;
+        }
+        let list = store.list_articles().unwrap();
+        assert_eq!(slugs(&list.articles), ["post"]);
+        assert!(list.unreadable.is_empty());
+        assert!(list.broken.is_empty());
     }
 
     #[test]
@@ -1995,6 +2177,8 @@ mod tests {
             reference("."),
             reference("C:x.png"),
             "../../assets/C:x.png".to_string(),
+            reference("a?.png"),
+            "../../assets/nul.png".to_string(),
         ] {
             assert!(
                 matches!(
@@ -2010,6 +2194,10 @@ mod tests {
                 Err(StoreError::InvalidSlug { .. })
             ));
         }
+        assert!(matches!(
+            store.read_image("con", "../../assets/con/01.png"),
+            Err(StoreError::WindowsReservedSlug { .. })
+        ));
         assert!(matches!(
             store.read_image("image", &reference("02.png")),
             Err(StoreError::ImageNotFound { .. })
@@ -2724,6 +2912,12 @@ mod tests {
                     slug: "a".to_string(),
                 },
                 "invalidSlug",
+            ),
+            (
+                StoreError::WindowsReservedSlug {
+                    slug: "con".to_string(),
+                },
+                "windowsReservedSlug",
             ),
         ] {
             assert_eq!(serde_json::to_value(error).unwrap()["kind"], kind);
