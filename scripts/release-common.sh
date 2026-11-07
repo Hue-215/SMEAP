@@ -1,7 +1,7 @@
 # 配布用のビルドのスクリプト(release-build.sh・release-build-android.sh)が読み込む共通の部分。
 # ビルドした人の絶対パス(ホームディレクトリ・CARGO_HOME・このリポジトリの場所)を、バイナリに
 # 焼き込まれるパス(依存クレートのパニックの位置等)から外す指定と、外れたことの検査を持つ。
-# 画面のライセンスの一覧を作るcargo-aboutが入っているかも、ここで確かめる。
+# 画面のライセンスの一覧を作るcargo-aboutが入っているかと、一覧にOSごとの項目が載ったかの検査も持つ。
 
 if [[ -n "${RUSTFLAGS:-}" || -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
   echo "RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS を外してから実行してください(指定がこのスクリプトの置き換えの指定で黙って捨てられるため)" >&2
@@ -57,6 +57,15 @@ export_remap_flags() {
   # 空白を含むパスでも割れないよう、区切りが0x1fのCARGO_ENCODED_RUSTFLAGSで渡す。
   CARGO_ENCODED_RUSTFLAGS="$(IFS=$'\x1f'; echo "${prefixes[*]}")"
   export CARGO_ENCODED_RUSTFLAGS
+}
+
+# 画面のライセンスの一覧に、OSごとの項目(scripts/licenses.tsのplatformLicenses)が載ったかを確かめる。
+# 載るかはtauri-cliが渡すTAURI_ENV_TARGET_TRIPLEで決まり、外れると黙って抜けるため。
+check_licenses_include() {
+  if ! grep -q -F -- "$1" "$root"/dist/assets/*.js; then
+    echo "ライセンスの一覧に $1 が載っていません" >&2
+    exit 1
+  fi
 }
 
 # 渡されたファイル(フォルダなら中のすべてのファイル)に、置き換えたはずのパスとホームの親が残っていないかを確かめる。

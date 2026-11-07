@@ -138,8 +138,61 @@ async function collectRustLicenses(target: string): Promise<License[]> {
   }))
 }
 
-// ライセンスの一覧。targetはtauri buildが渡すターゲットの三つ組で、あるときはRustのクレートも
-// 集める。
+function licenseTexts(...files: string[]): string {
+  return files
+    .map((file) => readFileSync(join(rootDir, 'scripts/license-texts', file), 'utf8'))
+    .join('\n\n\n')
+}
+
+// cargo aboutにもnode_modulesにも出てこないが、ターゲットによって配るものに入るもの。
+// 文はscripts/license-textsに写してある。WebView2はNuGetのMicrosoft.Web.WebView2 1.0.3650.58、
+// JacksonはMaven Centralのjackson-core 2.15.3のMETA-INF、FastDoubleParserのMITの文はjarに無いので
+// GitHubの522be16eから。
+function platformLicenses(target: string): License[] {
+  // webview2-com-sysが、MicrosoftのWebView2 SDKのWebView2Loaderをリンクする(msvcでは静的に、gnuではDLLで)
+  if (target.includes('-windows-')) {
+    return [
+      {
+        name: 'WebView2 SDK',
+        version: '',
+        license: 'BSD-3-Clause',
+        text: licenseTexts('WebView2-LICENSE.txt'),
+      },
+    ]
+  }
+  // tauri・プラグインのAndroid側と、src-tauri/gen/android/app/build.gradle.ktsが使うライブラリ。
+  // Gradleから集めていないので、依存が増えたら手で足す
+  if (target.includes('-android')) {
+    const apache = (name: string): License => ({
+      name,
+      version: '',
+      license: 'Apache-2.0',
+      text: licenseTexts('Apache-2.0.txt'),
+    })
+    return [
+      apache('AndroidX'),
+      apache('Material Components for Android'),
+      apache('Kotlin / kotlinx.coroutines'),
+      {
+        name: 'Jackson',
+        version: '',
+        // jackson-coreがFastDoubleParser(MIT)を含み、その中にbigint(BSD-2-Clause)のコードがある
+        license: 'Apache-2.0 AND MIT AND BSD-2-Clause',
+        text: licenseTexts(
+          'Jackson-NOTICE.txt',
+          'Apache-2.0.txt',
+          'FastDoubleParser-NOTICE.txt',
+          'FastDoubleParser-LICENSE.txt',
+          'bigint-LICENSE.txt',
+        ),
+      },
+    ]
+  }
+  return []
+}
+
+// ライセンスの一覧。targetはtauri buildが渡すターゲットの三つ組で、あるときはRustのクレートと
+// platformLicensesのものも集める。
 async function collectLicenses(target: string | undefined): Promise<License[]> {
   const app: License = {
     name: 'SMEAP',
@@ -148,7 +201,9 @@ async function collectLicenses(target: string | undefined): Promise<License[]> {
     text: readFileSync(join(rootDir, 'LICENSE'), 'utf8'),
   }
   const rest = collectJsLicenses()
-  if (target !== undefined) rest.push(...(await collectRustLicenses(target)))
+  if (target !== undefined) {
+    rest.push(...(await collectRustLicenses(target)), ...platformLicenses(target))
+  }
   rest.push(
     {
       name: 'Noto Sans JP / Noto Serif JP',
@@ -192,7 +247,7 @@ export default function licenses(): Plugin {
     },
     async load(id) {
       if (id !== '\0virtual:licenses') return null
-      // クレートは、tauri buildがTAURI_ENV_*を渡したときだけ集める。素のvite build(CIのフロントエンドの
+      // クレートとplatformLicensesのものは、tauri buildがTAURI_ENV_*を渡したときだけ集める。素のvite build(CIのフロントエンドの
       // ジョブ)と開発サーバーでは集めない
       const target = process.env.TAURI_ENV_TARGET_TRIPLE
       if (
