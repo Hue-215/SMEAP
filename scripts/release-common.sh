@@ -67,7 +67,7 @@ check_no_absolute_paths() {
   for path in "${paths[@]}"; do
     if ((windows)); then
       # 区切りは\と/のどちらでも書かれ、ドライブの文字やフォルダの名前の大文字小文字も揃わない
-      path="$(cygpath -w "$path")"
+      path="$(native_path "$path")"
       patterns+=("$path\\" "$(cygpath -m "$path")/")
     else
       patterns+=("$path/")

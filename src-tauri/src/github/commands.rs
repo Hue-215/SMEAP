@@ -143,7 +143,7 @@ impl GitHub {
         let settings = settings::read_from(&settings::file_path(app)?)?;
         settings::logout(
             store,
-            self.manager.tokens(),
+            self.tokens(),
             &settings::data_dir(app)?,
             local_dir(&self.default_local_dir, &settings),
         )?;
@@ -254,7 +254,7 @@ pub fn github_status(
 ) -> Result<GithubStatus, CommandError> {
     let settings = settings::read_from(&settings::file_path(&app)?)?;
     let local = local_dir(&github.default_local_dir, &settings);
-    let token_read = github.manager.tokens().read();
+    let token_read = github.tokens().read();
     // トークンが読めたときだけ、その期限とアカウントを確かめる
     let (access, user) = match &token_read {
         Ok(Some(_)) => {
@@ -853,7 +853,7 @@ mod tests {
     use crate::github::config::github_posts_dir;
     #[cfg(unix)]
     use crate::github::fake::read_only_dir;
-    use crate::github::fake::{desktop_tokens, FakeSecret, FakeTransport};
+    use crate::github::fake::{desktop_tokens, FakeTransport};
     use crate::store::Store;
 
     const NOW: i64 = 1_000_000;
@@ -900,14 +900,12 @@ mod tests {
     }
 
     // 偽物の資格情報の保存先を使う
-    fn manager_of(data_dir: &Path) -> (TokenManager, Arc<FakeSecret>) {
-        let (tokens, secret) = desktop_tokens(data_dir);
-        let manager = TokenManager::new(
-            tokens,
+    fn manager_of(data_dir: &Path) -> TokenManager {
+        TokenManager::new(
+            desktop_tokens(data_dir).0,
             CLIENT_ID.to_string(),
             Arc::new(FakeTransport::new(vec![])),
-        );
-        (manager, secret)
+        )
     }
 
     // save_loginの tests
@@ -921,7 +919,7 @@ mod tests {
         let local = tmp.path().join("local/src/content/blog");
         fs::create_dir_all(&local).unwrap();
         let store = Store::new(local.clone(), tmp.path().join("backup")).unwrap();
-        let (manager, _) = manager_of(&data_dir);
+        let manager = manager_of(&data_dir);
         let default_local_dir = tmp.path().join("default/src/content/blog");
         save_login(
             &data_dir,
@@ -952,7 +950,7 @@ mod tests {
         let local = tmp.path().join("local/src/content/blog");
         fs::create_dir_all(&local).unwrap();
         let store = Store::new(local.clone(), tmp.path().join("backup")).unwrap();
-        let (manager, secret) = manager_of(&data_dir);
+        let manager = manager_of(&data_dir);
         let default_local_dir = tmp.path().join("default/src/content/blog");
         let Some(read_only) = read_only_dir(tmp.path()) else {
             return;
@@ -968,7 +966,7 @@ mod tests {
         drop(read_only);
         assert!(result.is_err());
         // トークンは消え、settings.jsonと向き先も替わらない
-        assert_eq!(secret.value(), None);
+        assert_eq!(manager.tokens().read().unwrap(), None);
         assert_eq!(store.posts_dir(), local);
         let settings = settings::read_from(&file).unwrap();
         assert_eq!(settings.github.repo, Some(repo()));

@@ -386,14 +386,7 @@ mod tests {
     }
 
     fn file_of(tmp: &TempDir) -> PathBuf {
-        tmp.path().join("github/token.json")
-    }
-
-    // 資格情報の保存先の偽物が持っている組
-    fn stored(secret: &FakeSecret) -> Option<TokenSet> {
-        secret
-            .value()
-            .map(|value| serde_json::from_str(&value).unwrap())
+        crate::github::config::token_path(tmp.path())
     }
 
     fn manager_of(store: TokenStore, transport: Arc<dyn Transport>) -> TokenManager {
@@ -684,15 +677,13 @@ mod tests {
         secret.fail_set(true);
         let error = manager.access_token(NOW).unwrap_err();
         assert!(!matches!(error, GithubError::LoginRequired));
-        assert_eq!(stored(&secret), Some(tokens(NOW + 1, NOW + 10_000)));
+        assert_eq!(
+            read_secret(secret.as_ref()).unwrap(),
+            Some(tokens(NOW + 1, NOW + 10_000))
+        );
     }
 
     // 資格情報の保存先版
-
-    // ファイルの代わりにディレクトリを置き、token.jsonを消せなくする(どのOSでもremove_fileが失敗する)
-    fn make_undeletable(path: &Path) {
-        fs::create_dir_all(path).unwrap();
-    }
 
     #[test]
     fn 資格情報の保存先に書いた組が読めtoken_jsonはできない() {
@@ -722,7 +713,8 @@ mod tests {
 
         // 消せなければ、保存先に書かずにエラー
         let tmp = TempDir::new().unwrap();
-        make_undeletable(&file_of(&tmp));
+        // ファイルの代わりにディレクトリを置き、token.jsonを消せなくする(どのOSでもremove_fileが失敗する)
+        fs::create_dir_all(file_of(&tmp)).unwrap();
         let (store, secret) = desktop_tokens(tmp.path());
         assert!(store.write(&tokens(NOW + 3600, NOW + 7200)).is_err());
         assert_eq!(secret.value(), None);
@@ -747,7 +739,8 @@ mod tests {
     #[test]
     fn token_jsonを消せなければ資格情報の保存先は消さずにエラー() {
         let tmp = TempDir::new().unwrap();
-        make_undeletable(&file_of(&tmp));
+        // ファイルの代わりにディレクトリを置き、token.jsonを消せなくする(どのOSでもremove_fileが失敗する)
+        fs::create_dir_all(file_of(&tmp)).unwrap();
         let (store, secret) = desktop_tokens_with(
             tmp.path(),
             FakeSecret::holding(&tokens(NOW + 3600, NOW + 7200)),
@@ -807,7 +800,10 @@ mod tests {
             desktop_tokens_with(tmp.path(), FakeSecret::holding(&tokens(NOW, NOW)));
         assert!(store.migrate().is_err());
         assert!(path.exists());
-        assert_eq!(stored(&secret), Some(tokens(NOW, NOW)));
+        assert_eq!(
+            read_secret(secret.as_ref()).unwrap(),
+            Some(tokens(NOW, NOW))
+        );
     }
 
     #[test]
@@ -849,7 +845,10 @@ mod tests {
         let secret = Arc::new(FakeSecret::default());
         let store = TokenStore::open_with(secret.clone(), path.clone());
         assert!(!path.exists());
-        assert_eq!(stored(&secret), Some(tokens(NOW + 3600, NOW + 7200)));
+        assert_eq!(
+            read_secret(secret.as_ref()).unwrap(),
+            Some(tokens(NOW + 3600, NOW + 7200))
+        );
         assert_eq!(store.read().unwrap(), Some(tokens(NOW + 3600, NOW + 7200)));
 
         let tmp = TempDir::new().unwrap();
