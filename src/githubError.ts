@@ -33,6 +33,8 @@ export function githubFailureText(error: unknown): string | null {
       return t('common.github_state_unreadable')
     case 'io':
       return t('common.github_io', { path: e.path })
+    case 'credentialStore':
+      return t('common.github_credential_store')
     case 'pushRetryExceeded':
       return t('common.github_push_retry_exceeded')
     case 'articleNotFound':

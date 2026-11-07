@@ -171,12 +171,16 @@ pub fn linked(data_dir: &Path, settings: &GithubSettings) -> bool {
         && token::read(&token_path(data_dir)).is_ok_and(|tokens| tokens.is_some())
 }
 
-// 起動時。token.jsonを読んでchoose_posts_dirする。読めなければログインしていない扱いにし、そのエラーも返す
+// 起動時。Repositoryを選んでいれば、トークンを読んでchoose_posts_dirする。読めなければログインしていない扱いにし、そのエラーも返す
 pub fn startup_posts_dir(
     local: PathBuf,
     data_dir: &Path,
     settings: &GithubSettings,
 ) -> (PathBuf, Option<GithubError>) {
+    // Repositoryを選んでいなければ向き先は替わらないので、トークンを読まない(Secret Serviceのロック解除を求めないため)
+    if settings.repo.is_none() {
+        return (local, None);
+    }
     match token::read(&token_path(data_dir)) {
         Ok(Some(_)) => (choose_posts_dir(local, data_dir, settings, true), None),
         Ok(None) => (local, None),
@@ -389,6 +393,19 @@ mod tests {
             posts_dir,
             github_posts_dir(tmp.path(), &repo(), "src/content/blog")
         );
+        assert!(error.is_none());
+    }
+
+    #[test]
+    fn 起動時はRepositoryを選んでいなければトークンを読まずに今までの保存先で始める() {
+        let tmp = TempDir::new().unwrap();
+        let local = tmp.path().join("local/src/content/blog");
+        // 壊れたtoken.jsonでも、読まないのでエラーにならない
+        fs::create_dir_all(token_path(tmp.path()).parent().unwrap()).unwrap();
+        fs::write(token_path(tmp.path()), "@").unwrap();
+        let (posts_dir, error) =
+            startup_posts_dir(local.clone(), tmp.path(), &GithubSettings::default());
+        assert_eq!(posts_dir, local);
         assert!(error.is_none());
     }
 

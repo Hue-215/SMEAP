@@ -54,6 +54,9 @@ pub enum GithubError {
     InvalidRepository,
     #[error("io error: {path}: {reason}")]
     Io { path: String, reason: String },
+    // OSの資格情報の保存先(src/github/token.rs)
+    #[error("credential store error: {reason}")]
+    CredentialStore { reason: String },
     #[error("base branch not found")]
     BaseBranchNotFound,
     #[error("invalid layout: {path}")]

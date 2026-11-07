@@ -136,7 +136,7 @@ impl GitHub {
         self.login.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    // token.jsonを消して今までの保存先へ戻す
+    // トークンを消して今までの保存先へ戻す
     fn logout(&self, app: &AppHandle, store: &Store) -> Result<(), CommandError> {
         let _changes = settings::lock_changes();
         let _tokens = self.manager.lock();
@@ -173,7 +173,7 @@ pub struct GithubStatus {
     pub login: Option<String>,
     pub settings: GithubSettings,
     pub token_unreadable: bool,
-    // ログインし直しが必要になり、token.jsonを消した。保存先を戻すのは画面が記事を保存してから(github_logout)
+    // ログインし直しが必要になり、トークンを消した。保存先を戻すのは画面が記事を保存してから(github_logout)
     pub login_expired: bool,
 }
 
@@ -239,12 +239,12 @@ fn status_of(
         }
         None => {}
     }
-    // どのコマンドでtoken.jsonが消えても、向き先がGitHub用のまま残っていれば戻させる
+    // どのコマンドでトークンが消えても、向き先がGitHub用のまま残っていれば戻させる
     status.login_expired = !status.logged_in && posts_dir != local_dir;
     status
 }
 
-// 保存先は替えない(token.jsonの更新・削除はある)
+// 保存先は替えない(トークンの更新・削除はある)
 #[tauri::command(async)]
 pub fn github_status(
     app: AppHandle,
@@ -255,7 +255,7 @@ pub fn github_status(
     let data_dir = settings::data_dir(&app)?;
     let local = local_dir(&github.default_local_dir, &settings);
     let token_read = token::read(&config::token_path(&data_dir));
-    // token.jsonが読めたときだけ、トークンとアカウントを確かめる
+    // トークンが読めたときだけ、その期限とアカウントを確かめる
     let (access, user) = match &token_read {
         Ok(Some(_)) => {
             let access = github.manager.access_token(now());
@@ -812,7 +812,7 @@ pub fn github_remove_published(
     .ok_or_else(|| GithubError::NotLinked.into())
 }
 
-// Repositoryを選んでいて、token.jsonがあり、保存層の向き先がそのRepositoryの記事のディレクトリのとき
+// Repositoryを選んでいて、トークンがあり、保存層の向き先がそのRepositoryの記事のディレクトリのとき
 fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError> {
     let settings = settings::read_from(&settings::file_path(app)?)?;
     let data_dir = settings::data_dir(app)?;

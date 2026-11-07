@@ -150,7 +150,7 @@ pub(crate) fn read_from(file: &Path) -> Result<Settings, StoreError> {
 static CHANGES: Mutex<()> = Mutex::new(());
 
 // 設定の読み直しから保存、保存層の向き先の切り替えまでを1つずつにする。コマンドが並行して呼ばれると、
-// 一方の変更が消えたり、settings.jsonと向き先が食い違ったりするため。token.jsonのロックより先に取る
+// 一方の変更が消えたり、settings.jsonと向き先が食い違ったりするため。トークンのロックより先に取る
 pub(crate) fn lock_changes() -> MutexGuard<'static, ()> {
     CHANGES.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -320,7 +320,7 @@ pub(crate) fn switch_posts_dir(
     Ok(())
 }
 
-// token.jsonを消し、向き先をlocalに戻す
+// トークンを消し、向き先をlocalに戻す
 pub(crate) fn logout(store: &Store, data_dir: &Path, local: PathBuf) -> Result<(), StoreError> {
     match crate::github::token::delete(&crate::github::config::token_path(data_dir)) {
         Ok(()) => {}
