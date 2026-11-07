@@ -1449,10 +1449,10 @@ fn undo_renames(renames: &[(PathBuf, PathBuf)]) {
     }
 }
 
-// `..`を含む名前はまとめて弾く。`.`だけの名前も弾く
+// `..`を含む名前はまとめて弾く。`.`だけの名前も弾く。
 // Windowsでは`C:x`をjoinすると元のパスが捨てられ、`a:b`は代替データストリームになるので`:`も弾く。
 // ほかにもWindowsで作れない名前は、どのOSでも弾く(同じリポジトリをWindowsでも扱うため)。
-// 末尾の`.`と空白は、Windowsが取り除いて別の名前と同じファイルにする
+// 末尾の`.`と空白は、Windowsが取り除いて別の名前と同じファイルにする。
 pub(crate) fn is_filename(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -1464,7 +1464,8 @@ pub(crate) fn is_filename(name: &str) -> bool {
         && !is_windows_reserved(name)
 }
 
-// Windowsは、最初の`.`より前(末尾の空白を除く)が予約名の名前を、拡張子があってもデバイスとして扱う
+// Windowsは、最初の`.`より前(末尾の空白を除く)が予約名の名前を、拡張子があってもデバイスとして扱う。
+// `conin$`・`conout$`は拡張子付きの扱いが確かめられないので、多めに断る
 fn is_windows_reserved(name: &str) -> bool {
     let stem = name
         .split('.')
@@ -1490,7 +1491,7 @@ fn is_windows_reserved(name: &str) -> bool {
 }
 
 // GitHubから取ってきてよい名前。is_filenameで断る名前と、ほかと大文字小文字だけが違う名前
-// (Windowsでは同じファイルになる)を除く
+// (Windowsでは同じファイルになる)を除く。to_lowercaseはNTFSの対応表と一部の文字(ケルビン記号など)で違うが、除きすぎる側に外れるだけ
 pub(crate) fn fetchable_names<'a>(names: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
     let mut groups: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for name in names.into_iter().filter(|name| is_filename(name)) {
@@ -1937,11 +1938,13 @@ mod tests {
             ".hidden.png",
             "a.con",
             ".con",
+            // 3バイト目が文字の途中になる名前
+            "éé.png",
         ] {
             assert!(is_filename(ok), "{ok} は通るはず");
         }
         for ng in [
-            // 前からの決まり
+            // パスとして使えない名前
             "",
             ".",
             "a/b.png",

@@ -2810,7 +2810,6 @@ mod tests {
         assert!(!test.assets_dir("post").join("sub").exists());
     }
 
-    // assets_baseの直下・記事のディレクトリにあるファイルの名前
     fn file_names(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = fs::read_dir(dir)
             .map(|entries| {

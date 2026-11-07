@@ -386,7 +386,7 @@ fn md_matches(record: &Record, local: &LocalFiles) -> bool {
 }
 
 // 手元にある画像がすべてリモートと同じSHA。リモートにあって手元に無い画像は、
-// 記録が取ってきていないものだけ許す(記録が無ければ、手元に無い画像は同じと見なさない)
+// 記録が取ってきていないものだけ許す(記録が無ければ、取ってこない名前のものだけ許す)
 pub fn same_as_remote(record: Option<&Record>, local: &LocalFiles, remote: &ArticleFiles) -> bool {
     if local.md.as_deref() != Some(remote.md.as_str()) {
         return false;
@@ -396,16 +396,15 @@ pub fn same_as_remote(record: Option<&Record>, local: &LocalFiles, remote: &Arti
             return false;
         }
     }
-    let not_fetched =
-        |record: &Record, name: &str| record.assets.get(name).is_none_or(|asset| !asset.fetched);
-    let mut wanted =
-        crate::store::fetchable_names(remote.assets.keys().map(String::as_str)).into_iter();
-    match record {
-        None => wanted.all(|name| local.assets.contains_key(name)),
-        Some(record) => {
-            wanted.all(|name| local.assets.contains_key(name) || not_fetched(record, name))
-        }
-    }
+    let fetchable = crate::store::fetchable_names(remote.assets.keys().map(String::as_str));
+    remote.assets.keys().all(|name| {
+        local.assets.contains_key(name)
+            || match record {
+                None => !fetchable.contains(name.as_str()),
+                // 前に取ってきた画像が無いのは手元で消したからなので、今は取ってこない名前でも同じではない
+                Some(record) => record.assets.get(name).is_none_or(|asset| !asset.fetched),
+            }
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -827,6 +826,16 @@ mod tests {
         assert!(same_as_remote(Some(&record), &local, &remote));
         // 取ってこなかった画像はfetchedがfalseのままなので、Commitで消すものにならない
         assert!(!is_dirty(Some(&record), &local));
+        // 前に取ってきた画像が手元に無ければ、今は取ってこない名前でも同じではない
+        let fetched_before = record_of(
+            None,
+            &[
+                ("A.png", asset("sha-png-1", true)),
+                ("a.png", asset("sha-png-2", false)),
+                ("01.png", asset("sha-png-r", true)),
+            ],
+        );
+        assert!(!same_as_remote(Some(&fetched_before), &local, &remote));
     }
 
     #[test]

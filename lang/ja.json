@@ -215,7 +215,7 @@
   "slug_dialog.rename_hint": "半角英小文字、数字、ハイフンが使用可能です",
   "slug_dialog.rename_submit": "変更",
   "slug_dialog.rename_title": "slugを変更",
-  "slug_dialog.windows_reserved": "Windowsの予約名が含まれています",
+  "slug_dialog.windows_reserved": "Windowsの予約名は使えません",
   "topbar.close_sidebar": "サイドバーを閉じる",
   "topbar.commit": "Commit",
   "topbar.commit_nothing": "未commitの変更なし",
