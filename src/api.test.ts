@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { heroImageUrl } from './api'
+
+// convertFileSrcはTauriが画面に入れる関数を呼ぶ。LinuxとmacOSの形にする
+vi.stubGlobal('window', {
+  __TAURI_INTERNALS__: {
+    convertFileSrc: (path: string, protocol: string) =>
+      `${protocol}://localhost/${encodeURIComponent(path)}`,
+  },
+})
 
 describe('heroImageUrl', () => {
   it('heroImageUrlは共有の画像なら../../assets/{名前}を指す', () => {
