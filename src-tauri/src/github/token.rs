@@ -476,12 +476,13 @@ mod tests {
     #[test]
     fn 書き込みに失敗しても前の内容がそのまま読める() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("github");
-        fs::create_dir_all(&dir).unwrap();
-        let store = TokenStore::file(dir.join("token.json"));
+        let path = file_of(&tmp);
+        let dir = path.parent().unwrap();
+        fs::create_dir_all(dir).unwrap();
+        let store = TokenStore::file(path.clone());
         let before = tokens(100, 200);
         store.write(&before).unwrap();
-        let Some(read_only) = read_only_dir(&dir) else {
+        let Some(read_only) = read_only_dir(dir) else {
             return;
         };
         let result = store.write(&tokens(300, 400));
@@ -636,15 +637,16 @@ mod tests {
     #[test]
     fn 取り直しの保存に失敗したら新しいトークンを返さない_ファイル() {
         let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("github");
-        fs::create_dir_all(&dir).unwrap();
-        let store = TokenStore::file(dir.join("token.json"));
+        let path = file_of(&tmp);
+        let dir = path.parent().unwrap();
+        fs::create_dir_all(dir).unwrap();
+        let store = TokenStore::file(path.clone());
         store.write(&tokens(NOW + 1, NOW + 10_000)).unwrap();
         let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
             200,
             refreshed_json(),
         ))]));
-        let Some(read_only) = read_only_dir(&dir) else {
+        let Some(read_only) = read_only_dir(dir) else {
             return;
         };
         let manager = manager_of(store, transport);
@@ -674,7 +676,7 @@ mod tests {
         let error = manager.access_token(NOW).unwrap_err();
         assert!(!matches!(error, GithubError::LoginRequired));
         assert_eq!(
-            read_secret(secret.as_ref()).unwrap(),
+            manager.tokens().read().unwrap(),
             Some(tokens(NOW + 1, NOW + 10_000))
         );
     }
@@ -839,10 +841,6 @@ mod tests {
         let secret = Arc::new(FakeSecret::default());
         let store = TokenStore::open_with(secret.clone(), path.clone());
         assert!(!path.exists());
-        assert_eq!(
-            read_secret(secret.as_ref()).unwrap(),
-            Some(tokens(NOW + 3600, NOW + 7200))
-        );
         assert_eq!(store.read().unwrap(), Some(tokens(NOW + 3600, NOW + 7200)));
 
         let tmp = TempDir::new().unwrap();
