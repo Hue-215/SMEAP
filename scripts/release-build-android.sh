@@ -41,19 +41,15 @@ unset SMEAP_ANDROID_KEYSTORE_PASSWORD
 build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1 || true)"
 apksigner="$build_tools/apksigner"
 zipalign="$build_tools/zipalign"
-if [[ -z "$build_tools" || ! -x "$apksigner" || ! -x "$zipalign" ]]; then
-  echo "apksigner・zipalign がありません(SDK Managerで「Android SDK Build-Tools」を入れてください)" >&2
+aapt2="$build_tools/aapt2"
+if [[ -z "$build_tools" || ! -x "$apksigner" || ! -x "$zipalign" || ! -x "$aapt2" ]]; then
+  echo "apksigner・zipalign・aapt2 がありません(SDK Managerで「Android SDK Build-Tools」を入れてください)" >&2
   exit 1
 fi
 
 # shellcheck source=scripts/release-common.sh
 source "$(dirname "$0")/release-common.sh"
 
-version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/src-tauri/Cargo.toml" | head -1)"
-if [[ -z "$version" ]]; then
-  echo "src-tauri/Cargo.toml から版を読めません" >&2
-  exit 1
-fi
 dist="$root/dist-release/smeap-$version-android-$cpu.apk"
 built="$root/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 # 前の配布物と前のビルドのAPKを、今回のものと取り違えないよう先に消す。
@@ -74,6 +70,13 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 unzip -q "$built" -d "$work/unpacked"
+
+# tauri-cliがtauri.propertiesに版を書かないと、build.gradle.ktsの既定値の1.0になる。
+apk_version="$("$aapt2" dump badging "$built" | sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p")"
+if [[ "$apk_version" != "$version" ]]; then
+  echo "APKの版が src-tauri/tauri.conf.json と違います: $apk_version(想定: $version)" >&2
+  exit 1
+fi
 
 abis="$(find "$work/unpacked/lib" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
 if [[ "$abis" != "$abi " ]]; then
