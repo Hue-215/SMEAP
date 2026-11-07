@@ -39,10 +39,11 @@ pub fn read_article(store: State<'_, Store>, slug: String) -> Result<Article, St
 pub fn save_article(
     app: AppHandle,
     store: State<'_, Store>,
+    github: State<'_, crate::github::commands::GitHub>,
     slug: String,
     fields: EditedFields,
 ) -> Result<SavedDates, crate::github::commands::CommandError> {
-    crate::github::commands::save_article(&app, &store, &slug, fields)
+    crate::github::commands::save_article(&app, &store, &github, &slug, fields)
 }
 
 #[tauri::command(async)]

@@ -14,7 +14,7 @@ use super::http::{Transport, UreqTransport, VERIFICATION_URL};
 use super::repos;
 use super::state::Basis;
 use super::sync::{self, SyncInput, SyncLock, SyncResult};
-use super::token::{self, TokenManager, TokenSet};
+use super::token::{TokenManager, TokenSet, TokenStore};
 use super::{now, APP_SLUG, CLIENT_ID};
 use crate::github::GithubError;
 use crate::settings::{self, Settings};
@@ -116,13 +116,9 @@ pub struct GitHub {
 }
 
 impl GitHub {
-    pub fn new(data_dir: &Path, default_local_dir: PathBuf) -> Self {
+    pub fn new(tokens: TokenStore, default_local_dir: PathBuf) -> Self {
         let transport: Arc<dyn Transport> = Arc::new(UreqTransport::new());
-        let manager = TokenManager::new(
-            config::token_path(data_dir),
-            CLIENT_ID.to_string(),
-            transport.clone(),
-        );
+        let manager = TokenManager::new(tokens, CLIENT_ID.to_string(), transport.clone());
         Self {
             transport,
             manager,
@@ -130,6 +126,10 @@ impl GitHub {
             sync_lock: SyncLock::default(),
             default_local_dir,
         }
+    }
+
+    pub(crate) fn tokens(&self) -> &TokenStore {
+        self.manager.tokens()
     }
 
     fn login(&self) -> std::sync::MutexGuard<'_, Login> {
@@ -143,6 +143,7 @@ impl GitHub {
         let settings = settings::read_from(&settings::file_path(app)?)?;
         settings::logout(
             store,
+            self.manager.tokens(),
             &settings::data_dir(app)?,
             local_dir(&self.default_local_dir, &settings),
         )?;
@@ -252,9 +253,8 @@ pub fn github_status(
     store: State<'_, Store>,
 ) -> Result<GithubStatus, CommandError> {
     let settings = settings::read_from(&settings::file_path(&app)?)?;
-    let data_dir = settings::data_dir(&app)?;
     let local = local_dir(&github.default_local_dir, &settings);
-    let token_read = token::read(&config::token_path(&data_dir));
+    let token_read = github.manager.tokens().read();
     // トークンが読めたときだけ、その期限とアカウントを確かめる
     let (access, user) = match &token_read {
         Ok(Some(_)) => {
@@ -374,8 +374,7 @@ fn save_login(
 ) -> Result<(), CommandError> {
     let _changes = settings::lock_changes();
     let _tokens = manager.lock();
-    let path = config::token_path(data_dir);
-    token::write(&path, tokens)?;
+    manager.tokens().write(tokens)?;
     let switched = (|| {
         let settings = settings::read_from(file)?;
         let target = config::choose_posts_dir(
@@ -387,7 +386,7 @@ fn save_login(
         settings::switch_posts_dir(store, file, &settings, target)
     })();
     if let Err(error) = switched {
-        if let Err(error) = token::delete(&path) {
+        if let Err(error) = manager.tokens().delete() {
             eprintln!("Failed to remove the GitHub token after a failed login: {error}");
         }
         return Err(error.into());
@@ -431,7 +430,7 @@ fn change_github_settings(
         local_dir(&github.default_local_dir, &settings),
         &data_dir,
         &settings.github,
-        config::linked(&data_dir, &settings.github),
+        config::linked(github.tokens(), &settings.github),
     );
     settings::switch_posts_dir(store, &file, &settings, target)?;
     Ok(())
@@ -521,7 +520,7 @@ where
     CommandError: From<E>,
 {
     let generation = store.generation();
-    let Some(linked) = linked(app, store)? else {
+    let Some(linked) = linked(app, store, github)? else {
         return Ok(None);
     };
     let token = github.manager.access_token(now())?;
@@ -558,7 +557,7 @@ pub fn github_fetch_images(
 ) -> Result<usize, CommandError> {
     crate::store::validate_slug(&slug)?;
     // 取る画像が無ければトークンを取らない(期限が切れていると更新の通信をするので、オフラインで失敗する)
-    let Some(linked) = linked(&app, &store)? else {
+    let Some(linked) = linked(&app, &store, &github)? else {
         return Ok(0);
     };
     if !sync::has_wanted_images(&linked.data_dir, &linked.repo, &linked.basis, &store, &slug)? {
@@ -629,9 +628,10 @@ pub fn github_pull(
 #[tauri::command(async)]
 pub fn github_article_states(
     app: AppHandle,
+    github: State<'_, GitHub>,
     store: State<'_, Store>,
 ) -> Result<Option<sync::ArticleStates>, CommandError> {
-    let Some(linked) = linked(&app, &store)? else {
+    let Some(linked) = linked(&app, &store, &github)? else {
         return Ok(None);
     };
     Ok(Some(sync::article_states(
@@ -645,10 +645,11 @@ pub fn github_article_states(
 #[tauri::command(async)]
 pub fn github_article_state(
     app: AppHandle,
+    github: State<'_, GitHub>,
     store: State<'_, Store>,
     slug: String,
 ) -> Result<Option<sync::ArticleState>, CommandError> {
-    let Some(linked) = linked(&app, &store)? else {
+    let Some(linked) = linked(&app, &store, &github)? else {
         return Ok(None);
     };
     let state = sync::article_state(&linked.data_dir, &linked.repo, &linked.basis, &store, &slug)?;
@@ -687,11 +688,12 @@ fn input_of<'a>(
 pub(crate) fn save_article(
     app: &AppHandle,
     store: &Store,
+    github: &GitHub,
     slug: &str,
     fields: EditedFields,
 ) -> Result<SavedDates, CommandError> {
     // 設定を読めなくても、日付を自動で替えずに保存する
-    let linked = linked(app, store).unwrap_or_else(|error| {
+    let linked = linked(app, store, github).unwrap_or_else(|error| {
         eprintln!("Failed to check the GitHub link before saving {slug}: {error}");
         None
     });
@@ -714,7 +716,7 @@ pub(crate) fn create_article(
     store: &Store,
     slug: &str,
 ) -> Result<crate::store::Article, CommandError> {
-    match linked(app, store)? {
+    match linked(app, store, github)? {
         Some(linked) => super::article::create(
             &linked.data_dir,
             &linked.repo,
@@ -734,7 +736,7 @@ pub(crate) fn rename_article(
     old: &str,
     new: &str,
 ) -> Result<crate::store::Article, CommandError> {
-    match linked(app, store)? {
+    match linked(app, store, github)? {
         Some(linked) => super::article::rename(
             &linked.data_dir,
             &linked.repo,
@@ -756,7 +758,7 @@ pub(crate) fn delete_article(
     slug: &str,
 ) -> Result<(), CommandError> {
     let generation = store.generation();
-    let Some(linked) = linked(app, store)? else {
+    let Some(linked) = linked(app, store, github)? else {
         store.delete_article(slug)?;
         return Ok(());
     };
@@ -813,7 +815,7 @@ pub fn github_remove_published(
 }
 
 // Repositoryを選んでいて、トークンがあり、保存層の向き先がそのRepositoryの記事のディレクトリのとき
-fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError> {
+fn linked(app: &AppHandle, store: &Store, github: &GitHub) -> Result<Option<Linked>, CommandError> {
     let settings = settings::read_from(&settings::file_path(app)?)?;
     let data_dir = settings::data_dir(app)?;
     let (Some(repo), Some(basis)) = (settings.github.repo.clone(), Basis::of(&settings.github))
@@ -821,7 +823,7 @@ fn linked(app: &AppHandle, store: &Store) -> Result<Option<Linked>, CommandError
         return Ok(None);
     };
     let posts_dir = config::github_posts_dir(&data_dir, &repo, &basis.posts_path);
-    if store.posts_dir() != posts_dir || !config::linked(&data_dir, &settings.github) {
+    if store.posts_dir() != posts_dir || !config::linked(github.tokens(), &settings.github) {
         return Ok(None);
     }
     Ok(Some(Linked {
@@ -848,11 +850,10 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::github::config::{github_posts_dir, token_path};
+    use crate::github::config::github_posts_dir;
     #[cfg(unix)]
     use crate::github::fake::read_only_dir;
-    use crate::github::fake::FakeTransport;
-    use crate::github::token;
+    use crate::github::fake::{desktop_tokens, FakeSecret, FakeTransport};
     use crate::store::Store;
 
     const NOW: i64 = 1_000_000;
@@ -898,12 +899,15 @@ mod tests {
             .to_string()
     }
 
-    fn manager_of(data_dir: &Path) -> TokenManager {
-        TokenManager::new(
-            token_path(data_dir),
+    // 偽物の資格情報の保存先を使う
+    fn manager_of(data_dir: &Path) -> (TokenManager, Arc<FakeSecret>) {
+        let (tokens, secret) = desktop_tokens(data_dir);
+        let manager = TokenManager::new(
+            tokens,
             CLIENT_ID.to_string(),
             Arc::new(FakeTransport::new(vec![])),
-        )
+        );
+        (manager, secret)
     }
 
     // save_loginの tests
@@ -917,7 +921,7 @@ mod tests {
         let local = tmp.path().join("local/src/content/blog");
         fs::create_dir_all(&local).unwrap();
         let store = Store::new(local.clone(), tmp.path().join("backup")).unwrap();
-        let manager = manager_of(&data_dir);
+        let (manager, _) = manager_of(&data_dir);
         let default_local_dir = tmp.path().join("default/src/content/blog");
         save_login(
             &data_dir,
@@ -932,7 +936,7 @@ mod tests {
             store.posts_dir(),
             github_posts_dir(&data_dir, &repo(), "src/content/blog")
         );
-        assert_eq!(token::read(&token_path(&data_dir)).unwrap(), Some(tokens()));
+        assert_eq!(manager.tokens().read().unwrap(), Some(tokens()));
         let settings = settings::read_from(&file).unwrap();
         assert_eq!(settings.github.repo, Some(repo()));
     }
@@ -948,7 +952,7 @@ mod tests {
         let local = tmp.path().join("local/src/content/blog");
         fs::create_dir_all(&local).unwrap();
         let store = Store::new(local.clone(), tmp.path().join("backup")).unwrap();
-        let manager = manager_of(&data_dir);
+        let (manager, secret) = manager_of(&data_dir);
         let default_local_dir = tmp.path().join("default/src/content/blog");
         let Some(read_only) = read_only_dir(tmp.path()) else {
             return;
@@ -963,8 +967,8 @@ mod tests {
         );
         drop(read_only);
         assert!(result.is_err());
-        // token.jsonは消え、settings.jsonと向き先も替わらない
-        assert_eq!(token::read(&token_path(&data_dir)).unwrap(), None);
+        // トークンは消え、settings.jsonと向き先も替わらない
+        assert_eq!(secret.value(), None);
         assert_eq!(store.posts_dir(), local);
         let settings = settings::read_from(&file).unwrap();
         assert_eq!(settings.github.repo, Some(repo()));
@@ -1030,12 +1034,12 @@ mod tests {
             Path::new("/local/src/content/blog"),
         );
         assert!(!status.logged_in);
-        // token.jsonを消した後の向き先なので、画面に戻させる
+        // トークンを消した後の向き先なので、画面に戻させる
         assert!(status.login_expired);
     }
 
     #[test]
-    fn status_ofはtoken_jsonが無くGitHub用の向き先のままならloginExpiredにする() {
+    fn status_ofはトークンが無くGitHub用の向き先のままならloginExpiredにする() {
         let status = status_of(
             &settings_with_repo(),
             &Ok(None),
@@ -1049,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn status_ofはtoken_jsonが無く今までの保存先ならloginExpiredにしない() {
+    fn status_ofはトークンが無く今までの保存先ならloginExpiredにしない() {
         let status = status_of(
             &settings_with_repo(),
             &Ok(None),
@@ -1063,7 +1067,7 @@ mod tests {
     }
 
     #[test]
-    fn status_ofはtoken_jsonが読めなければtokenUnreadableにする() {
+    fn status_ofはトークンが読めなければtokenUnreadableにする() {
         let status = status_of(
             &settings_with_repo(),
             &Err(GithubError::Io {

@@ -1,7 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
@@ -39,25 +39,94 @@ pub(crate) trait SecretStore: Send + Sync {
     fn delete(&self) -> Result<(), String>;
 }
 
-// デスクトップではinitで資格情報の保存先にする。Androidとinitを呼ばないテストはtoken.jsonを使う
-static SECRET: OnceLock<Box<dyn SecretStore>> = OnceLock::new();
-
-// 起動時に、コマンドを受け付ける前に呼ぶ。token.jsonがあれば資格情報の保存先へ移す
-#[cfg(not(target_os = "android"))]
-pub fn init(identifier: &str, path: &Path) {
-    let secret = SECRET.get_or_init(|| Box::new(keyring_store::Keyring::new(identifier)));
-    if let Err(error) = migrate(secret.as_ref(), path) {
-        eprintln!("Failed to move the GitHub token to the credential store: {error}");
-    }
+// トークンの組の置き場所。デスクトップではOSの資格情報の保存先、Androidではtoken.json
+pub struct TokenStore {
+    // デスクトップでは、前の版が作ったもの。起動時に移し、読むたびに残っていないかを確かめる
+    file: PathBuf,
+    // Arcなのは、テストで渡した偽物の中身を外から見るため
+    secret: Option<Arc<dyn SecretStore>>,
 }
 
-pub fn read(path: &Path) -> Result<Option<TokenSet>, GithubError> {
-    match SECRET.get() {
-        Some(secret) => {
-            ensure_moved(path)?;
-            read_secret(secret.as_ref())
+impl TokenStore {
+    // 起動時に、コマンドを受け付ける前に呼ぶ
+    #[cfg(not(target_os = "android"))]
+    pub fn open(identifier: &str, data_dir: &Path) -> Self {
+        Self::open_with(
+            Arc::new(keyring_store::Keyring::new(identifier)),
+            super::config::token_path(data_dir),
+        )
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn open(_identifier: &str, data_dir: &Path) -> Self {
+        Self::file(super::config::token_path(data_dir))
+    }
+
+    #[cfg(any(test, target_os = "android"))]
+    pub fn file(path: PathBuf) -> Self {
+        Self {
+            file: path,
+            secret: None,
         }
-        None => read_file(path),
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_secret(secret: Arc<dyn SecretStore>, file: PathBuf) -> Self {
+        Self {
+            file,
+            secret: Some(secret),
+        }
+    }
+
+    // token.jsonがあれば保存先へ移す
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    fn open_with(secret: Arc<dyn SecretStore>, file: PathBuf) -> Self {
+        let store = Self {
+            file,
+            secret: Some(secret),
+        };
+        if let Err(error) = store.migrate() {
+            eprintln!("Failed to move the GitHub token to the credential store: {error}");
+        }
+        store
+    }
+
+    pub fn read(&self) -> Result<Option<TokenSet>, GithubError> {
+        match &self.secret {
+            Some(secret) => {
+                ensure_moved(&self.file)?;
+                read_secret(secret.as_ref())
+            }
+            None => read_file(&self.file),
+        }
+    }
+
+    pub fn write(&self, tokens: &TokenSet) -> Result<(), GithubError> {
+        match &self.secret {
+            Some(secret) => write_secret(secret.as_ref(), &self.file, tokens),
+            None => write_file(&self.file, tokens),
+        }
+    }
+
+    pub fn delete(&self) -> Result<(), GithubError> {
+        match &self.secret {
+            Some(secret) => delete_secret(secret.as_ref(), &self.file),
+            None => delete_file(&self.file),
+        }
+    }
+
+    // 保存先に組があっても上書きする。token.jsonが残っている間は保存先を書き換えないので、token.jsonの方が新しいか同じ
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    fn migrate(&self) -> Result<(), GithubError> {
+        let Some(secret) = &self.secret else {
+            return Ok(());
+        };
+        let Some(tokens) = read_file(&self.file)? else {
+            return Ok(());
+        };
+        // 書けなければtoken.jsonを残す
+        set_secret(secret.as_ref(), &tokens)?;
+        delete_file(&self.file)
     }
 }
 
@@ -70,20 +139,6 @@ fn ensure_moved(path: &Path) -> Result<(), GithubError> {
         return Err(GithubError::io(path, "not moved to the credential store"));
     }
     Ok(())
-}
-
-pub fn write(path: &Path, tokens: &TokenSet) -> Result<(), GithubError> {
-    match SECRET.get() {
-        Some(secret) => write_secret(secret.as_ref(), path, tokens),
-        None => write_file(path, tokens),
-    }
-}
-
-pub fn delete(path: &Path) -> Result<(), GithubError> {
-    match SECRET.get() {
-        Some(secret) => delete_secret(secret.as_ref(), path),
-        None => delete_file(path),
-    }
 }
 
 fn secret_error(reason: String) -> GithubError {
@@ -124,17 +179,6 @@ fn set_secret(secret: &dyn SecretStore, tokens: &TokenSet) -> Result<(), GithubE
 fn delete_secret(secret: &dyn SecretStore, path: &Path) -> Result<(), GithubError> {
     delete_file(path)?;
     secret.delete().map_err(secret_error)
-}
-
-// 保存先に組があっても上書きする。token.jsonが残っている間は保存先を書き換えないので、token.jsonの方が新しいか同じ
-#[cfg_attr(target_os = "android", allow(dead_code))]
-fn migrate(secret: &dyn SecretStore, path: &Path) -> Result<(), GithubError> {
-    let Some(tokens) = read_file(path)? else {
-        return Ok(());
-    };
-    // 書けなければtoken.jsonを残す
-    set_secret(secret, &tokens)?;
-    delete_file(path)
 }
 
 fn read_file(path: &Path) -> Result<Option<TokenSet>, GithubError> {
@@ -235,7 +279,7 @@ mod keyring_store {
 }
 
 pub struct TokenManager {
-    path: PathBuf,
+    tokens: TokenStore,
     client_id: String,
     transport: Arc<dyn Transport>,
     // 更新(通信と保存)は1つずつ。2つのスレッドが同時に期限切れを見ても、通信は1回にする。
@@ -244,20 +288,24 @@ pub struct TokenManager {
 }
 
 impl TokenManager {
-    pub fn new(path: PathBuf, client_id: String, transport: Arc<dyn Transport>) -> Self {
+    pub fn new(tokens: TokenStore, client_id: String, transport: Arc<dyn Transport>) -> Self {
         Self {
-            path,
+            tokens,
             client_id,
             transport,
             refresh_lock: Mutex::new(()),
         }
     }
 
+    pub fn tokens(&self) -> &TokenStore {
+        &self.tokens
+    }
+
     // 期限内ならそのまま、切れていれば取り直して保存してから返す
     pub fn access_token(&self, now: i64) -> Result<String, GithubError> {
         // 読みと消す・書き替える判断は、ほかの書き込みと重ねないため最初にロックを取る
         let _guard = self.lock();
-        let tokens = self.tokens(now)?;
+        let tokens = self.current(now)?;
         if tokens.expires_at > now + EXPIRY_MARGIN {
             return Ok(tokens.access_token);
         }
@@ -269,12 +317,12 @@ impl TokenManager {
         ) {
             Ok(tokens) => {
                 // 古い組を捨てるのは、新しい組を書き終えてから
-                write(&self.path, &tokens)?;
+                self.tokens.write(&tokens)?;
                 Ok(tokens.access_token)
             }
             // トークンを消すのは、ログインし直しが必要なとき。通信の失敗や5xxでは残し、次にもう一度取り直す
             Err(GithubError::LoginRequired) => {
-                delete(&self.path)?;
+                self.tokens.delete()?;
                 Err(GithubError::LoginRequired)
             }
             Err(error) => Err(error),
@@ -282,10 +330,10 @@ impl TokenManager {
     }
 
     // ロックの中で呼ぶ。更新用のトークンが切れていたら、読んだ組を消してログインし直し
-    fn tokens(&self, now: i64) -> Result<TokenSet, GithubError> {
-        let tokens = read(&self.path)?.ok_or(GithubError::LoginRequired)?;
+    fn current(&self, now: i64) -> Result<TokenSet, GithubError> {
+        let tokens = self.tokens.read()?.ok_or(GithubError::LoginRequired)?;
         if tokens.refresh_token_expires_at <= now + EXPIRY_MARGIN {
-            delete(&self.path)?;
+            self.tokens.delete()?;
             return Err(GithubError::LoginRequired);
         }
         Ok(tokens)
@@ -294,9 +342,9 @@ impl TokenManager {
     // GitHub側で認可を取り消されたときに消す。読み直して、そのaccess_tokenが引数と同じ組のときだけ消す
     pub fn invalidate(&self, access_token: &str) -> Result<(), GithubError> {
         let _guard = self.lock();
-        let tokens = read(&self.path)?;
+        let tokens = self.tokens.read()?;
         if tokens.is_some_and(|tokens| tokens.access_token == access_token) {
-            delete(&self.path)?;
+            self.tokens.delete()?;
         }
         Ok(())
     }
@@ -321,7 +369,9 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use crate::github::fake::read_only_dir;
-    use crate::github::fake::{json_response, FakeTransport};
+    use crate::github::fake::{
+        desktop_tokens, desktop_tokens_with, json_response, FakeSecret, FakeTransport,
+    };
 
     const NOW: i64 = 1_000_000;
     const CLIENT_ID: &str = "Iv1.client";
@@ -337,6 +387,17 @@ mod tests {
 
     fn file_of(tmp: &TempDir) -> PathBuf {
         tmp.path().join("github/token.json")
+    }
+
+    // 資格情報の保存先の偽物が持っている組
+    fn stored(secret: &FakeSecret) -> Option<TokenSet> {
+        secret
+            .value()
+            .map(|value| serde_json::from_str(&value).unwrap())
+    }
+
+    fn manager_of(store: TokenStore, transport: Arc<dyn Transport>) -> TokenManager {
+        TokenManager::new(store, CLIENT_ID.to_string(), transport)
     }
 
     fn refreshed_json() -> serde_json::Value {
@@ -357,19 +418,42 @@ mod tests {
         }
     }
 
+    // 本文(TokenStoreを受け取る)を、ファイル版と資格情報の保存先版(偽物)の2つのテストから呼ぶ
+    macro_rules! both_stores {
+        ($name:ident, $body:expr) => {
+            mod $name {
+                use super::*;
+
+                #[test]
+                fn file() {
+                    let tmp = TempDir::new().unwrap();
+                    ($body)(TokenStore::file(file_of(&tmp)));
+                }
+
+                #[test]
+                fn secret() {
+                    let tmp = TempDir::new().unwrap();
+                    ($body)(desktop_tokens(tmp.path()).0);
+                }
+            }
+        };
+    }
+
+    // ファイル版
+
     #[test]
     fn 書いて読み直すと同じ組になる() {
         let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
+        let store = TokenStore::file(file_of(&tmp));
         let before = tokens(100, 200);
-        write(&path, &before).unwrap();
-        assert_eq!(read(&path).unwrap(), Some(before));
+        store.write(&before).unwrap();
+        assert_eq!(store.read().unwrap(), Some(before));
     }
 
     #[test]
     fn 無ければログインしていない() {
         let tmp = TempDir::new().unwrap();
-        assert_eq!(read(&file_of(&tmp)).unwrap(), None);
+        assert_eq!(TokenStore::file(file_of(&tmp)).read().unwrap(), None);
     }
 
     #[test]
@@ -378,7 +462,7 @@ mod tests {
         let path = file_of(&tmp);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "@").unwrap();
-        assert!(read(&path).is_err());
+        assert!(TokenStore::file(path).read().is_err());
     }
 
     #[cfg(unix)]
@@ -388,10 +472,11 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let path = file_of(&tmp);
-        write(&path, &tokens(100, 200)).unwrap();
+        let store = TokenStore::file(path.clone());
+        store.write(&tokens(100, 200)).unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        write(&path, &tokens(300, 400)).unwrap();
+        store.write(&tokens(300, 400)).unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
@@ -402,41 +487,27 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().join("github");
         fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("token.json");
+        let store = TokenStore::file(dir.join("token.json"));
         let before = tokens(100, 200);
-        write(&path, &before).unwrap();
+        store.write(&before).unwrap();
         let Some(read_only) = read_only_dir(&dir) else {
             return;
         };
-        let result = write(&path, &tokens(300, 400));
+        let result = store.write(&tokens(300, 400));
         drop(read_only);
         assert!(result.is_err());
-        assert_eq!(read(&path).unwrap(), Some(before));
+        assert_eq!(store.read().unwrap(), Some(before));
     }
 
     #[test]
     fn 消すとログインしていないに戻る() {
         let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        write(&path, &tokens(100, 200)).unwrap();
-        delete(&path).unwrap();
-        assert_eq!(read(&path).unwrap(), None);
+        let store = TokenStore::file(file_of(&tmp));
+        store.write(&tokens(100, 200)).unwrap();
+        store.delete().unwrap();
+        assert_eq!(store.read().unwrap(), None);
         // 無いときに消してもエラーにしない
-        delete(&path).unwrap();
-    }
-
-    #[test]
-    fn invalidateは同じaccess_tokenのときだけ消す() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        write(&path, &tokens(100, 200)).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![]));
-        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
-        // 別の組が書かれていたら消さない
-        manager.invalidate("OTHER").unwrap();
-        assert_eq!(read(&path).unwrap(), Some(tokens(100, 200)));
-        manager.invalidate("ACCESS").unwrap();
-        assert_eq!(read(&path).unwrap(), None);
+        store.delete().unwrap();
     }
 
     #[test]
@@ -446,106 +517,94 @@ mod tests {
         assert!(!debug.contains("REFRESH"));
     }
 
-    #[test]
-    fn 期限内なら通信せずに今のトークンを返す() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        write(&path, &tokens(NOW + 100, NOW + 10_000)).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![]));
-        let manager = TokenManager::new(path, CLIENT_ID.to_string(), transport.clone());
-        assert_eq!(manager.access_token(NOW).unwrap(), "ACCESS");
-        assert!(transport.requests().is_empty());
-    }
+    // TokenManager
 
-    #[test]
-    fn 期限が切れていれば取り直して保存してから返す() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        // 期限の1秒前も切れた扱いにする
-        write(&path, &tokens(NOW + 1, NOW + 10_000)).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
-            200,
-            refreshed_json(),
-        ))]));
-        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport.clone());
-        assert_eq!(manager.access_token(NOW).unwrap(), "NEW_ACCESS");
-        assert_eq!(transport.requests().len(), 1);
-        // token.jsonも新しい組になっている
-        assert_eq!(read(&path).unwrap(), Some(refreshed_tokens()));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn 取り直しの保存に失敗したら新しいトークンを返さない() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("github");
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("token.json");
-        write(&path, &tokens(NOW + 1, NOW + 10_000)).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
-            200,
-            refreshed_json(),
-        ))]));
-        let Some(read_only) = read_only_dir(&dir) else {
-            return;
-        };
-        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
-        let result = manager.access_token(NOW);
-        drop(read_only);
-        // 通信は通っているので、ログインし直しではない
-        let error = result.unwrap_err();
-        assert!(!matches!(error, GithubError::LoginRequired));
-        // 前の組はそのまま
-        assert_eq!(read(&path).unwrap(), Some(tokens(NOW + 1, NOW + 10_000)));
-    }
-
-    #[test]
-    fn 更新用のトークンも切れていたら通信せずにtoken_jsonを消してログインし直し() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        write(&path, &tokens(NOW + 100, NOW)).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![]));
-        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
-        let error = manager.access_token(NOW).unwrap_err();
-        assert!(matches!(error, GithubError::LoginRequired));
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn 取り直しがbad_refresh_tokenならtoken_jsonを消してログインし直し() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        write(&path, &tokens(NOW + 1, NOW + 10_000)).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
-            200,
-            json!({ "error": "bad_refresh_token" }),
-        ))]));
-        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
-        let error = manager.access_token(NOW).unwrap_err();
-        assert!(matches!(error, GithubError::LoginRequired));
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn 取り直しの通信の失敗と5xxではtoken_jsonを消さずにエラー() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        let before = tokens(NOW + 1, NOW + 10_000);
-        write(&path, &before).unwrap();
-        let transport = Arc::new(FakeTransport::new(vec![
-            Err(GithubError::Network {
-                reason: "closed".to_string(),
-            }),
-            Ok(json_response(500, json!({}))),
-        ]));
-        let manager = TokenManager::new(path.clone(), CLIENT_ID.to_string(), transport);
-        // 消さないので、次の操作でもう一度取り直す
-        for _ in 0..2 {
-            let error = manager.access_token(NOW).unwrap_err();
-            assert!(!matches!(error, GithubError::LoginRequired));
+    both_stores!(
+        invalidateは同じaccess_tokenのときだけ消す,
+        |store: TokenStore| {
+            store.write(&tokens(100, 200)).unwrap();
+            let manager = manager_of(store, Arc::new(FakeTransport::new(vec![])));
+            // 別の組が書かれていたら消さない
+            manager.invalidate("OTHER").unwrap();
+            assert_eq!(manager.tokens().read().unwrap(), Some(tokens(100, 200)));
+            manager.invalidate("ACCESS").unwrap();
+            assert_eq!(manager.tokens().read().unwrap(), None);
         }
-        assert_eq!(read(&path).unwrap(), Some(before));
-    }
+    );
+
+    both_stores!(
+        期限内なら通信せずに今のトークンを返す,
+        |store: TokenStore| {
+            store.write(&tokens(NOW + 100, NOW + 10_000)).unwrap();
+            let transport = Arc::new(FakeTransport::new(vec![]));
+            let manager = manager_of(store, transport.clone());
+            assert_eq!(manager.access_token(NOW).unwrap(), "ACCESS");
+            assert!(transport.requests().is_empty());
+        }
+    );
+
+    both_stores!(
+        期限が切れていれば取り直して保存してから返す,
+        |store: TokenStore| {
+            // 期限の1秒前も切れた扱いにする
+            store.write(&tokens(NOW + 1, NOW + 10_000)).unwrap();
+            let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
+                200,
+                refreshed_json(),
+            ))]));
+            let manager = manager_of(store, transport.clone());
+            assert_eq!(manager.access_token(NOW).unwrap(), "NEW_ACCESS");
+            assert_eq!(transport.requests().len(), 1);
+            assert_eq!(manager.tokens().read().unwrap(), Some(refreshed_tokens()));
+        }
+    );
+
+    both_stores!(
+        更新用のトークンも切れていたら通信せずに消してログインし直し,
+        |store: TokenStore| {
+            store.write(&tokens(NOW + 100, NOW)).unwrap();
+            let manager = manager_of(store, Arc::new(FakeTransport::new(vec![])));
+            let error = manager.access_token(NOW).unwrap_err();
+            assert!(matches!(error, GithubError::LoginRequired));
+            assert_eq!(manager.tokens().read().unwrap(), None);
+        }
+    );
+
+    both_stores!(
+        取り直しがbad_refresh_tokenなら消してログインし直し,
+        |store: TokenStore| {
+            store.write(&tokens(NOW + 1, NOW + 10_000)).unwrap();
+            let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
+                200,
+                json!({ "error": "bad_refresh_token" }),
+            ))]));
+            let manager = manager_of(store, transport);
+            let error = manager.access_token(NOW).unwrap_err();
+            assert!(matches!(error, GithubError::LoginRequired));
+            assert_eq!(manager.tokens().read().unwrap(), None);
+        }
+    );
+
+    both_stores!(
+        取り直しの通信の失敗と5xxでは消さずにエラー,
+        |store: TokenStore| {
+            let before = tokens(NOW + 1, NOW + 10_000);
+            store.write(&before).unwrap();
+            let transport = Arc::new(FakeTransport::new(vec![
+                Err(GithubError::Network {
+                    reason: "closed".to_string(),
+                }),
+                Ok(json_response(500, json!({}))),
+            ]));
+            let manager = manager_of(store, transport);
+            // 消さないので、次の操作でもう一度取り直す
+            for _ in 0..2 {
+                let error = manager.access_token(NOW).unwrap_err();
+                assert!(!matches!(error, GithubError::LoginRequired));
+            }
+            assert_eq!(manager.tokens().read().unwrap(), Some(before));
+        }
+    );
 
     // 取り直しの応答を遅らせ、その間にもう1つのスレッドが期限切れのトークンを読む機会を作る
     struct SlowTransport(FakeTransport);
@@ -560,20 +619,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn 同時の取り直しは1回だけ() {
-        let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        write(&path, &tokens(NOW + 1, NOW + 10_000)).unwrap();
+    both_stores!(同時の取り直しは1回だけ, |store: TokenStore| {
+        store.write(&tokens(NOW + 1, NOW + 10_000)).unwrap();
         let transport = Arc::new(SlowTransport(FakeTransport::new(vec![Ok(json_response(
             200,
             refreshed_json(),
         ))])));
-        let manager = Arc::new(TokenManager::new(
-            path,
-            CLIENT_ID.to_string(),
-            transport.clone(),
-        ));
+        let manager = Arc::new(manager_of(store, transport.clone()));
         let barrier = Arc::new(std::sync::Barrier::new(2));
         let handles: Vec<_> = (0..2)
             .map(|_| {
@@ -589,84 +641,74 @@ mod tests {
             assert_eq!(handle.join().unwrap().unwrap(), "NEW_ACCESS");
         }
         assert_eq!(transport.0.requests().len(), 1);
+    });
+
+    #[cfg(unix)]
+    #[test]
+    fn 取り直しの保存に失敗したら新しいトークンを返さない_ファイル() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("github");
+        fs::create_dir_all(&dir).unwrap();
+        let store = TokenStore::file(dir.join("token.json"));
+        store.write(&tokens(NOW + 1, NOW + 10_000)).unwrap();
+        let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
+            200,
+            refreshed_json(),
+        ))]));
+        let Some(read_only) = read_only_dir(&dir) else {
+            return;
+        };
+        let manager = manager_of(store, transport);
+        let result = manager.access_token(NOW);
+        drop(read_only);
+        // 通信は通っているので、ログインし直しではない
+        let error = result.unwrap_err();
+        assert!(!matches!(error, GithubError::LoginRequired));
+        // 前の組はそのまま
+        assert_eq!(
+            manager.tokens().read().unwrap(),
+            Some(tokens(NOW + 1, NOW + 10_000))
+        );
     }
 
-    // 資格情報の保存先の偽物。fail_*を立てた操作は失敗する
-    #[derive(Default)]
-    struct FakeSecret {
-        value: Mutex<Option<String>>,
-        fail_get: bool,
-        fail_set: bool,
-        fail_delete: bool,
+    #[test]
+    fn 取り直しの保存に失敗したら新しいトークンを返さない_資格情報の保存先() {
+        let tmp = TempDir::new().unwrap();
+        let (store, secret) = desktop_tokens(tmp.path());
+        store.write(&tokens(NOW + 1, NOW + 10_000)).unwrap();
+        let transport = Arc::new(FakeTransport::new(vec![Ok(json_response(
+            200,
+            refreshed_json(),
+        ))]));
+        let manager = manager_of(store, transport);
+        secret.fail_set(true);
+        let error = manager.access_token(NOW).unwrap_err();
+        assert!(!matches!(error, GithubError::LoginRequired));
+        assert_eq!(stored(&secret), Some(tokens(NOW + 1, NOW + 10_000)));
     }
 
-    impl FakeSecret {
-        fn holding(tokens: &TokenSet) -> Self {
-            Self {
-                value: Mutex::new(Some(serde_json::to_string(tokens).unwrap())),
-                ..Self::default()
-            }
-        }
-
-        fn value(&self) -> Option<String> {
-            self.value.lock().unwrap().clone()
-        }
-    }
-
-    impl SecretStore for FakeSecret {
-        fn get(&self) -> Result<Option<String>, String> {
-            if self.fail_get {
-                return Err("get failed".to_string());
-            }
-            Ok(self.value())
-        }
-
-        fn set(&self, value: &str) -> Result<(), String> {
-            if self.fail_set {
-                return Err("set failed".to_string());
-            }
-            *self.value.lock().unwrap() = Some(value.to_string());
-            Ok(())
-        }
-
-        fn delete(&self) -> Result<(), String> {
-            if self.fail_delete {
-                return Err("delete failed".to_string());
-            }
-            *self.value.lock().unwrap() = None;
-            Ok(())
-        }
-    }
+    // 資格情報の保存先版
 
     // ファイルの代わりにディレクトリを置き、token.jsonを消せなくする(どのOSでもremove_fileが失敗する)
-    fn undeletable_file(tmp: &TempDir) -> PathBuf {
-        let path = file_of(tmp);
-        fs::create_dir_all(&path).unwrap();
-        path
+    fn make_undeletable(path: &Path) {
+        fs::create_dir_all(path).unwrap();
     }
 
     #[test]
     fn 資格情報の保存先に書いた組が読めtoken_jsonはできない() {
         let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        let secret = FakeSecret::default();
-        write_secret(&secret, &path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
-        assert_eq!(
-            read_secret(&secret).unwrap(),
-            Some(tokens(NOW + 3600, NOW + 7200))
-        );
-        assert!(!path.exists());
+        let (store, _) = desktop_tokens(tmp.path());
+        store.write(&tokens(NOW + 3600, NOW + 7200)).unwrap();
+        assert_eq!(store.read().unwrap(), Some(tokens(NOW + 3600, NOW + 7200)));
+        assert!(!file_of(&tmp).exists());
     }
 
     #[test]
     fn 資格情報の保存先に無ければNoneで読めなければエラー() {
-        let secret = FakeSecret::default();
-        assert_eq!(read_secret(&secret).unwrap(), None);
-        let broken = FakeSecret {
-            value: Mutex::new(Some("@".to_string())),
-            ..FakeSecret::default()
-        };
-        assert!(read_secret(&broken).is_err());
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(desktop_tokens(tmp.path()).0.read().unwrap(), None);
+        let (broken, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding_raw("@"));
+        assert!(broken.read().is_err());
     }
 
     #[test]
@@ -674,15 +716,15 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = file_of(&tmp);
         write_file(&path, &tokens(NOW, NOW)).unwrap();
-        let secret = FakeSecret::default();
-        write_secret(&secret, &path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
+        let (store, _) = desktop_tokens(tmp.path());
+        store.write(&tokens(NOW + 3600, NOW + 7200)).unwrap();
         assert!(!path.exists());
 
         // 消せなければ、保存先に書かずにエラー
         let tmp = TempDir::new().unwrap();
-        let path = undeletable_file(&tmp);
-        let secret = FakeSecret::default();
-        assert!(write_secret(&secret, &path, &tokens(NOW + 3600, NOW + 7200)).is_err());
+        make_undeletable(&file_of(&tmp));
+        let (store, secret) = desktop_tokens(tmp.path());
+        assert!(store.write(&tokens(NOW + 3600, NOW + 7200)).is_err());
         assert_eq!(secret.value(), None);
     }
 
@@ -691,39 +733,41 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = file_of(&tmp);
         write_file(&path, &tokens(NOW, NOW)).unwrap();
-        let secret = FakeSecret::holding(&tokens(NOW + 3600, NOW + 7200));
-        delete_secret(&secret, &path).unwrap();
+        let (store, secret) = desktop_tokens_with(
+            tmp.path(),
+            FakeSecret::holding(&tokens(NOW + 3600, NOW + 7200)),
+        );
+        store.delete().unwrap();
         assert_eq!(secret.value(), None);
         assert!(!path.exists());
         // どちらも無くても失敗しない
-        delete_secret(&secret, &path).unwrap();
+        store.delete().unwrap();
     }
 
     #[test]
     fn token_jsonを消せなければ資格情報の保存先は消さずにエラー() {
         let tmp = TempDir::new().unwrap();
-        let path = undeletable_file(&tmp);
-        let secret = FakeSecret::holding(&tokens(NOW + 3600, NOW + 7200));
-        assert!(delete_secret(&secret, &path).is_err());
+        make_undeletable(&file_of(&tmp));
+        let (store, secret) = desktop_tokens_with(
+            tmp.path(),
+            FakeSecret::holding(&tokens(NOW + 3600, NOW + 7200)),
+        );
+        assert!(store.delete().is_err());
         assert!(secret.value().is_some());
     }
 
     #[test]
     fn 資格情報の保存先の失敗は専用のエラーにする() {
-        let failing = FakeSecret {
-            fail_get: true,
-            ..FakeSecret::default()
-        };
+        let tmp = TempDir::new().unwrap();
+        let (failing, secret) = desktop_tokens(tmp.path());
+        secret.fail_get(true);
         assert!(matches!(
-            read_secret(&failing),
+            failing.read(),
             Err(GithubError::CredentialStore { .. })
         ));
-        let broken = FakeSecret {
-            value: Mutex::new(Some("@".to_string())),
-            ..FakeSecret::default()
-        };
+        let (broken, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding_raw("@"));
         assert!(matches!(
-            read_secret(&broken),
+            broken.read(),
             Err(GithubError::CredentialStore { .. })
         ));
     }
@@ -731,17 +775,14 @@ mod tests {
     #[test]
     fn 資格情報の保存先の失敗はエラーにしてtoken_jsonを作らない() {
         let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        let failing = FakeSecret {
-            fail_get: true,
-            fail_set: true,
-            fail_delete: true,
-            ..FakeSecret::default()
-        };
-        assert!(read_secret(&failing).is_err());
-        assert!(write_secret(&failing, &path, &tokens(NOW + 3600, NOW + 7200)).is_err());
-        assert!(delete_secret(&failing, &path).is_err());
-        assert!(!path.exists());
+        let (store, secret) = desktop_tokens(tmp.path());
+        secret.fail_get(true);
+        secret.fail_set(true);
+        secret.fail_delete(true);
+        assert!(store.read().is_err());
+        assert!(store.write(&tokens(NOW + 3600, NOW + 7200)).is_err());
+        assert!(store.delete().is_err());
+        assert!(!file_of(&tmp).exists());
     }
 
     #[test]
@@ -750,12 +791,9 @@ mod tests {
         let path = file_of(&tmp);
         write_file(&path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
         // 保存先に古い組があっても、token.jsonの組で上書きする
-        let secret = FakeSecret::holding(&tokens(NOW, NOW));
-        migrate(&secret, &path).unwrap();
-        assert_eq!(
-            read_secret(&secret).unwrap(),
-            Some(tokens(NOW + 3600, NOW + 7200))
-        );
+        let (store, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding(&tokens(NOW, NOW)));
+        store.migrate().unwrap();
+        assert_eq!(store.read().unwrap(), Some(tokens(NOW + 3600, NOW + 7200)));
         assert!(!path.exists());
     }
 
@@ -765,27 +803,28 @@ mod tests {
         let path = file_of(&tmp);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "@").unwrap();
-        let secret = FakeSecret::holding(&tokens(NOW, NOW));
-        assert!(migrate(&secret, &path).is_err());
+        let (store, secret) =
+            desktop_tokens_with(tmp.path(), FakeSecret::holding(&tokens(NOW, NOW)));
+        assert!(store.migrate().is_err());
         assert!(path.exists());
-        assert_eq!(read_secret(&secret).unwrap(), Some(tokens(NOW, NOW)));
+        assert_eq!(stored(&secret), Some(tokens(NOW, NOW)));
     }
 
     #[test]
-    fn 移せなかったtoken_jsonが残っていればエラー() {
+    fn 移せなかったtoken_jsonが残っていれば読むとエラー() {
         let tmp = TempDir::new().unwrap();
-        let path = file_of(&tmp);
-        ensure_moved(&path).unwrap();
-        write_file(&path, &tokens(NOW, NOW)).unwrap();
-        assert!(matches!(ensure_moved(&path), Err(GithubError::Io { .. })));
+        let (store, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding(&tokens(NOW, NOW)));
+        assert!(store.read().is_ok());
+        write_file(&file_of(&tmp), &tokens(NOW, NOW)).unwrap();
+        assert!(matches!(store.read(), Err(GithubError::Io { .. })));
     }
 
     #[test]
     fn token_jsonが無ければ移さない() {
         let tmp = TempDir::new().unwrap();
-        let secret = FakeSecret::holding(&tokens(NOW, NOW));
-        migrate(&secret, &file_of(&tmp)).unwrap();
-        assert_eq!(read_secret(&secret).unwrap(), Some(tokens(NOW, NOW)));
+        let (store, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding(&tokens(NOW, NOW)));
+        store.migrate().unwrap();
+        assert_eq!(store.read().unwrap(), Some(tokens(NOW, NOW)));
     }
 
     #[test]
@@ -793,15 +832,35 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = file_of(&tmp);
         write_file(&path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
-        let secret = FakeSecret {
-            fail_set: true,
-            ..FakeSecret::default()
-        };
-        assert!(migrate(&secret, &path).is_err());
+        let (store, secret) = desktop_tokens(tmp.path());
+        secret.fail_set(true);
+        assert!(store.migrate().is_err());
         assert_eq!(
             read_file(&path).unwrap(),
             Some(tokens(NOW + 3600, NOW + 7200))
         );
+    }
+
+    #[test]
+    fn 開くとtoken_jsonを資格情報の保存先へ移し移せなくても開く() {
+        let tmp = TempDir::new().unwrap();
+        let path = file_of(&tmp);
+        write_file(&path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
+        let secret = Arc::new(FakeSecret::default());
+        let store = TokenStore::open_with(secret.clone(), path.clone());
+        assert!(!path.exists());
+        assert_eq!(stored(&secret), Some(tokens(NOW + 3600, NOW + 7200)));
+        assert_eq!(store.read().unwrap(), Some(tokens(NOW + 3600, NOW + 7200)));
+
+        let tmp = TempDir::new().unwrap();
+        let path = file_of(&tmp);
+        write_file(&path, &tokens(NOW + 3600, NOW + 7200)).unwrap();
+        let secret = Arc::new(FakeSecret::default());
+        secret.fail_set(true);
+        let store = TokenStore::open_with(secret.clone(), path.clone());
+        assert!(path.exists());
+        // 移せなかったことは、読んだときにエラーで知らせる
+        assert!(matches!(store.read(), Err(GithubError::Io { .. })));
     }
 
     #[cfg(not(target_os = "android"))]

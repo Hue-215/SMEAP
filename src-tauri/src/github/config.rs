@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::token;
+use super::token::TokenStore;
 use super::GithubError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,22 +166,22 @@ pub fn choose_posts_dir(
     }
 }
 
-pub fn linked(data_dir: &Path, settings: &GithubSettings) -> bool {
-    settings.repo.is_some()
-        && token::read(&token_path(data_dir)).is_ok_and(|tokens| tokens.is_some())
+pub fn linked(tokens: &TokenStore, settings: &GithubSettings) -> bool {
+    settings.repo.is_some() && tokens.read().is_ok_and(|tokens| tokens.is_some())
 }
 
 // 起動時。Repositoryを選んでいれば、トークンを読んでchoose_posts_dirする。読めなければログインしていない扱いにし、そのエラーも返す
 pub fn startup_posts_dir(
     local: PathBuf,
     data_dir: &Path,
+    tokens: &TokenStore,
     settings: &GithubSettings,
 ) -> (PathBuf, Option<GithubError>) {
     // Repositoryを選んでいなければ向き先は替わらないので、トークンを読まない(Secret Serviceのロック解除を求めないため)
     if settings.repo.is_none() {
         return (local, None);
     }
-    match token::read(&token_path(data_dir)) {
+    match tokens.read() {
         Ok(Some(_)) => (choose_posts_dir(local, data_dir, settings, true), None),
         Ok(None) => (local, None),
         Err(error) => (local, Some(error)),
@@ -191,11 +191,10 @@ pub fn startup_posts_dir(
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
-    use std::fs;
-
     use tempfile::TempDir;
 
     use super::*;
+    use crate::github::fake::{desktop_tokens, desktop_tokens_with, FakeSecret};
     use crate::github::token;
 
     fn repo() -> RepoRef {
@@ -384,11 +383,13 @@ mod tests {
     }
 
     #[test]
-    fn 起動時はtoken_jsonがあればGitHub用の置き場所で始める() {
+    fn 起動時はトークンがあればGitHub用の置き場所で始める() {
         let tmp = TempDir::new().unwrap();
         let local = tmp.path().join("local/src/content/blog");
-        token::write(&token_path(tmp.path()), &token_set()).unwrap();
-        let (posts_dir, error) = startup_posts_dir(local, tmp.path(), &settings_with_repo());
+        let (tokens, _) = desktop_tokens(tmp.path());
+        tokens.write(&token_set()).unwrap();
+        let (posts_dir, error) =
+            startup_posts_dir(local, tmp.path(), &tokens, &settings_with_repo());
         assert_eq!(
             posts_dir,
             github_posts_dir(tmp.path(), &repo(), "src/content/blog")
@@ -400,50 +401,54 @@ mod tests {
     fn 起動時はRepositoryを選んでいなければトークンを読まずに今までの保存先で始める() {
         let tmp = TempDir::new().unwrap();
         let local = tmp.path().join("local/src/content/blog");
-        // 壊れたtoken.jsonでも、読まないのでエラーにならない
-        fs::create_dir_all(token_path(tmp.path()).parent().unwrap()).unwrap();
-        fs::write(token_path(tmp.path()), "@").unwrap();
-        let (posts_dir, error) =
-            startup_posts_dir(local.clone(), tmp.path(), &GithubSettings::default());
+        // 読むと失敗する保存先でも、読まないのでエラーにならない
+        let (tokens, secret) = desktop_tokens(tmp.path());
+        secret.fail_get(true);
+        let (posts_dir, error) = startup_posts_dir(
+            local.clone(),
+            tmp.path(),
+            &tokens,
+            &GithubSettings::default(),
+        );
         assert_eq!(posts_dir, local);
         assert!(error.is_none());
     }
 
     #[test]
-    fn 起動時はtoken_jsonが無ければ今までの保存先で始める() {
+    fn 起動時はトークンが無ければ今までの保存先で始める() {
         let tmp = TempDir::new().unwrap();
         let local = tmp.path().join("local/src/content/blog");
+        let (tokens, _) = desktop_tokens(tmp.path());
         let (posts_dir, error) =
-            startup_posts_dir(local.clone(), tmp.path(), &settings_with_repo());
+            startup_posts_dir(local.clone(), tmp.path(), &tokens, &settings_with_repo());
         assert_eq!(posts_dir, local);
         assert!(error.is_none());
     }
 
     #[test]
-    fn 起動時はtoken_jsonが壊れていても今までの保存先で始める() {
+    fn 起動時はトークンが壊れていても今までの保存先で始める() {
         let tmp = TempDir::new().unwrap();
         let local = tmp.path().join("local/src/content/blog");
-        let path = token_path(tmp.path());
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "@").unwrap();
+        let (tokens, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding_raw("@"));
         let (posts_dir, error) =
-            startup_posts_dir(local.clone(), tmp.path(), &settings_with_repo());
+            startup_posts_dir(local.clone(), tmp.path(), &tokens, &settings_with_repo());
         assert_eq!(posts_dir, local);
         // 画面で知らせるために返す
         assert!(error.is_some());
     }
 
     #[test]
-    fn linkedはrepositoryとtoken_jsonの両方あるときtrue() {
+    fn linkedはrepositoryとトークンの両方あるときtrue() {
         let tmp = TempDir::new().unwrap();
-        // token.jsonが無ければfalse
-        assert!(!linked(tmp.path(), &settings_with_repo()));
-        token::write(&token_path(tmp.path()), &token_set()).unwrap();
+        let (tokens, _) = desktop_tokens(tmp.path());
+        // トークンが無ければfalse
+        assert!(!linked(&tokens, &settings_with_repo()));
+        tokens.write(&token_set()).unwrap();
         // repositoryが無ければfalse
-        assert!(!linked(tmp.path(), &GithubSettings::default()));
-        assert!(linked(tmp.path(), &settings_with_repo()));
-        // token.jsonが壊れていればfalse
-        fs::write(token_path(tmp.path()), "@").unwrap();
-        assert!(!linked(tmp.path(), &settings_with_repo()));
+        assert!(!linked(&tokens, &GithubSettings::default()));
+        assert!(linked(&tokens, &settings_with_repo()));
+        // トークンが壊れていればfalse
+        let (broken, _) = desktop_tokens_with(tmp.path(), FakeSecret::holding_raw("@"));
+        assert!(!linked(&broken, &settings_with_repo()));
     }
 }

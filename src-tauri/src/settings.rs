@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::github::config::GithubSettings;
+use crate::github::token::TokenStore;
 use crate::github::GithubError;
 #[cfg(target_os = "android")]
 use crate::store::Store;
@@ -191,6 +192,7 @@ pub fn pick_posts_dir(
     app: AppHandle,
     window: tauri::WebviewWindow,
     store: State<'_, Store>,
+    github: State<'_, crate::github::commands::GitHub>,
 ) -> Result<Option<PostsLocation>, StoreError> {
     use tauri_plugin_dialog::DialogExt;
 
@@ -215,7 +217,7 @@ pub fn pick_posts_dir(
         settings.posts_dir = Some(path.clone());
     })?;
     // GitHubと連携している間は、GitHub用の置き場所へ向いたままにする
-    if !crate::github::config::linked(&data_dir(&app)?, &settings.github) {
+    if !crate::github::config::linked(github.tokens(), &settings.github) {
         store.set_posts_dir(path.clone())?;
     }
     Ok(Some(PostsLocation {
@@ -321,8 +323,13 @@ pub(crate) fn switch_posts_dir(
 }
 
 // トークンを消し、向き先をlocalに戻す
-pub(crate) fn logout(store: &Store, data_dir: &Path, local: PathBuf) -> Result<(), StoreError> {
-    match crate::github::token::delete(&crate::github::config::token_path(data_dir)) {
+pub(crate) fn logout(
+    store: &Store,
+    tokens: &TokenStore,
+    data_dir: &Path,
+    local: PathBuf,
+) -> Result<(), StoreError> {
+    match tokens.delete() {
         Ok(()) => {}
         Err(GithubError::Io { path, reason }) => return Err(StoreError::Io { path, reason }),
         Err(error) => return Err(StoreError::io(data_dir, error)),
@@ -338,8 +345,9 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::github::config::{github_posts_dir, token_path, RepoRef};
-    use crate::github::token::{self, TokenSet};
+    use crate::github::config::{github_posts_dir, RepoRef};
+    use crate::github::fake::desktop_tokens;
+    use crate::github::token::TokenSet;
 
     fn file_of(tmp: &TempDir) -> PathBuf {
         tmp.path().join("settings.json")
@@ -605,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn logoutするとtoken_jsonを消して向き先を戻す() {
+    fn logoutするとトークンを消して向き先を戻す() {
         let tmp = TempDir::new().unwrap();
         let data_dir = tmp.path().join("data");
         let local = tmp.path().join("local/src/content/blog");
@@ -614,10 +622,10 @@ mod tests {
         let store = store::Store::new(github_dir.clone(), tmp.path().join("backup")).unwrap();
         fs::create_dir_all(&github_dir).unwrap();
         fs::write(github_dir.join("kept.md"), "本文").unwrap();
-        let path = token_path(&data_dir);
-        token::write(&path, &token_set()).unwrap();
-        logout(&store, &data_dir, local.clone()).unwrap();
-        assert!(!path.exists());
+        let (tokens, secret) = desktop_tokens(&data_dir);
+        tokens.write(&token_set()).unwrap();
+        logout(&store, &tokens, &data_dir, local.clone()).unwrap();
+        assert_eq!(secret.value(), None);
         assert_eq!(store.posts_dir(), local);
         assert!(github_dir.join("kept.md").exists());
     }
