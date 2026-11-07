@@ -1,9 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::config::RepoRef;
+use super::config::{token_path, RepoRef};
 use super::http::{api_url, Method, Request, Response, Transport, API_BASE};
+use super::token::{SecretStore, TokenSet, TokenStore};
 use super::GithubError;
 
 // テストで通信を置き換えるための偽のTransport。受けたリクエストを記録し、用意したレスポンスを順に返す
@@ -1299,6 +1301,83 @@ impl FakeRepo {
         all.extend(segments.iter().copied());
         api_url(&all, query).expect("fakeのURLは組み立てられるはず")
     }
+}
+
+// 資格情報の保存先の偽物。fail_*を立てた操作は失敗する
+#[derive(Default)]
+pub struct FakeSecret {
+    value: Mutex<Option<String>>,
+    fail_get: AtomicBool,
+    fail_set: AtomicBool,
+    fail_delete: AtomicBool,
+}
+
+impl FakeSecret {
+    pub fn holding(tokens: &TokenSet) -> Self {
+        Self::holding_raw(&serde_json::to_string(tokens).unwrap())
+    }
+
+    pub fn holding_raw(value: &str) -> Self {
+        Self {
+            value: Mutex::new(Some(value.to_string())),
+            ..Self::default()
+        }
+    }
+
+    pub fn value(&self) -> Option<String> {
+        self.value
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    pub fn fail_get(&self, on: bool) {
+        self.fail_get.store(on, Ordering::SeqCst);
+    }
+
+    pub fn fail_set(&self, on: bool) {
+        self.fail_set.store(on, Ordering::SeqCst);
+    }
+
+    pub fn fail_delete(&self, on: bool) {
+        self.fail_delete.store(on, Ordering::SeqCst);
+    }
+}
+
+impl SecretStore for FakeSecret {
+    fn get(&self) -> Result<Option<String>, String> {
+        if self.fail_get.load(Ordering::SeqCst) {
+            return Err("get failed".to_string());
+        }
+        Ok(self.value())
+    }
+
+    fn set(&self, value: &str) -> Result<(), String> {
+        if self.fail_set.load(Ordering::SeqCst) {
+            return Err("set failed".to_string());
+        }
+        *self.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(value.to_string());
+        Ok(())
+    }
+
+    fn delete(&self) -> Result<(), String> {
+        if self.fail_delete.load(Ordering::SeqCst) {
+            return Err("delete failed".to_string());
+        }
+        *self.value.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        Ok(())
+    }
+}
+
+// デスクトップの置き場所。資格情報の保存先は偽物で、token.jsonはdata_dirの下。openと違い、token.jsonを移さない
+pub fn desktop_tokens(data_dir: &Path) -> (TokenStore, Arc<FakeSecret>) {
+    desktop_tokens_with(data_dir, FakeSecret::default())
+}
+
+pub fn desktop_tokens_with(data_dir: &Path, secret: FakeSecret) -> (TokenStore, Arc<FakeSecret>) {
+    let secret = Arc::new(secret);
+    let store = TokenStore::with_secret(secret.clone(), token_path(data_dir));
+    (store, secret)
 }
 
 #[cfg(test)]

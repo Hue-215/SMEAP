@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# 配布用のビルド(Linux)。束ねずに実行ファイルだけを作る(tauri.conf.jsonの`bundle.active`)。WebKitGTK等は
-# 利用者の環境のものを使う。
+# 配布用のビルド(Linux・Windows)。束ねずに実行ファイルだけを作る(tauri.conf.jsonの`bundle.active`)。
+# WebKitGTK・WebView2は利用者の環境のものを使う。
+#
+# WindowsではGit for Windowsのbashで実行する。RustはMSVCのツールチェーンを使い、Visual StudioのC++の
+# ビルドツールが要る。
 #
 # ビルドした人の絶対パスを、バイナリに焼き込まれるパス(依存クレートのパニックの位置等)から外す
 # (release-common.sh)。`strip = true`ではシンボルとデバッグ情報しか消えない。Cargoの`trim-paths`が
@@ -27,6 +30,7 @@ done
 source "$(dirname "$0")/release-common.sh"
 
 binary="$root/src-tauri/target/release/smeap"
+if ((windows)); then binary+=.exe; fi
 # 前のビルドの実行ファイルを、今回のものと取り違えないよう先に消す。
 rm -f "$binary"
 

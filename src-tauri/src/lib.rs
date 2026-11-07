@@ -22,12 +22,7 @@ pub fn run() {
         .setup(|app| {
             let settings = settings::load(app.handle());
             let data_dir = settings::data_dir(app.handle())?;
-            // トークンを読む前に呼ぶ
-            #[cfg(not(target_os = "android"))]
-            github::token::init(
-                &app.config().identifier,
-                &github::config::token_path(&data_dir),
-            );
+            let tokens = github::token::TokenStore::open(&app.config().identifier, &data_dir);
             let backup_root = data_dir.join("backup");
             // 今までの保存先(GitHub連携より前の向き先)と、設定に保存先が無いときの既定
             #[cfg(not(target_os = "android"))]
@@ -62,7 +57,7 @@ pub fn run() {
             store.set_remove_unused_images(settings.remove_unused_images);
             // 起動時の保存先。トークンが読めないときと向き先が使えないときは、今までの保存先で始める
             let (startup_dir, token_error) =
-                github::config::startup_posts_dir(local_dir, &data_dir, &settings.github);
+                github::config::startup_posts_dir(local_dir, &data_dir, &tokens, &settings.github);
             if let Some(error) = token_error {
                 eprintln!("Failed to read the GitHub token: {error}");
             }
@@ -70,7 +65,7 @@ pub fn run() {
                 eprintln!("Failed to use the GitHub article directory: {error}");
             }
             app.manage(store);
-            app.manage(github::commands::GitHub::new(&data_dir, default_dir));
+            app.manage(github::commands::GitHub::new(tokens, default_dir));
             #[cfg(target_os = "android")]
             app.manage(settings::SettingsState::new(settings));
             Ok(())

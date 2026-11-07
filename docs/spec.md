@@ -6,7 +6,9 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 
 ### 対象と配布
 
-- 対応OSはAndroidとLinux(Kubuntu)。Linuxはバイナリを実行して使う
+- 対応OSはAndroid・Linux(Kubuntu)・Windows。LinuxとWindowsは実行ファイルを置いて使い、インストーラーは作らない
+- Windowsの実行ファイルは署名しない(SmartScreenの警告が出る)。WebView2ランタイムが要る
+- 配布用のビルドは`scripts/release-build.sh`(Linux・Windows)と`scripts/release-build-android.sh`で行う。ビルドした人の絶対パスを配布物に残さない
 
 ### 技術
 
@@ -37,8 +39,8 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
 - Astroのプレビューは入れない。カスタムCSSも読み込まない
 - ふつうのMarkdownのプレビューも置かない。編集欄で装飾のスタイルをその場で当てるので、書いた画面で仕上がりが分かる
 - 画像の一覧の画面と名前の書き換えは作らない(Issue #15)。本文の画像は次の方法で`src/assets/{slug}/`にコピーし、本文に`![](...)`を入れる
-  - 上のバーの画像のボタンからファイルを選ぶ(Android・Linux共通)
-  - Linuxではクリップボードからの貼り付けとドラッグ&ドロップも受け付ける
+  - 上のバーの画像のボタンからファイルを選ぶ(どのOSでも)
+  - デスクトップ(Linux・Windows)ではクリップボードからの貼り付けとドラッグ&ドロップも受け付ける
 - 画像のファイル名は記事ごとの連番(`01.png`など)にする
   - 挿入・貼り付け・ドロップのどれでも連番にそろえる
   - 番号は記事内の最大の番号+1(下の「使っていない画像」で移した画像の名前も数える)。消して空いた番号は詰めない
@@ -69,7 +71,7 @@ SMEAP(Simple Markdown Editor for Astro Post)は、Astro製ブログ向けのシ�
   ./src/assets/{slug}/
   ```
 
-- Linuxは設定で選んだ記事のディレクトリの下に書き出す。assetsはその2つ上の`assets/{slug}/`に置くので、本文からの参照は変わらない。選び間違いに気付けるよう、設定画面には画像の置き場所も出す
+- デスクトップでは設定で選んだ記事のディレクトリの下に書き出す。assetsはその2つ上の`assets/{slug}/`に置くので、本文からの参照は変わらない。選び間違いに気付けるよう、設定画面には画像の置き場所も出す
   - 選んでいなければ実行ファイルの親ディレクトリの`src/content/blog`。実行ファイルをAstroのプロジェクトに置けば、保存がそのままリポジトリへの書き込みになる
   - 自動保存がそのまま上の形で書き込むので、書き出しのボタンを置かない
 - Androidは書き出し機能(zip)を付ける
