@@ -50,11 +50,6 @@ fi
 # shellcheck source=scripts/release-common.sh
 source "$(dirname "$0")/release-common.sh"
 
-version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$root/src-tauri/Cargo.toml" | head -1)"
-if [[ -z "$version" ]]; then
-  echo "src-tauri/Cargo.toml から版を読めません" >&2
-  exit 1
-fi
 dist="$root/dist-release/smeap-$version-android-$cpu.apk"
 built="$root/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk"
 # 前の配布物と前のビルドのAPKを、今回のものと取り違えないよう先に消す。
@@ -76,10 +71,10 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 unzip -q "$built" -d "$work/unpacked"
 
-# tauri.conf.jsonにversionが無いと、Cargo.tomlの版は使われず1.0になる。
+# tauri-cliがtauri.propertiesに版を書かないと、build.gradle.ktsの既定値の1.0になる。
 apk_version="$("$aapt2" dump badging "$built" | sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p")"
 if [[ "$apk_version" != "$version" ]]; then
-  echo "APKの版が src-tauri/Cargo.toml と違います: $apk_version(想定: $version)" >&2
+  echo "APKの版が src-tauri/tauri.conf.json と違います: $apk_version(想定: $version)" >&2
   exit 1
 fi
 
